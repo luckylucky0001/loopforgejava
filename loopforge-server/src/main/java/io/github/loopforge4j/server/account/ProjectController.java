@@ -44,7 +44,17 @@ class ProjectController {
     @GetMapping
     List<Project> list(Principal principal) {
         CurrentUser user = access.current(principal);
-        return user.admin() ? projects.list() : projects.listFor(user.id());
+        if (user.admin()) {
+            return projects.list();
+        }
+        if (user.agent() != null) {
+            // an agent sees exactly its run's project
+            java.util.Set<String> visible = access.rolesOf(user).keySet();
+            return projects.list().stream()
+                    .filter(p -> visible.contains(p.id()))
+                    .toList();
+        }
+        return projects.listFor(user.id());
     }
 
     @GetMapping("/{id}")

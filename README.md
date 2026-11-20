@@ -20,7 +20,10 @@
 | 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止；Docker 沙箱：每个运行一个容器、资源限制、只读根文件系统、变量不上命令行 |
 | 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话；多实例部署：运行租约、心跳与过期接管、工作区主机绑定 |
 | 运维 | 遥测批量写入；保留策略（执行器遥测、终态运行）；Prometheus 指标：运行与节点结果、节点耗时、返工、门禁决策、token 与成本 |
-| 协作 | 账户与 Token、项目与成员角色、需求（自动工作分支与状态推进）、定时任务、Webhook 通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理） |
+| 协作 | 账户与 Token、项目与成员角色、需求（自动工作分支与状态推进）、定时任务、Webhook 通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理、分析、知识库） |
+| 平台 MCP | `/mcp` 把公开 API 作为 MCP 工具（按调用者本人的权限执行）；角色开启 `platformMcp` 后，Agent 拿到只读、限本项目、随运行结束失效的运行令牌；JDK-only stdio 桥 |
+| 团队知识库 | 接入上游知识库 MCP，按项目授权来源检索与阅读；角色开启 `knowledgeBase` 后获得只读检索工具与使用规范；Agent 写下的 `knowledge.md` 经人工审核后写回 |
+| 分析 | 运行概览（成功率、一次通过率、耗时分位、Token 与费用、PR）、趋势、按 SOP / 项目 / 执行器 / 模型拆分、失败聚类、运行时段热力；SOP 运营指标（节点级） |
 | 服务 | Spring Boot 4.1 / Java 21 虚拟线程；REST + SSE（支持 `Last-Event-ID` 续传）；RFC 9457 错误；Bearer Token；Flyway；H2（开发）/ PostgreSQL（生产）；OpenAPI；Actuator 健康探针与 Prometheus 指标 |
 
 ## 快速开始
@@ -116,6 +119,33 @@ loopforge:
 
 角色通过 `rules`、`skills`、`mcpServers`、`hooks` 绑定资产；每次调用都会把它们编译成对应 CLI 的原生配置（只包含白名单内容，不读取仓库或用户级 CLI 配置）。Agent 用 MCP 工具 `submit_gate_result` 提交节点终态。
 
+### 平台 MCP 与团队知识库
+
+任何支持 Streamable HTTP 的 MCP 客户端都可以直接连接平台 MCP（用个人 Token 或服务 Token）：
+
+```bash
+claude mcp add --transport http loopforge http://localhost:8080/mcp --header "Authorization: Bearer lfu_..."
+```
+
+只能启动本地进程的客户端用 stdio 桥（只依赖 JDK）：
+
+```bash
+LOOPFORGE_API_URL=http://localhost:8080 LOOPFORGE_API_TOKEN=lfu_... java -cp loopforge-core.jar io.github.loopforge4j.core.mcp.PlatformMcpBridge
+```
+
+角色定义里设置 `"platformMcp": true` / `"knowledgeBase": true`，每次调用都会注入 `loopforge-platform` / `loopforge-knowledge` 两个 HTTP MCP 服务器，凭据是一次性的运行令牌：只读、只能访问运行所在项目、运行结束即失效。Docker 等隔离沙箱需要告诉服务端沙箱内能访问到的地址：
+
+```yaml
+loopforge:
+  mcp:
+    sandbox-url: http://host.docker.internal:8080   # 不设置时只有本地沙箱的 Agent 能注入（回环地址）
+    agent-token-ttl: 12h
+  knowledge:
+    token: ${KB_TOKEN}      # 可选：上游知识库 Token 放在配置里而不是数据库
+```
+
+知识库的地址、启用开关、写回开关和按项目授权的来源在控制台「知识库 → 接入配置」里设置（管理员）。
+
 ### 多实例部署
 
 多个服务实例连接同一个 PostgreSQL 即可：每个运行由持有租约的实例执行，实例每 `lease-ttl/3` 续约并在 `engine_instances` 心跳；实例宕机后其他实例在 `lease-ttl`（默认 60 秒）内接管。工作区默认在本机磁盘：工作区主机在线时运行不会迁移；主机下线时，含仓库检出的运行会失败并提示重跑，其余运行在新主机上重建。若所有实例以相同路径挂载共享存储，设置 `loopforge.engine.shared-workspaces=true` 即可跨主机接管。
@@ -163,6 +193,11 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` | `/api/v1/runs/{id}/stream` | SSE 实时流（浏览器可用 `?access_token=`） |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
+| `POST` | `/mcp` | 平台 MCP（无状态 Streamable HTTP）；`GET /api/v1/capabilities` 列出全部操作 |
+| `GET` | `/api/v1/analytics`、`/api/v1/workflow-metrics` | 分析报表与 SOP 运营指标（`projectId`、`workflowId`、`from`、`to`、`grain`、`zone`） |
+| `GET/PUT/POST` | `/api/v1/knowledge/settings`、`/check`、`/sources`、`/search`、`/document`、`/activity`、`/usage` | 知识库接入与检索 |
+| `GET/POST/PUT/DELETE` | `/api/v1/knowledge/candidates`、`/submissions[/{id}[/reject\|/publish]]` | 沉淀候选与审核队列 |
+| `POST` | `/api/v1/knowledge/mcp` | Agent 使用的只读知识库 MCP（运行令牌） |
 
 ## 项目结构
 

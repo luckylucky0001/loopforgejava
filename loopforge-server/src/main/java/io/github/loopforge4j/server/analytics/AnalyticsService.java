@@ -203,7 +203,7 @@ public class AnalyticsService {
                 zone.getId(),
                 loaded.truncated(),
                 summary,
-                trend(roots, filter.grain(), zone),
+                trend(roots, filter, zone),
                 byWorkflow,
                 byProject,
                 byExecutor,
@@ -483,8 +483,21 @@ public class AnalyticsService {
                 open);
     }
 
-    private static List<TrendPoint> trend(List<Root> roots, String grain, ZoneId zone) {
+    /** Every bucket of the range, empty ones included, so the time axis is continuous. */
+    private static List<TrendPoint> trend(List<Root> roots, Filter filter, ZoneId zone) {
+        String grain = filter.grain();
         Map<String, List<Root>> buckets = new TreeMap<>();
+        LocalDate day = filter.from().atZone(zone).toLocalDate();
+        LocalDate last = filter.to().minusMillis(1).atZone(zone).toLocalDate();
+        for (int i = 0; !day.isAfter(last) && i < 400; i++) {
+            buckets.put(bucket(day.atStartOfDay(zone).toInstant(), grain, zone), new ArrayList<>());
+            day = switch (grain) {
+                case "week" -> day.plusWeeks(1);
+                case "month" -> day.plusMonths(1);
+                default -> day.plusDays(1);
+            };
+        }
+        buckets.putIfAbsent(bucket(filter.to().minusMillis(1), grain, zone), new ArrayList<>());
         for (Root root : roots) {
             buckets.computeIfAbsent(bucket(root.run().createdAt(), grain, zone), k -> new ArrayList<>())
                     .add(root);

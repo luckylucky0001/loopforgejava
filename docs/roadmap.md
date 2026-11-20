@@ -54,7 +54,15 @@
 - [x] 运行准入：全局与每项目的并发运行上限，超出排队并按先后自动启动（等待人工的运行不占名额）
 - [x] 成本估算：移植上游公开价格表，CLI 未报告成本时按模型估算，可配置覆盖
 
+## 迭代 7 — 平台 MCP、知识库与分析（已完成）
+
+- [x] 平台 MCP：`/mcp` 无状态 Streamable HTTP、操作清单与 `/api/v1/capabilities`、JDK-only stdio 桥
+- [x] 角色开关 `platformMcp` / `knowledgeBase`；每次调用签发只读、限本项目、随运行失效的运行令牌
+- [x] 团队知识库：接入配置、按项目授权来源、Agent 只读代理 MCP、使用规范、`knowledge.md` 审核写回、调用记录
+- [x] 分析报表与 SOP 运营指标；控制台分析页与知识库页
+
 ## 后续
 
-- Chat / 会话工作区与 Main Bot；平台 MCP 与知识库；执行机器（runner）与云端池
-- 可视化拖拽式 SOP 设计器、分析看板与成本定价表
+- Chat / 会话工作区与 Main Bot；执行机器（runner）与云端池
+- 工蜂 / TAPD Issue 同步；企业微信等 Bot 通知；OAuth / 企业身份
+- 可视化拖拽式 SOP 设计器；业务域报表与运行质量评估

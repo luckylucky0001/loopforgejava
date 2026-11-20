@@ -37,6 +37,10 @@
 | `internal/domain/shared_schedule.go`、`schedule_execution.go` | `server.work.Schedule*` | cron 定时运行 |
 | `internal/domain/notification*.go` | `server.work.Notifier`、`NotificationChannel` | Webhook；未移植企业微信/Bot 模板 |
 | `web/`（React 控制台） | `static/console`（原生 ES 模块） | 重写，不含上游前端代码与素材 |
+| `internal/mcpserver`、`internal/application/operations.go`、`cmd/agentflow-mcp` | `server.mcp.PlatformMcpController`、`PlatformOperations`、`core.mcp.PlatformMcpBridge` | 已移植（操作清单对应本移植的 API） |
+| `internal/runtime/platform_mcp.go`、`internal/engine/assets.go`（平台/知识库注入） | `core.mcp.PlatformMcp`、`NodeRunner.bindPlatformMcp`、`server.mcp.ServerPlatformMcp` | 已移植 |
+| `internal/knowledge`、`internal/httpapi/knowledge*.go`、`internal/repo/run_knowledge.go` | `server.knowledge` | 已移植（上游 MCP 客户端、来源授权、代理、审核写回、调用记录） |
+| `internal/repo/analytics*.go`、`insights.go` | `server.analytics` | 概览、趋势、拆分、失败聚类、热力、SOP 指标；未移植业务域报表、会话统计、质量评估 |
 | `internal/domain/assets.go`（rules/skills/mcp） | `core.domain.RuleDefinition`、`SkillDefinition`、`McpServerDefinition` | 文本文件（二进制 skill 文件、市场来源未移植） |
 
 ## 有意的差异
@@ -63,7 +67,10 @@
 | Git 凭据 | 按负责人账户解析 | 部署级配置（`loopforge.git.https` 列表、SSH 私钥文件） | 账户体系在迭代 5；`GitCredentialProvider` 端口已按运行解析 |
 | 本地仓库路径 | 允许 | 默认拒绝 `file:`/本地路径与 `http://`，需 `loopforge.git.allow-local-remotes` | 防止运行读取服务器任意目录、凭据明文传输 |
 | 克隆 URL 内嵌凭据 | 允许 | 拒绝 | 凭据只能来自服务端配置 |
+| Agent 的平台 MCP 凭据 | 部署级 Token（全部操作） | 每次调用签发的运行令牌：只读、只能访问运行所在项目、运行结束即失效 | Agent 受提示词注入影响，不应拥有写权限 |
+| 知识库代理令牌 | 由上游 Token 派生的密钥签名，48 小时有效 | 数据库共享密钥签名；运行结束即失效 | 多实例共享，泄露窗口更短 |
+| `knowledge.md` | 需 SOP 声明为产物 | 开启知识库的角色自动收集（可选产物） | 使用规范要求写这个文件，不应依赖每个 SOP 记得声明 |
 
 ## 尚未移植
 
-Chat/Main Bot 与会话工作区、工蜂/TAPD Issue 同步、执行机器（runner）与云端池、平台 MCP 与知识库 MCP、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、OAuth/企业身份、企业微信等 Bot 通知、分析看板、预览构建、按执行器分桶的准入、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。
+Chat/Main Bot 与会话工作区、工蜂/TAPD Issue 同步、执行机器（runner）与云端池、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、OAuth/企业身份、企业微信等 Bot 通知、业务域报表与运行质量评估、预览构建、按执行器分桶的准入、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。

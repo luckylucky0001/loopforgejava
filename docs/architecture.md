@@ -89,6 +89,14 @@
 
 门禁 MCP 服务是 JSON-RPC over stdio 的最小实现（`initialize`、`tools/list`、`tools/call`、`ping`），校验规则与上游一致，以 `CREATE_NEW` 写结果文件保证只提交一次。它只依赖 JDK，引擎把它的两个类打包成 jar 写入工作区，由同一 JDK 在独立进程中启动；Docker 沙箱把 JDK 只读挂载到同一路径。
 
+## 平台 MCP 与知识库
+
+`/mcp` 是无状态 Streamable HTTP：每个工具对应公开 API 的一个操作（`PlatformOperations`），调用时以调用者本人的 `Authorization` 经回环地址重新请求本服务，所以安全过滤链和控制器的访问检查都会再走一遍，工具永远不会比调用者的 Token 权限更大；路径参数只能是单个普通片段，不能借 `..` 跳到其他接口。
+
+角色开启 `platformMcp` / `knowledgeBase` 时，引擎在每次调用前通过 `PlatformMcp` 端口取得服务器定义。服务端为这次调用签发运行令牌（`lfr1.`，HMAC，密钥存在数据库供所有实例共享）：令牌写明用途（平台或知识库）、运行、项目与角色，过期或运行结束即失效。平台令牌认证为“Agent”主体：只是运行所在项目的查看者，任何修改请求（除 `POST /mcp` 本身）在进入控制器之前就被拒绝；知识库令牌只能用于知识库代理。服务器定义只进入本次调用的运行时目录，事件只记录服务器 id。
+
+知识库代理把上游知识库 MCP（`kb_search`、`kb_fetch`、`kb_list_sources`、`kb_get_source`）按项目授权来源收窄：检索限制在授权来源内，阅读其他来源被拒绝，来源列表被过滤；写入工具从不提供给 Agent。开启知识库的角色写下的 `knowledge.md` 被收集为可选产物，在审核队列里编辑、驳回或写回（需要管理员打开写回开关，来源必须在项目授权范围内，路径规范为仓库内的 `.md`）。
+
 ## Docker 沙箱
 
 每个运行（含子 SOP 共享的工作区）一个长驻容器：`docker run -d --init --security-opt no-new-privileges -v <ws>:<ws> --user <uid:gid> … sleep infinity`。命令通过 `docker exec` 执行：变量值放在 docker 客户端自己的环境里并以 `-e NAME` 传入（命令行只有变量名）；每次 exec 带唯一的 `LOOPFORGE_EXEC_ID`，命令结束后由容器内包装器结束同标记的后台进程（否则它们会让 `docker exec` 一直不返回），取消和超时时再从外部按标记终止。引擎崩溃后恢复时删除旧容器、在同一工作区上重建。
