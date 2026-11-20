@@ -41,8 +41,36 @@ final class BotMessages {
     private BotMessages() {}
 
     static Outgoing render(NotificationChannel channel, String event, Run run, String publicUrl, Instant now) {
-        List<String> lines = lines(event, run, publicUrl);
-        String title = "LoopForge · " + TITLES.getOrDefault(event, event);
+        return render(channel, event, run, publicUrl, now, null);
+    }
+
+    /**
+     * With an AI report the message leads with its title, summary and body (Markdown; links and
+     * mentions are neutralised like all run text); a report that fell back adds why.
+     */
+    static Outgoing render(
+            NotificationChannel channel,
+            String event,
+            Run run,
+            String publicUrl,
+            Instant now,
+            RunReports.Report report) {
+        List<String> lines = new ArrayList<>();
+        if (report != null && report.generated()) {
+            if (!report.summary().isBlank()) {
+                lines.add(report.summary());
+            }
+            lines.addAll(report.body().lines().toList());
+            lines.add("");
+        }
+        lines.addAll(lines(event, run, publicUrl));
+        if (report != null && !report.generated()) {
+            lines.add("汇报\u0000整体 AI 汇报暂不可用：" + clip(report.error(), 200));
+        }
+        String title = "LoopForge · "
+                + (report != null && report.generated() && !report.title().isBlank()
+                        ? escape(clip(report.title(), 120))
+                        : TITLES.getOrDefault(event, event));
         return switch (channel.kind()) {
             case "wecom" ->
                 new Outgoing(

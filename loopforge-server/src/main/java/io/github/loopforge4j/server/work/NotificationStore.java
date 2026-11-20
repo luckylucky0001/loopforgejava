@@ -40,7 +40,8 @@ public class NotificationStore {
                 channel.lastDeliveryAt(),
                 channel.lastStatus(),
                 existing.map(NotificationChannel::createdAt).orElse(now),
-                now);
+                now,
+                channel.report());
         ObjectNode tree = Json.mapper().valueToTree(stamped);
         if (stamped.secret() != null) {
             tree.put("secret", stamped.secret());

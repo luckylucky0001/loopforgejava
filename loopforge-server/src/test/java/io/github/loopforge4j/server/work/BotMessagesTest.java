@@ -31,7 +31,8 @@ class BotMessagesTest {
     }
 
     static NotificationChannel channel(String kind, String url, String secret) {
-        return new NotificationChannel("c", "p1", "n", true, kind, url, secret, List.of(), null, null, null, null);
+        return new NotificationChannel(
+                "c", "p1", "n", true, kind, url, secret, List.of(), null, null, null, null, null);
     }
 
     @Test

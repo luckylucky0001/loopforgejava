@@ -1035,9 +1035,13 @@ async function projectPage(projectId) {
     { name: 'name', label: '名称' },
     { name: 'kind', label: '类型（webhook=通用 JSON；wecom/feishu/dingtalk/slack=群机器人）', type: 'select', options: ['webhook', 'wecom', 'feishu', 'dingtalk', 'slack'], value: 'webhook' },
     { name: 'url', label: 'URL（机器人填 Webhook 地址）' }, { name: 'secret', label: '签名密钥（可选；飞书/钉钉为加签密钥）', type: 'password' },
-    { name: 'events', label: '事件（逗号分隔，留空=全部）', placeholder: 'run.failed,run.waiting,run.succeeded' }],
+    { name: 'events', label: '事件（逗号分隔，留空=全部）', placeholder: 'run.failed,run.waiting,run.succeeded' },
+    { name: 'report', label: 'AI 整体汇报（运行成功时由 AI 总结成果与结论，以运行发起人的凭据生成；失败时发送标准消息）', type: 'select', options: ['false', 'true'], value: 'false' },
+    { name: 'instruction', label: '汇报要求（可选）', type: 'textarea', rows: 3, placeholder: '简洁说明需求的最终成果、验证结论和后续注意事项。' },
+    { name: 'executorId', label: '汇报执行器（留空 = 助手的执行器）' }, { name: 'model', label: '模型（可选）' }],
   (v) => api('/notifications', { method: 'POST', body: { projectId, name: v.name, kind: v.kind, url: v.url, secret: v.secret || undefined, enabled: true,
-    events: v.events.split(',').map((s) => s.trim()).filter(Boolean) } }).then(refresh));
+    events: v.events.split(',').map((s) => s.trim()).filter(Boolean),
+    report: v.report === 'true' ? { enabled: true, instruction: v.instruction || '', executorId: v.executorId || undefined, model: v.model || undefined } : undefined } }).then(refresh));
   const issueRepos = repositories.filter((r) => !r.projectId || r.projectId === projectId).map((r) => r.id);
   const editTracker = () => prompted('外部需求同步', [
     { name: 'issueRepositoryIds', label: `同步 Issue 的仓库（逗号分隔；可选：${issueRepos.join(', ') || '无'}）`, value: (tracker?.issueRepositoryIds || []).join(',') },
@@ -1098,7 +1102,7 @@ async function projectPage(projectId) {
     channels === null ? null : [
       h('div', { class: 'row' }, h('h2', {}, '通知'), h('span', { class: 'spacer' }), h('button', { onclick: newChannel }, '新建')),
       h('table', {}, h('tr', {}, ['名称', '类型', 'URL', '事件', '最近投递', '操作'].map((t) => h('th', {}, t))),
-        channels.map((c) => h('tr', {}, h('td', {}, c.name), h('td', {}, c.kind || 'webhook'), h('td', { class: 'mono' }, c.url), h('td', {}, (c.events || []).join(', ') || '全部'),
+        channels.map((c) => h('tr', {}, h('td', {}, c.name, c.report?.enabled ? h('span', { class: 'chip', title: c.report.instruction || '' }, 'AI 汇报') : null), h('td', {}, c.kind || 'webhook'), h('td', { class: 'mono' }, c.url), h('td', {}, (c.events || []).join(', ') || '全部'),
           h('td', {}, c.lastStatus ? `${c.lastStatus}（${time(c.lastDeliveryAt)}）` : '—'),
           h('td', {}, h('button', { class: 'danger', onclick: () => confirm('删除通知？') && attempt(() => api(`/notifications/${c.id}`, { method: 'DELETE' }), refresh) }, '删除')))))],
     h('div', { class: 'row' }, h('h2', {}, '成员'), h('span', { class: 'spacer' }), h('button', { onclick: addMember }, '添加')),

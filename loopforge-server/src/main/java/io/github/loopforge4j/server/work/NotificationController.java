@@ -97,7 +97,8 @@ class NotificationController {
                 null,
                 null,
                 null,
-                null);
+                null,
+                body.report());
     }
 
     private void validate(NotificationChannel body) {
@@ -112,6 +113,17 @@ class NotificationController {
             String problem = WebhookTargets.problem(url, allowPrivate);
             if (problem != null) {
                 problems.add(problem);
+            }
+        }
+        if (body.report() != null) {
+            if (body.report().instruction().length() > 2000) {
+                problems.add("report instruction must be at most 2000 characters");
+            }
+            for (String value : java.util.Arrays.asList(
+                    body.report().executorId(), body.report().model())) {
+                if (value != null && !value.matches("[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}")) {
+                    problems.add("report executor and model must be plain ids");
+                }
             }
         }
         if (!NotificationChannel.KINDS.contains(body.kind())) {

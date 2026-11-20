@@ -265,6 +265,8 @@ loopforge:
 
 通知渠道的 `kind` 可选 `webhook`（通用 JSON + HMAC 签名）、`wecom`（企业微信群机器人 Markdown）、`feishu`（飞书 / Lark 自定义机器人，可加签）、`dingtalk`（钉钉自定义机器人 Markdown，可加签）、`slack`（Incoming Webhook）；平台返回的错误码（如 `errcode`）计为投递失败。
 
+渠道可以开启 AI 整体汇报（`report: {enabled, instruction, executorId, model}`）：运行成功时，以运行发起人的个人凭据调用一次执行器（默认助手的执行器，在 `assistant.sandbox-profile` 的工作区里），只读取这次运行保存的输入、节点输出与产物（有长度预算），按要求写出标题、摘要与 Markdown 正文；机器人消息以汇报开头，Webhook 负载多一个 `report` 字段。没有有效汇报（重试一次后）、执行器不可用，或成员的运行在非隔离沙箱里时，发送标准消息并附上原因。几个渠道要求相同的汇报时只生成一次。
+
 ### SOP 设计器
 
 控制台「SOP」里打开一个 SOP 即进入设计视图：从工具栏添加 Agent / 脚本 / 人工审批 / 子 SOP 节点，拖动节点调整位置（保存到 `position`），从节点右侧的圆点拖到另一个节点即可连线；点选节点或连线后在右侧面板编辑角色、执行器、任务说明、脚本、产物、打回目标、失败策略与预算，Delete 键删除。「JSON」页签保留原始定义，两边同步；「校验」一次列出全部问题。

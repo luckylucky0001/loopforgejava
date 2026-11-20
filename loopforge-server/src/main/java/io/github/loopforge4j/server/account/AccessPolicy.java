@@ -56,6 +56,14 @@ public class AccessPolicy {
         }
     }
 
+    /**
+     * Whether platform-started agent work done for a person (who is an administrator or not) may run
+     * in {@code profileId}: the same rule as the person's own conversations.
+     */
+    public boolean profileAllowed(boolean admin, String profileId) {
+        return !membersRequireIsolation || admin || isolated(profileId);
+    }
+
     /** Configured as isolated, or a catalog profile whose driver isolates (native, docker). */
     private boolean isolated(String profileId) {
         return isolatedProfiles.contains(profileId)

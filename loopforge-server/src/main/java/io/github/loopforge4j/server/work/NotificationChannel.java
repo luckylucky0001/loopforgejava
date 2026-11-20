@@ -16,6 +16,8 @@ import java.util.Set;
  * @param events subset of {@link #EVENTS}; empty means all
  * @param secret webhook HMAC key, or the robot's signing secret (Feishu, DingTalk); write-only,
  *     never returned by the API
+ * @param report an AI-written overall report for {@code run.succeeded} (upstream notification
+ *     reports); {@code null} or disabled sends the standard message
  */
 public record NotificationChannel(
         String id,
@@ -32,7 +34,21 @@ public record NotificationChannel(
         Instant lastDeliveryAt,
         String lastStatus,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        Report report) {
+
+    /**
+     * @param instruction what the report should focus on (upstream {@code AIInstruction})
+     * @param executorId executor that writes it, the assistant's when empty
+     * @param model model of that executor, its default when empty
+     */
+    public record Report(boolean enabled, String instruction, String executorId, String model) {
+        public Report {
+            instruction = instruction == null ? "" : instruction.strip();
+            executorId = executorId == null || executorId.isBlank() ? null : executorId.strip();
+            model = model == null || model.isBlank() ? null : model.strip();
+        }
+    }
 
     public static final Set<String> EVENTS =
             Set.of("run.started", "run.waiting", "run.succeeded", "run.failed", "run.cancelled", "delivery.merged");
@@ -54,6 +70,11 @@ public record NotificationChannel(
 
     NotificationChannel delivered(Instant at, String status) {
         return new NotificationChannel(
-                id, projectId, name, enabled, kind, url, secret, events, at, status, createdAt, updatedAt);
+                id, projectId, name, enabled, kind, url, secret, events, at, status, createdAt, updatedAt, report);
+    }
+
+    /** Whether {@code event} asks for an AI report on this channel. */
+    boolean reports(String event) {
+        return "run.succeeded".equals(event) && report != null && report.enabled();
     }
 }

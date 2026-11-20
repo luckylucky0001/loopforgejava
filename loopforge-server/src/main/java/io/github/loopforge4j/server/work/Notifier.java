@@ -51,13 +51,16 @@ public class Notifier implements RunListener {
 
     private final boolean allowPrivate;
     private final String publicUrl;
+    private final org.springframework.beans.factory.ObjectProvider<RunReports> reports;
 
     public Notifier(
             NotificationStore channels,
             Clock clock,
-            io.github.loopforge4j.server.config.LoopForgeProperties properties) {
+            io.github.loopforge4j.server.config.LoopForgeProperties properties,
+            org.springframework.beans.factory.ObjectProvider<RunReports> reports) {
         this.channels = channels;
         this.clock = clock;
+        this.reports = reports;
         this.allowPrivate = properties.notifications().allowPrivateTargets();
         this.publicUrl = properties.publicUrl();
     }
@@ -109,16 +112,63 @@ public class Notifier implements RunListener {
         if (targets.isEmpty()) {
             return;
         }
-        String body = Json.write(payload(event, run));
+        // channels asking for the same report share one generation
+        Map<NotificationChannel.Report, java.util.concurrent.CompletableFuture<RunReports.Report>> generated =
+                new ConcurrentHashMap<>();
         for (NotificationChannel channel : targets) {
             Thread.ofVirtual().name("notify-" + channel.id()).start(() -> {
+                RunReports.Report report = channel.reports(event) ? report(generated, channel.report(), run) : null;
                 if ("webhook".equals(channel.kind())) {
-                    deliver(channel, event, body);
+                    deliver(channel, event, Json.write(payload(event, run, report)), report);
                 } else {
-                    deliverBot(channel, event, run);
+                    deliverBot(channel, event, run, report);
                 }
             });
         }
+    }
+
+    private RunReports.Report report(
+            Map<NotificationChannel.Report, java.util.concurrent.CompletableFuture<RunReports.Report>> generated,
+            NotificationChannel.Report settings,
+            Run run) {
+        java.util.concurrent.CompletableFuture<RunReports.Report> mine = new java.util.concurrent.CompletableFuture<>();
+        var existing = generated.putIfAbsent(settings, mine);
+        if (existing != null) {
+            return existing.join();
+        }
+        RunReports.Report report;
+        try {
+            report = reports.getObject().generate(run, settings);
+        } catch (RuntimeException e) {
+            log.warn("cannot generate the report of run {}: {}", run.id(), e.toString());
+            report = RunReports.Report.fallback("整体汇报生成失败");
+        }
+        mine.complete(report);
+        return report;
+    }
+
+    Map<String, Object> payload(String event, Run run, RunReports.Report report) {
+        Map<String, Object> payload = payload(event, run);
+        if (report != null) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("state", report.state());
+            if (report.generated()) {
+                out.put("title", report.title());
+                out.put("summary", report.summary());
+                out.put("body", report.body());
+            } else {
+                out.put("error", report.error());
+            }
+            payload.put("report", out);
+        }
+        return payload;
+    }
+
+    private static String suffix(RunReports.Report report) {
+        if (report == null) {
+            return "";
+        }
+        return report.generated() ? " · AI 汇报" : " · 汇报回退：" + report.error();
     }
 
     Map<String, Object> payload(String event, Run run) {
@@ -138,6 +188,10 @@ public class Notifier implements RunListener {
     }
 
     void deliver(NotificationChannel channel, String event, String body) {
+        deliver(channel, event, body, null);
+    }
+
+    void deliver(NotificationChannel channel, String event, String body, RunReports.Report report) {
         try {
             slots.acquire();
         } catch (InterruptedException e) {
@@ -183,12 +237,16 @@ public class Notifier implements RunListener {
             Thread.currentThread().interrupt();
         } finally {
             slots.release();
-            record(channel, event, status);
+            record(channel, event, status + suffix(report));
         }
     }
 
     /** A chat robot message in the platform's own format; the platform's error code decides success. */
     void deliverBot(NotificationChannel channel, String event, Run run) {
+        deliverBot(channel, event, run, null);
+    }
+
+    void deliverBot(NotificationChannel channel, String event, Run run, RunReports.Report report) {
         try {
             slots.acquire();
         } catch (InterruptedException e) {
@@ -206,7 +264,8 @@ public class Notifier implements RunListener {
                     Thread.sleep(wait.toMillis());
                 }
                 // rendered per attempt: signatures carry a timestamp
-                BotMessages.Outgoing message = BotMessages.render(channel, event, run, publicUrl, clock.instant());
+                BotMessages.Outgoing message =
+                        BotMessages.render(channel, event, run, publicUrl, clock.instant(), report);
                 try {
                     HttpResponse<java.io.InputStream> response = http.send(
                             HttpRequest.newBuilder(message.uri())
@@ -238,7 +297,7 @@ public class Notifier implements RunListener {
             status = "error";
         } finally {
             slots.release();
-            record(channel, event, status);
+            record(channel, event, status + suffix(report));
         }
     }
 
