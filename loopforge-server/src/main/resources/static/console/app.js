@@ -1132,9 +1132,44 @@ async function definitionPage(kind, id) {
 
 async function executorsPage() {
   const executors = await api('/executors');
+  const admin = me?.user?.role === 'admin' || me?.service;
   shell([h('h1', {}, '执行器'), h('table', {}, h('tr', {}, ['id', '名称', '类型', '命令', '模型', '可用'].map((t) => h('th', {}, t))),
     executors.map((e) => h('tr', {}, h('td', { class: 'mono' }, e.id), h('td', {}, e.name), h('td', {}, e.kind), h('td', { class: 'mono' }, e.binary || '内置'),
-      h('td', {}, e.model || '默认'), h('td', {}, e.available === false ? badge('failed') : badge('succeeded')))))]);
+      h('td', {}, e.model || '默认'), h('td', {}, e.available === false ? badge('failed') : badge('succeeded'))))),
+    admin ? managedCliPanel() : null]);
+}
+
+const MANAGED_STATUS = { updated: '已更新', unchanged: '已是最新', skipped: '跳过', failed: '失败', 'rolled-back': '已回滚', staged: '已暂存' };
+
+/** Platform-managed agent CLIs (upstream managed CLIs): versions, last report, update and rollback. */
+function managedCliPanel() {
+  const panel = h('div', { class: 'panel' }, h('h2', {}, '托管 CLI'), h('p', { class: 'muted' }, '加载中…'));
+  const load = () => api('/admin/managed-clis').then((v) => {
+    if (!v.enabled) {
+      panel.replaceChildren(h('h2', {}, '托管 CLI'), h('p', { class: 'muted' }, '未启用。开启 loopforge.managed-cli.enabled 后，平台从 npm 安装 Claude Code、Codex、CodeBuddy 的固定版本，每天检查更新（发布满 24 小时、校验 SHA-512 并探测所需参数后才启用），运行开始时锁定版本。'));
+      return;
+    }
+    const rows = v.providers.map((p) => {
+      const cur = v.current?.[p.name];
+      const prev = v.previous?.[p.name];
+      return h('tr', {}, h('td', {}, p.name), h('td', { class: 'mono' }, p.package), h('td', { class: 'mono' }, cur ? cur.version : '未安装'),
+        h('td', { class: 'mono' }, prev ? prev.version : '—'), h('td', { class: 'mono' }, v.rejected?.[p.name] || ''),
+        h('td', {}, h('button', { disabled: v.updating, onclick: () => attempt(() => api('/admin/managed-clis/update', { method: 'POST', body: { provider: p.name } }), () => setTimeout(load, 1500)) }, '更新'),
+          prev ? h('button', { onclick: () => confirm(`把 ${p.name} 回滚到 ${prev.version}？当前版本之后不会再自动安装。`) && attempt(() => api(`/admin/managed-clis/${p.name}/rollback`, { method: 'POST' }), load) }, '回滚') : null));
+    });
+    const report = v.lastReport;
+    panel.replaceChildren(h('div', { class: 'row' }, h('h2', {}, '托管 CLI'), h('span', { class: 'spacer' }),
+      v.updating ? h('span', { class: 'muted' }, '更新中…') : null,
+      h('button', { disabled: v.updating, onclick: () => attempt(() => api('/admin/managed-clis/update', { method: 'POST', body: {} }), () => setTimeout(load, 1500)) }, '全部更新'),
+      h('button', { onclick: load }, '刷新')),
+    h('p', { class: 'muted' }, `${v.dailyCheck ? '每日检查' : '已关闭每日检查'} · 下次 ${time(v.nextCheckAt)}${v.lastCheck ? ' · 上次 ' + time(v.lastCheck) : ''}`),
+    h('table', {}, h('tr', {}, ['CLI', '包', '当前', '上一个', '已拒绝', ''].map((t) => h('th', {}, t))), rows),
+    report ? h('div', { class: 'mt' }, h('strong', {}, `最近一次：${report.action} · ${time(report.finishedAt)}`), report.error ? h('div', { class: 'error' }, report.error) : null,
+      h('ul', {}, report.results.map((r) => h('li', {}, `${r.provider}：${MANAGED_STATUS[r.status] || r.status}${r.to ? ` ${r.from || '—'} → ${r.to}` : ''}${r.message ? '（' + r.message + '）' : ''}`)))) : null);
+    if (v.updating) setTimeout(() => { if (panel.isConnected) load(); }, 3000);
+  }).catch((error) => panel.replaceChildren(h('h2', {}, '托管 CLI'), errorBox(error)));
+  load();
+  return panel;
 }
 
 // ------------------------------------------------------------------ projects

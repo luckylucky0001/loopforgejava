@@ -148,7 +148,8 @@ public final class Conversations {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "sandbox profile '" + turn.sandboxProfileId() + "' is not available"));
         Sandbox sandbox = provider.acquire(workspaceId(turn.conversationId()));
-        ExecutorDefinition executor = executor(turn.bot());
+        ExecutorDefinition executor = engine.managedBinaries()
+                .resolve(workspaceId(turn.conversationId()), turn.sandboxProfileId(), executor(turn.bot()));
         AgentExecutor adapter = engine.executors()
                 .adapter(executor.kind())
                 .orElseThrow(

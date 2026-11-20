@@ -122,6 +122,18 @@ loopforge:
 
 配置了单独的预览源时，服务器需要能访问 `loopforge.preview.public-url`。Docker 镜像不带浏览器，需要截图时在镜像里自行安装。
 
+### 托管 Agent CLI
+
+开启 `loopforge.managed-cli.enabled` 后，平台从 npm 官方仓库把 Claude Code、Codex、CodeBuddy 安装到 `loopforge.managed-cli.root` 下按版本区分的目录（需要 Node.js 22+ 与 npm）。每天 04:00–04:10（北京时间）检查一次：只选 `latest` 以内发布满 24 小时的稳定版，不降级，核对 SHA-512 完整性，并确认新版本报告的版本号和执行器要用的参数都在，才切换过去；安装时不带任何密钥，`--ignore-scripts` 安装、校验之后再构建依赖。
+
+运行和对话在第一次用到 CLI 时锁定当时的版本，之后的更新不影响它们。托管版本只替换没有显式配置命令（`loopforge.executors.<id>.binary`）的执行器，且只用于能看到本机文件的沙箱。管理员在「执行器」页查看版本、立即更新或回滚；回滚掉的版本不会再被自动安装，直到出现更新的版本。
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `loopforge.managed-cli.enabled` | `false` | 开启托管 |
+| `loopforge.managed-cli.root` | `./data/managed-cli` | 安装目录 |
+| `loopforge.managed-cli.daily-check` | `true` | 每日自动检查 |
+
 ### 工作区终端
 
 运行的工作区页面和对话页都有「终端」：在工作区自己的沙箱里打开一个交互式 Shell（有 `script` 时带伪终端，支持颜色和交互程序）。只有能操作运行的人能打开，而且要等没有节点在运行（停在审批处、已暂停或已结束）；对话在助手回复时不能打开。终端只属于打开它的人，每人每个工作区最多 2 个；离开页面 15 秒后自动关闭，运行事件里会记下谁打开过终端。终端不带个人 Git 凭据。
@@ -414,6 +426,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
 | `POST/DELETE` | `/api/v1/runs/{id}/browser`、`/api/v1/assistant/sessions/{id}/browser` | Agent 浏览器：状态、打开网址、前进后退、快照、截图、按 ref 点击 / 输入 / 按键、标签页、控制台输入事件；关闭 |
 | `POST` | `/api/v1/runs/{id}/workspace/terminal`、`/api/v1/assistant/sessions/{id}/terminal` | 工作区终端：`open` / `read`（Base64 输出）/ `input` / `close` |
+| `GET/POST` | `/api/v1/admin/managed-clis[/update\|/{cli}/rollback]` | 托管 Agent CLI：版本与最近报告、立即更新（后台）、回滚（管理员） |
 | `POST` | `/api/v1/browser/mcp` | 浏览器 MCP（Agent 的浏览器令牌） |
 | `GET/POST/PUT/DELETE` | `/api/v1/runs/{id}/preview[/session[/{sid}]\|/backend\|/download\|/screenshot]`、`/preview/{令牌}/**` | 前端预览：状态、会话链接（可带后端地址、可撤销）、默认后端地址、zip 下载、截图（PNG，`POST` 重新截图）、删除；免登录的隔离访问 |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |

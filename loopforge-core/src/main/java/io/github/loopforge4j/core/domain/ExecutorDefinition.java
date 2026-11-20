@@ -24,6 +24,10 @@ public record ExecutorDefinition(
         name = name == null || name.isBlank() ? id : name;
     }
 
+    public ExecutorDefinition withBinary(String newBinary) {
+        return new ExecutorDefinition(id, name, kind, newBinary, args, protocol, model, effort);
+    }
+
     public ExecutorDefinition withModel(String newModel, String newEffort) {
         return new ExecutorDefinition(id, name, kind, binary, args, protocol, newModel, newEffort);
     }

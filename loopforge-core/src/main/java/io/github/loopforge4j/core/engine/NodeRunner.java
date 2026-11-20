@@ -555,7 +555,9 @@ final class NodeRunner {
                         .filter(a -> a.usableIn(project))
                         .orElseThrow(() ->
                                 new NodeFailure(FailureKind.CONFIGURATION, "agent '" + node.agentId() + "' not found"));
-        ExecutorDefinition executor = resolveExecutor(agent, node);
+        Run pinned = currentRun(runId);
+        ExecutorDefinition executor = engine.managedBinaries()
+                .resolve(pinned.workspaceOwnerId(), pinned.workflow().sandboxProfileId(), resolveExecutor(agent, node));
         AgentExecutor adapter = engine.executors()
                 .adapter(executor.kind())
                 .orElseThrow(() -> new NodeFailure(

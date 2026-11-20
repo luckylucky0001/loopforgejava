@@ -243,6 +243,8 @@ class EngineConfiguration {
             io.github.loopforge4j.server.preview.JdbcPreviewStore previews,
             io.github.loopforge4j.server.workspace.JdbcWorkspaceSnapshotStore snapshots,
             org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.core.mcp.PlatformMcp> platformMcp,
+            org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.server.ops.ManagedCliService>
+                    managedClis,
             io.github.loopforge4j.core.store.InstanceRegistry instances,
             LoopForgeProperties properties,
             Clock clock,
@@ -292,6 +294,7 @@ class EngineConfiguration {
                 .gitCredentials(gitCredentials)
                 .mcpSecrets(properties.mcp().secrets()::get)
                 .platformMcp(platformMcp.getIfAvailable())
+                .managedBinaries(managedClis.getIfAvailable())
                 .delivery(delivery)
                 .settings(settings)
                 .clock(clock)

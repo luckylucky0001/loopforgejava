@@ -45,7 +45,19 @@ public record LoopForgeProperties(
         @Valid @DefaultValue Assistant assistant,
         @Valid @DefaultValue Skillhub skillhub,
         @Valid @DefaultValue Preview preview,
-        @Valid @DefaultValue Browser browser) {
+        @Valid @DefaultValue Browser browser,
+        @Valid @DefaultValue ManagedCli managedCli) {
+
+    /**
+     * Platform-managed agent CLIs (upstream {@code managedcli}): Claude Code, Codex and CodeBuddy
+     * installed from npm into version directories under {@code root}, checked daily, pinned per run.
+     *
+     * @param dailyCheck look for updates once a day (04:00–04:10 Beijing time)
+     */
+    public record ManagedCli(
+            @DefaultValue("false") boolean enabled,
+            @NotNull @DefaultValue("./data/managed-cli") Path root,
+            @DefaultValue("true") boolean dailyCheck) {}
 
     /**
      * The headless browser behind preview screenshots (Chromium or Chrome).

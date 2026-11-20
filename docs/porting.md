@@ -46,6 +46,7 @@
 | `internal/domain/preview*.go`、`internal/preview/*`（归档、网关、会话、下载）、`internal/httpapi/run_preview.go`、runner 预览上传 | `core.domain.PreviewContract`、`core.preview.*`（`PreviewBuild`、`PreviewArchive`、`FrontendDetector`）、`core.engine.PreviewSteps`、`server.preview.*`、`runner.RemotePreviewStore` | 前端预览约定与自动追加的构建步骤、非前端跳过、构建后立即归档、会话链接（哈希令牌、滑动续期、撤销）、后端地址拦截、HTML / CSS / JS 路径改写与 History 适配、保留期过期、执行机器上传；另有可写构建命令的 `preview` 节点。站点与截图存数据库（未移植 tar.zst 内容寻址存储）；上游只声明了 `captureScreenshot`，这里由服务器上的无头浏览器实际截图 |
 | `internal/runtime/browser*.go`（CDP、视图、Agent 操作）、`internal/httpapi/assistant_browser.go`、Playwright MCP 注入 | `core.runtime.browser.*`（`CdpBrowser`、`CdpPage`、`AgentBrowser`）、`server.browser.*`（`AgentBrowsers`、`BrowserPolicy`、`BrowserController`、`BrowserMcpController`） | Agent 浏览器：快照与 ref、点击 / 输入 / 按键、截图、标签页、前进后退、控制台实时画面与接管；以自带的浏览器 MCP 代替 Playwright MCP |
 | `internal/runtime/workspace_terminal*.go`、`run_workspace_edit.go` 的终端接口 | `core.runtime.WorkspaceTerminals`、`server.workspace.WorkspaceTerminalController` | 工作区终端：经沙箱启动的伪终端、读 / 写 / 关闭、闲置关闭、每人数量上限 |
+| `internal/managedcli/*`（注册表、安装、探测、状态、锁定、调度） | `core.runtime.managed.ManagedClis`、`core.engine.ManagedBinaries`、`server.ops.ManagedCliService`、`ManagedCliController` | 托管 Agent CLI：成熟版本选择、完整性校验、参数探测、版本锁定、回滚与拒绝、每日窗口 |
 | `internal/runeval/*`、`internal/domain/run_eval.go` | `core.eval.*`、`server.eval.*` | 运行评测：事实、加权维度、评测提示与结果约定、建议应用到当前 SOP / 角色 |
 | `internal/httpapi/clarify_jobs.go`、`clarify_session.go`、`issue_routes.go`（澄清） | `server.work.Clarification*`、`core.engine.Conversations.checkout` | AI 澄清：后台轮次、只读检出、续接会话、范围规则与轮数收敛、结论写入描述与回写原单 |
 | `internal/tracker/service.go`、`tapd_url.go` | `server.tracker`（`TrackerService`、`GitHubIssues`、`GitLabIssues`、`TapdClient`、`TapdLinks`） | 拉取、TAPD 链接导入、推送、交付回写、定时同步；直接调用 GitHub / GitLab / TAPD 开放 API |
@@ -111,6 +112,7 @@
 | 页面反馈的可见范围 | 登录用户都能看到全部反馈 | 管理员看全部，其他人只看自己的；提交需要个人账户（服务令牌不行） | 截图可能包含其他项目的内容 |
 | Agent 浏览器的位置 | docker 沙箱带浏览器 sidecar（共享沙箱网络），本机执行用宿主 Chromium | 浏览器跑在服务器上，只给共享主机网络的沙箱（local / 共享网络的 bwrap）与对话；隔离沙箱和执行机器上的 Agent 不注入；元数据地址拦截，`file://` 限本工作区 | 服务器上的浏览器不能进入隔离沙箱的网络，也不能让隔离沙箱借它访问服务器网络 |
 | 工作区终端 | 需要先进入工作区编辑会话（暂停运行并持有编辑租约），绑定打开者自己的 Git 凭据，支持调整窗口大小 | 没有节点运行时即可打开（等待审批、已暂停或已结束），不绑定个人 Git 凭据；窗口大小在打开时确定 | 没有单独的编辑租约；终端里推送需要自行配置凭据 |
+| 托管 CLI | 工作进程默认开启，执行机器同样托管 | 默认关闭（`loopforge.managed-cli.enabled`），只在服务器上托管；每日窗口按 5 分钟轮询判断 | 镜像通常不带 Node.js；执行机器继续用自己的 CLI |
 | 工作区快照 | tar.gz，分块传输最多 512 MB；空闲一小时回收前保存，切换或在 IDE 中使用时恢复 | zip（清单记录可执行位与符号链接），默认上限 100 MB；运行结束释放前保存，重跑时恢复；执行机器不保存 | 本项目在运行结束时释放工作区，没有空闲回收与工作区租约 |
 | 对话内自动登记 PR | 远程执行机器由 Runner 扫描检出；登记到工作区或会话关联的需求；GitHub | 只扫描服务端的对话工作区（读取 `.git` 文件，不执行 git）；只有项目对话；GitHub（含 Enterprise，按 `github.api-url` 的主机） | 对话工作区在服务端；读取文件比在 Agent 写过的仓库里执行 git 更安全 |
 | 项目角色的运行环境 | 项目角色与 SOP 在所选沙箱运行 | 成员需隔离沙箱时，项目自己的角色、规则与 Skills 只在隔离沙箱中运行，复制模板时需选择隔离沙箱；执行机器由机器所有者决定 | 项目维护者写的提示词、Hook 与门禁不应在服务器主机上执行 |

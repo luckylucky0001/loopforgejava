@@ -99,6 +99,7 @@ public final class RunEngine implements AutoCloseable {
     private final TelemetryBuffer telemetry;
     private final java.util.function.UnaryOperator<String> mcpSecrets;
     private final io.github.loopforge4j.core.mcp.PlatformMcp platformMcp;
+    private final ManagedBinaries managedBinaries;
     /** The execution machine this engine is, {@code null} for server instances. */
     private final String runnerId;
 
@@ -127,6 +128,7 @@ public final class RunEngine implements AutoCloseable {
         this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
         this.platformMcp =
                 builder.platformMcp == null ? io.github.loopforge4j.core.mcp.PlatformMcp.NONE : builder.platformMcp;
+        this.managedBinaries = builder.managedBinaries == null ? ManagedBinaries.NONE : builder.managedBinaries;
         this.runnerId = builder.runnerId == null || builder.runnerId.isBlank() ? null : builder.runnerId.strip();
         this.gateMcpJava = builder.gateMcpJava == null
                 ? io.github.loopforge4j.core.mcp.GateMcpPackage.currentJava()
@@ -2005,6 +2007,10 @@ public final class RunEngine implements AutoCloseable {
         return delivery;
     }
 
+    ManagedBinaries managedBinaries() {
+        return managedBinaries;
+    }
+
     io.github.loopforge4j.core.mcp.PlatformMcp platformMcp() {
         return platformMcp;
     }
@@ -2257,6 +2263,7 @@ public final class RunEngine implements AutoCloseable {
         private io.github.loopforge4j.core.pricing.TokenPricing pricing;
         private java.util.function.UnaryOperator<String> mcpSecrets;
         private io.github.loopforge4j.core.mcp.PlatformMcp platformMcp;
+        private ManagedBinaries managedBinaries;
         private String runnerId;
         private java.nio.file.Path gateMcpJava;
         private DeliveryProvider delivery;
@@ -2275,6 +2282,12 @@ public final class RunEngine implements AutoCloseable {
         /** Platform-served MCP servers for roles with {@code platformMcp} / {@code knowledgeBase}. */
         public Builder platformMcp(io.github.loopforge4j.core.mcp.PlatformMcp value) {
             this.platformMcp = value;
+            return this;
+        }
+
+        /** Agent CLI executables managed by the deployment (pinned per run). */
+        public Builder managedBinaries(ManagedBinaries value) {
+            this.managedBinaries = value;
             return this;
         }
 
