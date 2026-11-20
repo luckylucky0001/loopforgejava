@@ -5,6 +5,7 @@ import io.github.loopforge4j.core.runtime.CancelledException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -19,11 +20,25 @@ public final class LocalSandbox implements Sandbox {
     private final String id;
     private final Path workspace;
     private final LocalSandboxOptions options;
+    private final String driver;
+    /** Turns (argv, working directory) into the argv actually started; identity for plain local. */
+    private final java.util.function.BiFunction<List<String>, Path, List<String>> launcher;
 
     LocalSandbox(String id, Path workspace, LocalSandboxOptions options) {
+        this(id, workspace, options, "local", (argv, directory) -> argv);
+    }
+
+    LocalSandbox(
+            String id,
+            Path workspace,
+            LocalSandboxOptions options,
+            String driver,
+            java.util.function.BiFunction<List<String>, Path, List<String>> launcher) {
         this.id = id;
         this.workspace = workspace;
         this.options = options;
+        this.driver = driver;
+        this.launcher = launcher;
     }
 
     @Override
@@ -33,7 +48,7 @@ public final class LocalSandbox implements Sandbox {
 
     @Override
     public String driver() {
-        return "local";
+        return driver;
     }
 
     @Override
@@ -48,7 +63,7 @@ public final class LocalSandbox implements Sandbox {
         Map<String, String> environment = baseEnvironment(command.label());
         environment.putAll(command.environment());
         return ProcessRunner.run(
-                command.argv(),
+                launcher.apply(command.argv(), directory),
                 directory,
                 environment,
                 command.stdin(),

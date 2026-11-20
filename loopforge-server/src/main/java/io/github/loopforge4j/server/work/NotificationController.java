@@ -87,6 +87,7 @@ class NotificationController {
                 body.projectId(),
                 body.name().strip(),
                 body.enabled(),
+                body.kind(),
                 body.url().strip(),
                 secret,
                 body.events(),
@@ -109,6 +110,9 @@ class NotificationController {
             if (problem != null) {
                 problems.add(problem);
             }
+        }
+        if (!NotificationChannel.KINDS.contains(body.kind())) {
+            problems.add("kind must be one of " + new java.util.TreeSet<>(NotificationChannel.KINDS));
         }
         for (String event : body.events()) {
             if (!NotificationChannel.EVENTS.contains(event)) {

@@ -22,6 +22,11 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 8)
+- 群机器人通知：通知渠道 `kind` 支持 `wecom`、`feishu`、`dingtalk`、`slack`（原生消息格式、飞书/钉钉加签、平台错误码计为失败、`loopforge.public-url` 运行链接）。
+- bubblewrap 轻量沙箱（`loopforge.sandbox.bwrap`）：主机只读、只写本运行工作区、私有 /tmp、独立命名空间，隐藏其他运行与服务端 HOME；启动时检查可用性。
+- OIDC 单点登录（`loopforge.security.oidc`）：授权码 + PKCE、JWKS 校验、issuer+subject 绑定账户、邮箱域限制；控制台 SSO 入口。
+
 ### Added (迭代 7)
 - 平台 MCP：`/mcp`（无状态 Streamable HTTP）把公开 API 作为工具提供，按调用者本人的权限执行；`/api/v1/capabilities` 操作清单；JDK-only 的 stdio 桥 `PlatformMcpBridge`。
 - 角色开关 `platformMcp` / `knowledgeBase`：每次调用签发只在运行期间有效、只读、限定本项目的运行令牌（`lfr1.`）；无法注入时只告警不失败。

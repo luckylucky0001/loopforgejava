@@ -94,6 +94,31 @@ class EngineConfiguration {
                         properties.engine().nodeTimeout()));
     }
 
+    @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty("loopforge.sandbox.bwrap.enabled")
+    io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider bwrapSandboxProvider(
+            LoopForgeProperties properties) {
+        LoopForgeProperties.Bwrap bwrap = properties.sandbox().bwrap();
+        if (!io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider.available(bwrap.binary())) {
+            throw new IllegalStateException("loopforge.sandbox.bwrap is enabled but '" + bwrap.binary()
+                    + "' cannot create namespaces on this host (install bubblewrap and allow unprivileged user"
+                    + " namespaces)");
+        }
+        java.util.List<java.nio.file.Path> hidden = new java.util.ArrayList<>(bwrap.hiddenPaths());
+        if (bwrap.hideServerHome()) {
+            hidden.add(java.nio.file.Path.of(System.getProperty("user.home")));
+        }
+        LoopForgeProperties.Sandbox sandbox = properties.sandbox();
+        return new io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider(
+                new LocalSandboxOptions(
+                        properties.workspaceRoot(),
+                        sandbox.passthroughEnv(),
+                        sandbox.privateHome(),
+                        properties.engine().nodeTimeout()),
+                new io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider.Options(
+                        bwrap.profile(), bwrap.binary(), hidden, bwrap.shareNetwork()));
+    }
+
     /** Deployment-wide Git credentials (upstream resolves them per responsible user). */
     @Bean
     GitCredentialProvider gitCredentialProvider(LoopForgeProperties properties) {
@@ -159,6 +184,7 @@ class EngineConfiguration {
             GitCredentialProvider gitCredentials,
             DeliveryProvider delivery,
             java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.DockerSandboxProvider> docker,
+            java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider> bwrap,
             org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.core.mcp.PlatformMcp> platformMcp,
             io.github.loopforge4j.core.store.InstanceRegistry instances,
             LoopForgeProperties properties,
@@ -181,6 +207,7 @@ class EngineConfiguration {
                 .executors(executors)
                 .sandbox(sandbox);
         docker.ifPresent(builder::sandbox);
+        bwrap.ifPresent(builder::sandbox);
         RunEngine runEngine = builder.instances(instances)
                 .pricing(io.github.loopforge4j.core.pricing.TokenPricing.withOverrides(properties.pricing().stream()
                         .collect(java.util.stream.Collectors.toMap(

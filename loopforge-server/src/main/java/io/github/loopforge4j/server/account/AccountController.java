@@ -33,8 +33,16 @@ class AccountController {
     private final ProjectStore projects;
     private final AccessPolicy access;
 
+    private final OidcService oidc;
+
     AccountController(
-            AccountService accounts, UserStore users, TokenStore tokens, ProjectStore projects, AccessPolicy access) {
+            AccountService accounts,
+            UserStore users,
+            TokenStore tokens,
+            ProjectStore projects,
+            AccessPolicy access,
+            OidcService oidc) {
+        this.oidc = oidc;
         this.accounts = accounts;
         this.users = users;
         this.tokens = tokens;
@@ -69,7 +77,7 @@ class AccountController {
     @Operation(summary = "Whether the first administrator still has to be created")
     @GetMapping("/auth/status")
     Map<String, Object> status() {
-        return Map.of("setupRequired", accounts.setupRequired());
+        return Map.of("setupRequired", accounts.setupRequired(), "oidc", oidc.status());
     }
 
     @Operation(summary = "Create the first administrator (only while no account exists)")

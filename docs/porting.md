@@ -35,7 +35,9 @@
 | `internal/domain/user.go`、`project.go`、`internal/httpapi` 账户/项目部分 | `server.account` | 密码账户 + Token；未移植 OAuth/企业身份、个人凭据库 |
 | `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*` | 平台需求；未移植工蜂/TAPD 同步、多泳道 |
 | `internal/domain/shared_schedule.go`、`schedule_execution.go` | `server.work.Schedule*` | cron 定时运行 |
-| `internal/domain/notification*.go` | `server.work.Notifier`、`NotificationChannel` | Webhook；未移植企业微信/Bot 模板 |
+| `internal/domain/notification*.go`、`internal/notification` | `server.work.Notifier`、`NotificationChannel`、`BotMessages` | Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人；未移植企业微信智能机器人长连接（卡片内审批）与 AI 运行报告 |
+| `internal/runtime/sandbox_process.go`（bwrap） | `core.runtime.sandbox.BwrapSandboxProvider` | 已移植（Linux bwrap；macOS seatbelt 未移植） |
+| `internal/auth`（企业身份） | `server.account.OidcService`、`OidcClient`、`OidcController` | 标准 OIDC 授权码 + PKCE（JDK 实现，RS256/ES256） |
 | `web/`（React 控制台） | `static/console`（原生 ES 模块） | 重写，不含上游前端代码与素材 |
 | `internal/mcpserver`、`internal/application/operations.go`、`cmd/agentflow-mcp` | `server.mcp.PlatformMcpController`、`PlatformOperations`、`core.mcp.PlatformMcpBridge` | 已移植（操作清单对应本移植的 API） |
 | `internal/runtime/platform_mcp.go`、`internal/engine/assets.go`（平台/知识库注入） | `core.mcp.PlatformMcp`、`NodeRunner.bindPlatformMcp`、`server.mcp.ServerPlatformMcp` | 已移植 |
@@ -70,7 +72,9 @@
 | Agent 的平台 MCP 凭据 | 部署级 Token（全部操作） | 每次调用签发的运行令牌：只读、只能访问运行所在项目、运行结束即失效 | Agent 受提示词注入影响，不应拥有写权限 |
 | 知识库代理令牌 | 由上游 Token 派生的密钥签名，48 小时有效 | 数据库共享密钥签名；运行结束即失效 | 多实例共享，泄露窗口更短 |
 | `knowledge.md` | 需 SOP 声明为产物 | 开启知识库的角色自动收集（可选产物） | 使用规范要求写这个文件，不应依赖每个 SOP 记得声明 |
+| bwrap 沙箱可见范围 | 只读根文件系统，其他工作区可读 | 另外隐藏工作区根目录（含其他运行）与服务端 HOME，可配置更多 | 一个运行不应读到另一个运行或服务端的登录凭据 |
+| 单点登录账户绑定 | 企业身份 | issuer + subject 绑定；重名时改用新用户名，邮箱关联需显式开启 | 防止身份提供方里的同名用户接管本地账户（含管理员） |
 
 ## 尚未移植
 
-Chat/Main Bot 与会话工作区、工蜂/TAPD Issue 同步、执行机器（runner）与云端池、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、OAuth/企业身份、企业微信等 Bot 通知、业务域报表与运行质量评估、预览构建、按执行器分桶的准入、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。
+Chat/Main Bot 与会话工作区、工蜂/TAPD Issue 同步、执行机器（runner）与云端池（含按执行机器分桶的准入）、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、Agent CLI 的模型网关与个人凭据、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。

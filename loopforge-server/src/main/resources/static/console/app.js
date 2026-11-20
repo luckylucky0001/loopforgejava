@@ -205,8 +205,25 @@ const ROUTES = [
   [/^#\/analytics$/, analyticsPage], [/^#\/knowledge$/, knowledgePage],
 ];
 
+const SSO_ERRORS = {
+  state: '登录已过期或被打断，请重新登录', provider: '身份提供方拒绝了登录', token: '身份提供方返回的凭证无效',
+  domain: '该邮箱域名不允许登录', account: '没有与该身份关联的账户，请联系管理员', disabled: '账户已停用',
+};
+let ssoError = '';
+
 async function route() {
   if (stream) { stream.close(); stream = null; }
+  if (location.hash.startsWith('#/sso')) {
+    // the session token arrives in the fragment; drop it from the address bar and history at once
+    const params = new URLSearchParams(location.hash.split('?')[1] || '');
+    history.replaceState(null, '', `${location.pathname}#/runs`);
+    if (params.get('token')) {
+      localStorage.setItem(TOKEN_KEY, params.get('token'));
+      me = null;
+    } else {
+      ssoError = SSO_ERRORS[params.get('error')] || '单点登录失败';
+    }
+  }
   if (!token()) return loginPage();
   if (!me) {
     try { me = await api('/me'); } catch (error) { if (error.status === 401) return loginPage(); }
@@ -260,7 +277,10 @@ async function loginPage() {
       h('label', { class: 'field' }, h('span', {}, '用户名'), username),
       h('label', { class: 'field' }, h('span', {}, '密码'), password),
       status.setupRequired ? null : h('label', { class: 'field' }, h('span', {}, '服务 Token（可选）'), serviceToken),
-      message, h('button', { class: 'primary', type: 'submit' }, status.setupRequired ? '创建并登录' : '登录'))));
+      message, h('button', { class: 'primary', type: 'submit' }, status.setupRequired ? '创建并登录' : '登录')),
+    !status.setupRequired && status.oidc?.enabled
+      ? h('div', { class: 'mt' }, h('a', { class: 'btn', href: '/api/v1/auth/oidc/start' }, `使用 ${status.oidc.name || 'SSO'} 登录`)) : null));
+  if (ssoError) { message.textContent = ssoError; ssoError = ''; }
 }
 
 // ------------------------------------------------------------------ runs
@@ -540,10 +560,12 @@ async function projectPage(projectId) {
     { name: 'zone', label: '时区', value: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' },
     { name: 'workflowId', label: 'SOP', type: 'select', options: sopOptions }, { name: 'input', label: '输入', type: 'textarea', rows: 3 }],
   (v) => api(`/projects/${projectId}/schedules`, { method: 'POST', body: { ...v, enabled: true, skipIfRunning: true } }).then(refresh));
-  const newChannel = () => prompted('新 Webhook', [
-    { name: 'name', label: '名称' }, { name: 'url', label: 'URL' }, { name: 'secret', label: '签名密钥（可选）', type: 'password' },
+  const newChannel = () => prompted('新通知', [
+    { name: 'name', label: '名称' },
+    { name: 'kind', label: '类型（webhook=通用 JSON；wecom/feishu/dingtalk/slack=群机器人）', type: 'select', options: ['webhook', 'wecom', 'feishu', 'dingtalk', 'slack'], value: 'webhook' },
+    { name: 'url', label: 'URL（机器人填 Webhook 地址）' }, { name: 'secret', label: '签名密钥（可选；飞书/钉钉为加签密钥）', type: 'password' },
     { name: 'events', label: '事件（逗号分隔，留空=全部）', placeholder: 'run.failed,run.waiting,run.succeeded' }],
-  (v) => api('/notifications', { method: 'POST', body: { projectId, name: v.name, url: v.url, secret: v.secret || undefined, enabled: true,
+  (v) => api('/notifications', { method: 'POST', body: { projectId, name: v.name, kind: v.kind, url: v.url, secret: v.secret || undefined, enabled: true,
     events: v.events.split(',').map((s) => s.trim()).filter(Boolean) } }).then(refresh));
   const addMember = () => prompted('添加成员', [{ name: 'user', label: '用户名' },
     { name: 'role', label: '角色', type: 'select', options: ['viewer', 'developer', 'maintainer', 'owner'], value: 'developer' }],
@@ -565,8 +587,8 @@ async function projectPage(projectId) {
           h('button', { class: 'danger', onclick: () => confirm('删除定时任务？') && attempt(() => api(`/projects/${projectId}/schedules/${s.id}`, { method: 'DELETE' }), refresh) }, '删除')))))),
     channels === null ? null : [
       h('div', { class: 'row' }, h('h2', {}, '通知'), h('span', { class: 'spacer' }), h('button', { onclick: newChannel }, '新建')),
-      h('table', {}, h('tr', {}, ['名称', 'URL', '事件', '最近投递', '操作'].map((t) => h('th', {}, t))),
-        channels.map((c) => h('tr', {}, h('td', {}, c.name), h('td', { class: 'mono' }, c.url), h('td', {}, (c.events || []).join(', ') || '全部'),
+      h('table', {}, h('tr', {}, ['名称', '类型', 'URL', '事件', '最近投递', '操作'].map((t) => h('th', {}, t))),
+        channels.map((c) => h('tr', {}, h('td', {}, c.name), h('td', {}, c.kind || 'webhook'), h('td', { class: 'mono' }, c.url), h('td', {}, (c.events || []).join(', ') || '全部'),
           h('td', {}, c.lastStatus ? `${c.lastStatus}（${time(c.lastDeliveryAt)}）` : '—'),
           h('td', {}, h('button', { class: 'danger', onclick: () => confirm('删除通知？') && attempt(() => api(`/notifications/${c.id}`, { method: 'DELETE' }), refresh) }, '删除')))))],
     h('div', { class: 'row' }, h('h2', {}, '成员'), h('span', { class: 'spacer' }), h('button', { onclick: addMember }, '添加')),

@@ -33,6 +33,7 @@ public class NotificationStore {
                 channel.projectId(),
                 channel.name(),
                 channel.enabled(),
+                channel.kind(),
                 channel.url(),
                 channel.secret(),
                 channel.events(),

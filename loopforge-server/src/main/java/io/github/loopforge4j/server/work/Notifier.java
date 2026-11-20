@@ -50,6 +50,7 @@ public class Notifier implements RunListener {
     private record Seen(RunStatus status, int merged) {}
 
     private final boolean allowPrivate;
+    private final String publicUrl;
 
     public Notifier(
             NotificationStore channels,
@@ -58,6 +59,7 @@ public class Notifier implements RunListener {
         this.channels = channels;
         this.clock = clock;
         this.allowPrivate = properties.notifications().allowPrivateTargets();
+        this.publicUrl = properties.publicUrl();
     }
 
     @Override
@@ -109,7 +111,13 @@ public class Notifier implements RunListener {
         }
         String body = Json.write(payload(event, run));
         for (NotificationChannel channel : targets) {
-            Thread.ofVirtual().name("notify-" + channel.id()).start(() -> deliver(channel, event, body));
+            Thread.ofVirtual().name("notify-" + channel.id()).start(() -> {
+                if ("webhook".equals(channel.kind())) {
+                    deliver(channel, event, body);
+                } else {
+                    deliverBot(channel, event, run);
+                }
+            });
         }
     }
 
@@ -173,6 +181,56 @@ public class Notifier implements RunListener {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        } finally {
+            slots.release();
+            record(channel, event, status);
+        }
+    }
+
+    /** A chat robot message in the platform's own format; the platform's error code decides success. */
+    void deliverBot(NotificationChannel channel, String event, Run run) {
+        try {
+            slots.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        String status = "failed";
+        try {
+            if (WebhookTargets.problem(channel.url(), allowPrivate) != null) {
+                status = "blocked";
+                return;
+            }
+            for (Duration wait : BACKOFF) {
+                if (!wait.isZero()) {
+                    Thread.sleep(wait.toMillis());
+                }
+                // rendered per attempt: signatures carry a timestamp
+                BotMessages.Outgoing message = BotMessages.render(channel, event, run, publicUrl, clock.instant());
+                try {
+                    HttpResponse<String> response = http.send(
+                            HttpRequest.newBuilder(message.uri())
+                                    .timeout(Duration.ofSeconds(15))
+                                    .header("Content-Type", "application/json")
+                                    .header("User-Agent", "loopforge4j-notifier")
+                                    .POST(HttpRequest.BodyPublishers.ofString(message.body(), StandardCharsets.UTF_8))
+                                    .build(),
+                            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                    String rejection = BotMessages.rejection(channel.kind(), response.statusCode(), response.body());
+                    status = rejection == null ? "ok" : rejection;
+                    // only server errors and rate limiting are worth another attempt
+                    if (rejection == null || response.statusCode() < 500 && response.statusCode() != 429) {
+                        break;
+                    }
+                } catch (java.io.IOException e) {
+                    status = "error";
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException e) {
+            log.warn("cannot notify channel {}: {}", channel.id(), e.getClass().getSimpleName());
+            status = "error";
         } finally {
             slots.release();
             record(channel, event, status);

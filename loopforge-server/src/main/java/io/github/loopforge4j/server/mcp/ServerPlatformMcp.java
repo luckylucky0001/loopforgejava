@@ -26,6 +26,8 @@ public class ServerPlatformMcp implements PlatformMcp {
     private final boolean platformEnabled;
     private final String sandboxUrl;
     private final Duration ttl;
+    /** Profiles whose processes share the host network and so reach the loopback address. */
+    private final java.util.Set<String> hostNetworkProfiles;
 
     public ServerPlatformMcp(
             RunTokens tokens, KnowledgeService knowledge, InternalApi api, LoopForgeProperties properties) {
@@ -36,6 +38,10 @@ public class ServerPlatformMcp implements PlatformMcp {
         String url = properties.mcp().sandboxUrl();
         this.sandboxUrl = url == null || url.isBlank() ? null : url.strip().replaceAll("/+$", "");
         this.ttl = properties.mcp().agentTokenTtl();
+        LoopForgeProperties.Bwrap bwrap = properties.sandbox().bwrap();
+        this.hostNetworkProfiles = bwrap.enabled() && bwrap.shareNetwork()
+                ? java.util.Set.of(LocalSandboxProvider.PROFILE, bwrap.profile())
+                : java.util.Set.of(LocalSandboxProvider.PROFILE);
     }
 
     @Override
@@ -93,7 +99,7 @@ public class ServerPlatformMcp implements PlatformMcp {
         if (sandboxUrl != null) {
             return sandboxUrl;
         }
-        if (LocalSandboxProvider.PROFILE.equals(sandboxProfileId)) {
+        if (hostNetworkProfiles.contains(sandboxProfileId)) {
             return api.loopbackBase();
         }
         return null;

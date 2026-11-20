@@ -64,7 +64,9 @@ class SecurityConfiguration {
                                     "/api/v1/auth/status",
                                     "/api/v1/auth/setup",
                                     "/api/v1/auth/login",
-                                    "/api/v1/auth/logout")
+                                    "/api/v1/auth/logout",
+                                    "/api/v1/auth/oidc/start",
+                                    "/api/v1/auth/oidc/callback")
                             .permitAll();
                     // agents' knowledge proxy verifies its own run tokens (they are not API credentials)
                     auth.requestMatchers(

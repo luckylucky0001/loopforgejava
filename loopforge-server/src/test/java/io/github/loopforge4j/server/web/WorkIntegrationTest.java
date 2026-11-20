@@ -40,6 +40,7 @@ class WorkIntegrationTest {
     static final Path data;
     static final HttpServer hooks;
     static final List<String[]> received = new CopyOnWriteArrayList<>();
+    static final List<String[]> robot = new CopyOnWriteArrayList<>();
 
     static {
         try {
@@ -53,6 +54,19 @@ class WorkIntegrationTest {
                     body
                 });
                 exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+            });
+            hooks.createContext("/robot", exchange -> {
+                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                String query = exchange.getRequestURI().getRawQuery();
+                robot.add(new String[] {query, body});
+                // the "reject" robot answers like WeCom with an invalid key: HTTP 200, errcode set
+                byte[] reply = (query != null && query.contains("reject")
+                                ? "{\"errcode\":93000,\"errmsg\":\"invalid webhook url\"}"
+                                : "{\"errcode\":0,\"errmsg\":\"ok\"}")
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, reply.length);
+                exchange.getResponseBody().write(reply);
                 exchange.close();
             });
             hooks.start();
@@ -299,6 +313,88 @@ class WorkIntegrationTest {
                                 .get("status")));
         Thread.sleep(500);
         assertThat(received).isEmpty();
+    }
+
+    @Test
+    void robotChannelsGetNativeMessagesAndPlatformErrorsCount() {
+        String base = "http://127.0.0.1:" + hooks.getAddress().getPort() + "/robot";
+        send("PUT", "/api/v1/projects/bots", Map.of("name", "Bots"), 200);
+        send(
+                "POST",
+                "/api/v1/notifications",
+                Map.of("projectId", "bots", "name", "x", "kind", "telegram", "url", base),
+                422);
+        send(
+                "POST",
+                "/api/v1/notifications",
+                Map.of(
+                        "projectId",
+                        "bots",
+                        "name",
+                        "wecom",
+                        "kind",
+                        "wecom",
+                        "url",
+                        base + "?key=good",
+                        "events",
+                        List.of("run.succeeded"),
+                        "enabled",
+                        true),
+                201);
+        send(
+                "POST",
+                "/api/v1/notifications",
+                Map.of(
+                        "projectId",
+                        "bots",
+                        "name",
+                        "ding",
+                        "kind",
+                        "dingtalk",
+                        "url",
+                        base + "?access_token=t",
+                        "secret",
+                        "SECxyz",
+                        "events",
+                        List.of("run.succeeded"),
+                        "enabled",
+                        true),
+                201);
+        send(
+                "POST",
+                "/api/v1/notifications",
+                Map.of(
+                        "projectId",
+                        "bots",
+                        "name",
+                        "broken",
+                        "kind",
+                        "wecom",
+                        "url",
+                        base + "?key=reject",
+                        "events",
+                        List.of("run.succeeded"),
+                        "enabled",
+                        true),
+                201);
+        robot.clear();
+        send("POST", "/api/v1/runs", Map.of("workflowId", "echo", "projectId", "bots"), 201);
+        await().atMost(Duration.ofSeconds(30)).until(() -> robot.size() >= 3);
+        assertThat(robot).anySatisfy(r -> {
+            assertThat(r[0]).isEqualTo("key=good");
+            assertThat(r[1]).contains("\"msgtype\":\"markdown\"", "运行成功", "项目：bots");
+        });
+        assertThat(robot)
+                .anySatisfy(r ->
+                        assertThat(r[0]).startsWith("access_token=t&timestamp=").contains("&sign="));
+        await().atMost(Duration.ofSeconds(10)).until(() -> {
+            List<Map<String, Object>> channels = api.get()
+                    .uri("/api/v1/notifications?projectId=bots")
+                    .retrieve()
+                    .body(LIST);
+            return channels.stream().anyMatch(c -> "run.succeeded: ok".equals(c.get("lastStatus")))
+                    && channels.stream().anyMatch(c -> "run.succeeded: rejected 93000".equals(c.get("lastStatus")));
+        });
     }
 
     @Test

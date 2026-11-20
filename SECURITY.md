@@ -9,6 +9,8 @@
 - 本地沙箱隔离环境变量但不隔离文件系统，只用于可信的团队与脚本。
 - 有非管理员账户时保持 `loopforge.security.members-require-isolation=true`（默认）：成员只能编写和启动隔离沙箱（`loopforge.security.isolated-profiles`，默认 `docker`）中的 SOP，本地沙箱中的脚本能读到服务的 Token 与数据库。
 - 运行只能使用全局或本项目的 SOP、代码仓库和凭据；没有项目的运行只属于管理员。
+- 没有 Docker 的 Linux 主机可以用 `bwrap` 沙箱作为成员可用的隔离环境（加入 `isolated-profiles`）：它隔离文件写入、其他运行与服务端 HOME，但默认共享网络、可读主机上其他文件；服务端数据目录请加入 `hidden-paths`。
+- 启用 OIDC 时设置 `loopforge.public-url`（回调地址）；`link-by-email` 只在身份提供方确实验证邮箱时打开。
 - Webhook 默认不能指向回环、私有、链路本地（云元数据）、CGNAT 等内网地址；只有通知目标确实在内网时才设置 `loopforge.notifications.allow-private-targets=true`。
 - Agent 通过平台 MCP 和知识库拿到的运行令牌只读、只能访问运行所在项目、运行结束即失效；不要把账户 Token 写进角色的 MCP 配置。
 - 知识库上游 Token 默认保存在数据库（只写不读）；不希望落库时用 `loopforge.knowledge.token` 配置。

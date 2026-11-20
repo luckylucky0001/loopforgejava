@@ -17,10 +17,10 @@
 | 执行器 | Claude Code、Codex、CodeBuddy、OpenCode、Cursor、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode（原生流协议归一化为统一遥测）；确定性 Mock 执行器（无需密钥的演示与测试） |
 | MCP / Skills / Hooks | 门禁 MCP 工具 `submit_gate_result`；规则、Skills（SKILL.md 树）、MCP 服务器目录，按角色白名单物化为各 CLI 的原生配置；Hooks 编译为原生 Hook 配置并上报执行事件；MCP 密钥用 `${secret:NAME}` 引用 |
 | Git 交付 | 仓库目录；运行检出到独立工作分支（多仓库、继续/新建/只读模式）；凭据经 credential helper 注入；`executionScope=repositories` 的脚本与门禁；`mode=mr` 门禁核验 PR 覆盖最新提交；GitHub PR 记录与合并检测 |
-| 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止；Docker 沙箱：每个运行一个容器、资源限制、只读根文件系统、变量不上命令行 |
+| 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止；bubblewrap 轻量沙箱（Linux）：主机只读、只能写本运行工作区、私有 /tmp、独立用户/PID 命名空间、看不到其他运行与服务端 HOME；Docker 沙箱：每个运行一个容器、资源限制、只读根文件系统、变量不上命令行 |
 | 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话；多实例部署：运行租约、心跳与过期接管、工作区主机绑定 |
 | 运维 | 遥测批量写入；保留策略（执行器遥测、终态运行）；Prometheus 指标：运行与节点结果、节点耗时、返工、门禁决策、token 与成本 |
-| 协作 | 账户与 Token、项目与成员角色、需求（自动工作分支与状态推进）、定时任务、Webhook 通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理、分析、知识库） |
+| 协作 | 账户与 Token、OIDC 单点登录、项目与成员角色、需求（自动工作分支与状态推进）、定时任务、Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理、分析、知识库） |
 | 平台 MCP | `/mcp` 把公开 API 作为 MCP 工具（按调用者本人的权限执行）；角色开启 `platformMcp` 后，Agent 拿到只读、限本项目、随运行结束失效的运行令牌；JDK-only stdio 桥 |
 | 团队知识库 | 接入上游知识库 MCP，按项目授权来源检索与阅读；角色开启 `knowledgeBase` 后获得只读检索工具与使用规范；Agent 写下的 `knowledge.md` 经人工审核后写回 |
 | 分析 | 运行概览（成功率、一次通过率、耗时分位、Token 与费用、PR）、趋势、按 SOP / 项目 / 执行器 / 模型拆分、失败聚类、运行时段热力；SOP 运营指标（节点级） |
@@ -145,6 +145,31 @@ loopforge:
 ```
 
 知识库的地址、启用开关、写回开关和按项目授权的来源在控制台「知识库 → 接入配置」里设置（管理员）。
+
+### 轻量沙箱、单点登录与群机器人
+
+```yaml
+loopforge:
+  public-url: https://loopforge.example.com     # 通知里的运行链接、OIDC 回调地址
+  sandbox:
+    bwrap:
+      enabled: true                 # 需要 bubblewrap 且允许非特权用户命名空间；SOP 设置 "sandboxProfileId": "bwrap"
+      hidden-paths: [/srv/loopforge/data]   # 额外隐藏的主机目录；工作区根目录与服务端 HOME 默认隐藏
+      share-network: true           # false = 进程只有回环网络
+  security:
+    isolated-profiles: [docker, bwrap]      # 允许成员使用的隔离沙箱
+    oidc:
+      enabled: true
+      display-name: 企业 SSO
+      issuer: https://sso.example.com/realms/dev
+      client-id: loopforge
+      client-secret: ${OIDC_CLIENT_SECRET}
+      allowed-email-domains: [example.com]  # 可选：只允许这些已验证邮箱域
+```
+
+单点登录按身份提供方的 issuer + subject 绑定账户：首次登录自动创建成员账户（`auto-provision`），提供方给出的用户名与本地已有账户重名时会改用带后缀的新用户名，永远不会登录进别人的账户（只有显式打开 `link-by-email` 才会按已验证邮箱关联已有账户）。
+
+通知渠道的 `kind` 可选 `webhook`（通用 JSON + HMAC 签名）、`wecom`（企业微信群机器人 Markdown）、`feishu`（飞书 / Lark 自定义机器人，可加签）、`dingtalk`（钉钉自定义机器人 Markdown，可加签）、`slack`（Incoming Webhook）；平台返回的错误码（如 `errcode`）计为投递失败。
 
 ### 多实例部署
 

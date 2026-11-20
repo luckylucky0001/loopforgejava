@@ -16,6 +16,7 @@ import org.springframework.validation.annotation.Validated;
  *
  * @param workspaceRoot directory holding one workspace per run
  * @param instanceId identifies this process in run ownership records; defaults to host + pid
+ * @param publicUrl the console's external base URL; notifications link to runs with it
  * @param demoCatalog import the bundled demo SOPs on startup (insert-if-absent, never overwrites)
  */
 @Validated
@@ -36,7 +37,8 @@ public record LoopForgeProperties(
         @DefaultValue List<GitLabHost> gitlab,
         @DefaultValue List<ModelPrice> pricing,
         @Valid @DefaultValue Notifications notifications,
-        @Valid @DefaultValue Knowledge knowledge) {
+        @Valid @DefaultValue Knowledge knowledge,
+        String publicUrl) {
 
     /**
      * @param defaultExecutor executor id used when neither role nor node chooses one
@@ -73,7 +75,25 @@ public record LoopForgeProperties(
             List<String> passthroughEnv,
 
             @DefaultValue("true") boolean privateHome,
-            @Valid @DefaultValue Docker docker) {}
+            @Valid @DefaultValue Docker docker,
+            @Valid @DefaultValue Bwrap bwrap) {}
+
+    /**
+     * Bubblewrap sandbox profile (Linux): read-only host, writable run workspace only, private
+     * /tmp, new user/PID/IPC/UTS namespaces; other workspaces are hidden.
+     *
+     * @param hiddenPaths further host directories to hide (for example the server's data
+     *     directory)
+     * @param hideServerHome hide the server's HOME (its CLI logins and configuration)
+     * @param shareNetwork keep the host network; {@code false} gives processes only loopback
+     */
+    public record Bwrap(
+            @DefaultValue("false") boolean enabled,
+            @DefaultValue("bwrap") String profile,
+            @DefaultValue("bwrap") String binary,
+            @DefaultValue List<Path> hiddenPaths,
+            @DefaultValue("true") boolean hideServerHome,
+            @DefaultValue("true") boolean shareNetwork) {}
 
     /**
      * Docker sandbox profile; workflows select it with {@code sandboxProfileId}.
@@ -115,7 +135,39 @@ public record LoopForgeProperties(
             @NotNull @DefaultValue("8MB") org.springframework.util.unit.DataSize maxRequestSize,
             @NotNull @DefaultValue("12h") Duration sessionTtl,
             @DefaultValue("true") boolean membersRequireIsolation,
-            @DefaultValue("docker") List<String> isolatedProfiles) {}
+            @DefaultValue("docker") List<String> isolatedProfiles,
+            @Valid @DefaultValue Oidc oidc) {}
+
+    /**
+     * OpenID Connect single sign-on (authorization code flow with PKCE).
+     *
+     * @param issuer provider URL; its {@code /.well-known/openid-configuration} is read
+     * @param redirectUri this server's callback, {@code <public-url>/api/v1/auth/oidc/callback}
+     *     by default
+     * @param usernameClaim claim that names new accounts
+     * @param autoProvision create a member account on first sign-in
+     * @param allowedEmailDomains when set, only verified e-mail addresses of these domains may sign
+     *     in
+     * @param linkByEmail let a first sign-in take over an existing account with the same verified
+     *     e-mail address (off: a matching account is never linked implicitly)
+     */
+    public record Oidc(
+            @DefaultValue("false") boolean enabled,
+            @DefaultValue("SSO") String displayName,
+            String issuer,
+            String clientId,
+            String clientSecret,
+            String redirectUri,
+            @DefaultValue("openid profile email") String scopes,
+            @DefaultValue("preferred_username") String usernameClaim,
+            @DefaultValue("true") boolean autoProvision,
+            @DefaultValue List<String> allowedEmailDomains,
+            @DefaultValue("false") boolean linkByEmail) {
+        @Override
+        public String toString() {
+            return "Oidc[enabled=" + enabled + ", issuer=" + issuer + ", clientId=" + clientId + "]";
+        }
+    }
 
     /**
      * Git access of runs. Tokens are injected through a credential helper into the processes of a

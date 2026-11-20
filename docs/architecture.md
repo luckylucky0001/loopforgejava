@@ -97,6 +97,14 @@
 
 知识库代理把上游知识库 MCP（`kb_search`、`kb_fetch`、`kb_list_sources`、`kb_get_source`）按项目授权来源收窄：检索限制在授权来源内，阅读其他来源被拒绝，来源列表被过滤；写入工具从不提供给 Agent。开启知识库的角色写下的 `knowledge.md` 被收集为可选产物，在审核队列里编辑、驳回或写回（需要管理员打开写回开关，来源必须在项目授权范围内，路径规范为仓库内的 `.md`）。
 
+## bubblewrap 沙箱
+
+`bwrap` 配置项把本地沙箱的每个进程包进 bubblewrap：根文件系统只读挂载，本运行的工作区读写挂载，`/tmp` 是私有 tmpfs，新的用户 / PID / IPC / UTS 命名空间，`--die-with-parent` 保证服务端或进程组被杀时整棵树退出。工作区根目录（其他运行）与服务端 HOME 用空 tmpfs 覆盖，每次启动进程时重新计算（启动后才创建的目录也会被隐藏）；包含运行中 JDK 的目录不会被隐藏（门禁 MCP 需要它）。网络默认共享（Agent 需要访问模型 API），可关闭为只有回环。
+
+## 单点登录
+
+OIDC 授权码流程：`/api/v1/auth/oidc/start` 生成 state、nonce 与 PKCE verifier，放在只对回调路径可见的 HttpOnly、SameSite=Lax Cookie 里（任何实例都能完成另一个实例开始的登录），把浏览器重定向到身份提供方；回调校验 state，用 verifier 换取 id_token，按发现文档里的 JWKS 校验签名（RS256 / ES256，未知 kid 时最多每分钟刷新一次）、issuer、audience、过期时间与 nonce。账户按 issuer + subject 绑定；会话 Token 通过 URL 片段（不会发给任何服务器）交给控制台，控制台立即把它从地址栏和历史记录中移除。
+
 ## Docker 沙箱
 
 每个运行（含子 SOP 共享的工作区）一个长驻容器：`docker run -d --init --security-opt no-new-privileges -v <ws>:<ws> --user <uid:gid> … sleep infinity`。命令通过 `docker exec` 执行：变量值放在 docker 客户端自己的环境里并以 `-e NAME` 传入（命令行只有变量名）；每次 exec 带唯一的 `LOOPFORGE_EXEC_ID`，命令结束后由容器内包装器结束同标记的后台进程（否则它们会让 `docker exec` 一直不返回），取消和超时时再从外部按标记终止。引擎崩溃后恢复时删除旧容器、在同一工作区上重建。

@@ -133,6 +133,29 @@ public class AccountService {
         return users.create(name, displayName, blankToNull(email), role, encoder.encode(password));
     }
 
+    /** A session for an account that signed in elsewhere (single sign-on). */
+    public Session sessionFor(User user) {
+        if (user.disabled()) {
+            throw new LoginException("account is disabled");
+        }
+        return session(user);
+    }
+
+    /**
+     * A member account for a single sign-on identity. It has no usable password until an
+     * administrator sets one.
+     */
+    public User createExternal(String username, String displayName, String email) {
+        byte[] random = new byte[32];
+        new java.security.SecureRandom().nextBytes(random);
+        return users.create(
+                normalize(username),
+                displayName,
+                blankToNull(email),
+                Role.MEMBER,
+                encoder.encode(java.util.HexFormat.of().formatHex(random)));
+    }
+
     public void changePassword(String userId, String current, String next) {
         String hash = users.passwordHash(userId).orElseThrow();
         if (!encoder.matches(current == null ? "" : current, hash)) {

@@ -50,6 +50,32 @@ public class UserStore {
         return user;
     }
 
+    /** Accounts with this e-mail address (case-insensitive). */
+    public java.util.List<User> byEmail(String email) {
+        return jdbc.sql("SELECT * FROM users WHERE LOWER(email) = :email")
+                .param("email", email.strip().toLowerCase(java.util.Locale.ROOT))
+                .query(UserStore::map)
+                .list();
+    }
+
+    /** The account an external identity (OIDC issuer and subject) signs in as. */
+    public Optional<String> identity(String issuer, String subject) {
+        return jdbc.sql("SELECT user_id FROM user_identities WHERE issuer = :iss AND subject = :sub")
+                .param("iss", issuer)
+                .param("sub", subject)
+                .query(String.class)
+                .optional();
+    }
+
+    public void link(String issuer, String subject, String userId) {
+        jdbc.sql("INSERT INTO user_identities (issuer, subject, user_id, created_at) VALUES (:iss, :sub, :user, :now)")
+                .param("iss", issuer)
+                .param("sub", subject)
+                .param("user", userId)
+                .param("now", SqlTime.of(clock.instant()))
+                .update();
+    }
+
     public Optional<User> byId(String id) {
         return jdbc.sql("SELECT * FROM users WHERE id = :id")
                 .param("id", id)
