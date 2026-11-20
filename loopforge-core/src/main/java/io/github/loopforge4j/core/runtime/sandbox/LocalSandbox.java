@@ -3,7 +3,6 @@ package io.github.loopforge4j.core.runtime.sandbox;
 import io.github.loopforge4j.core.runtime.Cancellation;
 import io.github.loopforge4j.core.runtime.CancelledException;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -78,7 +77,7 @@ public final class LocalSandbox implements Sandbox {
         env.putIfAbsent("LANG", "C.UTF-8");
         if (options.privateHome()) {
             Path home = privateHome(label);
-            Files.createDirectories(home.resolve("tmp"));
+            new io.github.loopforge4j.core.runtime.ManagedFiles(workspace).directory(home.resolve("tmp"));
             env.put("HOME", home.toString());
             env.put("TMPDIR", home.resolve("tmp").toString());
         } else if (host.containsKey("HOME")) {

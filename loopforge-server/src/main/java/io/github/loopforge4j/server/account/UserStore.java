@@ -102,6 +102,15 @@ public class UserStore {
         return jdbc.sql("DELETE FROM users WHERE id = :id").param("id", id).update() > 0;
     }
 
+    /** Records the completed first-run setup; throws DuplicateKeyException when it already was. */
+    public void markSetupCompleted(String username) {
+        jdbc.sql(
+                        "INSERT INTO app_settings (setting_name, setting_value, updated_at) VALUES ('setup.completed', :value, :now)")
+                .param("value", username)
+                .param("now", SqlTime.of(clock.instant()))
+                .update();
+    }
+
     public long countAdmins() {
         return jdbc.sql("SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = FALSE")
                 .query(Long.class)

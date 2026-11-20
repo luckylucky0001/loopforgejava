@@ -288,6 +288,7 @@ public final class RunEngine implements AutoCloseable {
     public Run start(
             String workflowId, String input, ExecutionContext context, List<RepositorySelection> repositories) {
         WorkflowDefinition workflow = catalog.workflow(workflowId)
+                .filter(w -> sameProject(w.projectId(), context))
                 .orElseThrow(() -> new RunNotFoundException("workflow '" + workflowId + "' not found"));
         if (workflow.status() != io.github.loopforge4j.core.domain.WorkflowStatus.PUBLISHED) {
             throw new RunStateException("workflow '" + workflowId + "' is "
@@ -295,6 +296,14 @@ public final class RunEngine implements AutoCloseable {
         }
         String runId = newRunId();
         return start(runId, workflow, input, context, resolveRepositories(runId, repositories, context), false);
+    }
+
+    /** A project resource is usable only by runs of that project; global ones by every run. */
+    static boolean sameProject(String resourceProject, ExecutionContext context) {
+        if (resourceProject == null || resourceProject.isBlank()) {
+            return true;
+        }
+        return context != null && resourceProject.equals(context.projectId());
     }
 
     /** Freezes {@code workflow} into a new run and schedules it. */
@@ -320,6 +329,9 @@ public final class RunEngine implements AutoCloseable {
             List<RepositoryContext> repositories,
             boolean prepared) {
         ensureOpen();
+        if (!sameProject(workflow.projectId(), context)) {
+            throw new RunNotFoundException("workflow '" + workflow.id() + "' not found");
+        }
         WorkflowValidator.validate(workflow);
         if (sandboxProvider(workflow.sandboxProfileId()).isEmpty()) {
             throw new WorkflowValidationException(
@@ -359,6 +371,8 @@ public final class RunEngine implements AutoCloseable {
                 continue;
             }
             RepositoryDefinition definition = catalog.repository(selection.repositoryId())
+                    // another project's repository is invisible: its credentials and pushes are not ours
+                    .filter(r -> sameProject(r.projectId(), context))
                     .orElseThrow(
                             () -> new RunNotFoundException("repository '" + selection.repositoryId() + "' not found"));
             RepositoryContext rc = RepositoryContext.of(definition, selection.baseBranch());
@@ -847,23 +861,10 @@ public final class RunEngine implements AutoCloseable {
                 failLostWorkspace(run);
                 continue;
             }
-            if (!foreignWorkspace(run)) {
-                reclaimOrphanedProcesses(run);
+            // the claim re-checks owner and lease atomically; processes are reclaimed only after winning it
+            if (ensureScheduler(run.id(), true)) {
+                recovered.add(run.id());
             }
-            mutate(run.id(), c -> {
-                Run r = c.run();
-                parkInFlightNodes(r, "实例重启，等待恢复");
-                String previous = r.ownerInstanceId();
-                c.event(
-                        null,
-                        "run.recovered",
-                        previous == null || previous.equals(settings.instanceId())
-                                ? "执行实例重启后恢复调度"
-                                : "接管了执行实例 " + previous + " 的过期租约");
-                return true;
-            });
-            ensureScheduler(run.id());
-            recovered.add(run.id());
         }
         return recovered;
     }
@@ -938,15 +939,26 @@ public final class RunEngine implements AutoCloseable {
 
     /** Wakes the run's scheduler or starts a new one when the run is running and has none. */
     void ensureScheduler(String runId) {
+        ensureScheduler(runId, false);
+    }
+
+    /**
+     * Claims the run (owner, lease and generation in one conditional update) and starts its
+     * scheduler. With {@code recovery}, orphaned processes of the previous owner are killed after the
+     * claim succeeded and before any node is relaunched.
+     *
+     * @return whether this call started a scheduler
+     */
+    private boolean ensureScheduler(String runId, boolean recovery) {
         if (closed) {
-            return;
+            return false;
         }
         schedulerLock.lock();
         try {
             RunScheduler existing = schedulers.get(runId);
             if (existing != null) {
                 existing.wake();
-                return;
+                return false;
             }
             Optional<Run> claimed = runs.update(runId, c -> {
                 Run r = c.run();
@@ -969,7 +981,16 @@ public final class RunEngine implements AutoCloseable {
                 }
                 // No scheduler of this engine runs the run, so a node still marked running was left by a
                 // crashed or stopped scheduler: continue it instead of failing it as orphaned.
-                parkInFlightNodes(r, "调度器重启，等待恢复");
+                parkInFlightNodes(r, recovery ? "实例重启，等待恢复" : "调度器重启，等待恢复");
+                if (recovery) {
+                    String previous = r.ownerInstanceId();
+                    c.event(
+                            null,
+                            "run.recovered",
+                            previous == null || previous.equals(settings.instanceId())
+                                    ? "执行实例重启后恢复调度"
+                                    : "接管了执行实例 " + previous + " 的过期租约");
+                }
                 r.generation(r.generation() + 1);
                 r.ownerInstanceId(settings.instanceId());
                 r.leaseUntil(c.now().plus(settings.leaseTtl()));
@@ -978,11 +999,16 @@ public final class RunEngine implements AutoCloseable {
             if (claimed.isEmpty()
                     || claimed.get().status() != RunStatus.RUNNING
                     || !settings.instanceId().equals(claimed.get().ownerInstanceId())) {
-                return;
+                return false;
+            }
+            claimed.ifPresent(this::notifyChanged);
+            if (recovery && !foreignWorkspace(claimed.get())) {
+                reclaimOrphanedProcesses(claimed.get());
             }
             RunScheduler scheduler = new RunScheduler(this, runId, claimed.get().generation());
             schedulers.put(runId, scheduler);
             scheduler.start(threads);
+            return true;
         } finally {
             schedulerLock.unlock();
         }

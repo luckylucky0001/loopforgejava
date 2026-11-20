@@ -207,6 +207,44 @@ class MultiInstanceTest {
         assertThat(b.scheduling(run.id())).isFalse();
     }
 
+    @Test
+    void concurrentOrphanClaimsRunTheRunExactlyOnce() throws Exception {
+        for (int round = 0; round < 5; round++) {
+            Files.deleteIfExists(root.resolve("ws/beats.txt"));
+            Run run = orphan("slow", "gone-" + round, Instant.now().minusSeconds(1), "host-1");
+            RunEngine a = engine("a" + round, "host-1", false);
+            RunEngine b = engine("b" + round, "host-1", false);
+            java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+            Thread ta = Thread.ofVirtual().start(() -> {
+                awaitLatch(go);
+                a.claimOrphanedRuns();
+            });
+            Thread tb = Thread.ofVirtual().start(() -> {
+                awaitLatch(go);
+                b.claimOrphanedRuns();
+            });
+            go.countDown();
+            ta.join();
+            tb.join();
+            assertThat(a.scheduling(run.id()) ^ b.scheduling(run.id()))
+                    .as("exactly one owner")
+                    .isTrue();
+            awaitRun(run.id(), RunStatus.SUCCEEDED);
+            assertThat(Files.readAllLines(root.resolve("ws/beats.txt")))
+                    .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+            assertThat(eventTypes(a, run.id()).stream().filter("run.recovered"::equals))
+                    .hasSize(1);
+        }
+    }
+
+    private static void awaitLatch(java.util.concurrent.CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private RunEngine engine(String name, String host, boolean claim) {

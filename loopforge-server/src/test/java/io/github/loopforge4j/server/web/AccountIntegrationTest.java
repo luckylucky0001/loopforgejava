@@ -48,6 +48,8 @@ class AccountIntegrationTest {
         registry.add("loopforge.security.api-tokens", () -> SERVICE);
         registry.add("loopforge.engine.scheduler-tick", () -> "50ms");
         registry.add("loopforge.demo-catalog", () -> "false");
+        // this deployment trusts its members with the local sandbox (IsolationPolicyTest covers the default)
+        registry.add("loopforge.security.members-require-isolation", () -> "false");
     }
 
     @LocalServerPort

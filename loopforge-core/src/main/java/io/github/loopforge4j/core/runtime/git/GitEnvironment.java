@@ -3,10 +3,8 @@ package io.github.loopforge4j.core.runtime.git;
 import io.github.loopforge4j.core.domain.RepositoryContext;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -48,7 +46,7 @@ public final class GitEnvironment {
         Path control = workspace.resolve(LocalSandbox.CONTROL_DIR);
         if (!credentials.https().isEmpty()) {
             Path helper = control.resolve("bin").resolve(HELPER);
-            writeHelper(helper);
+            writeHelper(workspace, helper);
             int i = 0;
             env.put("GIT_CONFIG_KEY_" + i, "credential.helper");
             env.put("GIT_CONFIG_VALUE_" + i++, "");
@@ -81,13 +79,14 @@ public final class GitEnvironment {
             }
         }
         if (credentials.sshPrivateKey() != null && !credentials.sshPrivateKey().isBlank()) {
+            io.github.loopforge4j.core.runtime.ManagedFiles files =
+                    new io.github.loopforge4j.core.runtime.ManagedFiles(workspace);
             Path ssh = control.resolve("ssh");
-            Files.createDirectories(ssh);
             Path key = ssh.resolve("id_loopforge");
-            writePrivate(key, credentials.sshPrivateKey().strip() + "\n");
+            files.write(key, credentials.sshPrivateKey().strip() + "\n", false);
             Path knownHosts = ssh.resolve("known_hosts");
-            if (!Files.exists(knownHosts)) {
-                writePrivate(knownHosts, "");
+            if (!Files.isRegularFile(knownHosts, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                files.write(knownHosts, "", false);
             }
             env.put(
                     "GIT_SSH_COMMAND",
@@ -141,11 +140,7 @@ public final class GitEnvironment {
         return value == null || value.isBlank();
     }
 
-    private static void writeHelper(Path helper) throws IOException {
-        if (Files.exists(helper)) {
-            return;
-        }
-        Files.createDirectories(helper.getParent());
+    private static void writeHelper(Path workspace, Path helper) throws IOException {
         // Reads host=... from git, answers with the token of that host from the environment.
         String script = """
                 #!/bin/sh
@@ -160,17 +155,6 @@ public final class GitEnvironment {
                 [ -n "$token" ] || exit 0
                 printf 'username=%s\\npassword=%s\\n' "$user" "$token"
                 """;
-        Files.writeString(helper, script, StandardCharsets.UTF_8);
-        helper.toFile().setExecutable(true, true);
-    }
-
-    private static void writePrivate(Path file, String content) throws IOException {
-        Files.deleteIfExists(file);
-        try {
-            Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-        } catch (UnsupportedOperationException e) {
-            Files.createFile(file);
-        }
-        Files.writeString(file, content, StandardCharsets.UTF_8);
+        new io.github.loopforge4j.core.runtime.ManagedFiles(workspace).write(helper, script, true);
     }
 }

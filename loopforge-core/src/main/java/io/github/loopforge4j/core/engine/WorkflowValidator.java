@@ -199,6 +199,9 @@ public final class WorkflowValidator {
                     if (!url.startsWith("https://") && !url.startsWith("http://")) {
                         problems.add("http MCP server needs an http(s) url");
                     }
+                    if (url.contains("${secret:")) {
+                        problems.add("MCP server " + server.id() + ": secrets belong in headers, not in the URL");
+                    }
                 } else if (server.command() == null || server.command().isBlank()) {
                     problems.add("stdio MCP server needs a command");
                 }

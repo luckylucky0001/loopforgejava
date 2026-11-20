@@ -138,7 +138,7 @@ loopforge:
 LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -hex 16) docker compose up -d
 ```
 
-生产栈启动时目录为空（需要演示 SOP 时加 `LOOPFORGE_DEMOCATALOG=true`），只有 `published` 状态的工作流可以启动。Prometheus 指标在 `/actuator/prometheus`（需 Token）。镜像以非 root 用户运行，`LANG=C.UTF-8`，带就绪探针。本地沙箱面向**可信团队**：它隔离环境变量但不隔离文件系统，请不要用于不可信的多租户场景（与上游 `local` 沙箱定位一致）。
+生产栈启动时目录为空（需要演示 SOP 时加 `LOOPFORGE_DEMOCATALOG=true`），只有 `published` 状态的工作流可以启动。Prometheus 指标在 `/actuator/prometheus`（需 Token）。镜像以非 root 用户运行，`LANG=C.UTF-8`，带就绪探针。有非管理员账户时默认要求隔离沙箱：成员只能编写和启动 `sandboxProfileId: docker` 的 SOP（`loopforge.security.members-require-isolation`）。本地沙箱面向**可信团队**：它隔离环境变量但不隔离文件系统，请不要用于不可信的多租户场景（与上游 `local` 沙箱定位一致）。
 
 ## API 一览
 

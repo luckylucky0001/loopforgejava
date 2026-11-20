@@ -49,9 +49,15 @@ public class Notifier implements RunListener {
 
     private record Seen(RunStatus status, int merged) {}
 
-    public Notifier(NotificationStore channels, Clock clock) {
+    private final boolean allowPrivate;
+
+    public Notifier(
+            NotificationStore channels,
+            Clock clock,
+            io.github.loopforge4j.server.config.LoopForgeProperties properties) {
         this.channels = channels;
         this.clock = clock;
+        this.allowPrivate = properties.notifications().allowPrivateTargets();
     }
 
     @Override
@@ -132,6 +138,11 @@ public class Notifier implements RunListener {
         }
         String status = "failed";
         try {
+            String blocked = WebhookTargets.problem(channel.url(), allowPrivate);
+            if (blocked != null) {
+                status = "blocked";
+                return;
+            }
             for (Duration wait : BACKOFF) {
                 if (!wait.isZero()) {
                     Thread.sleep(wait.toMillis());
@@ -156,18 +167,22 @@ public class Notifier implements RunListener {
                         break; // the receiver rejects it; retrying will not help
                     }
                 } catch (java.io.IOException e) {
-                    status = "error: " + e.getClass().getSimpleName();
+                    // no exception detail: it would turn the status into a network probe
+                    status = "error";
                 }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } finally {
             slots.release();
+            record(channel, event, status);
         }
+    }
+
+    private void record(NotificationChannel channel, String event, String status) {
         try {
-            String finalStatus = status;
             channels.find(channel.id())
-                    .ifPresent(c -> channels.save(c.delivered(clock.instant(), event + ": " + finalStatus)));
+                    .ifPresent(c -> channels.save(c.delivered(clock.instant(), event + ": " + status)));
         } catch (RuntimeException e) {
             log.debug("cannot record delivery status: {}", e.toString());
         }

@@ -177,16 +177,18 @@ final class ArtifactSupport {
         List<Artifact> selected = new ArrayList<>(latest.values());
         selected.sort(Comparator.comparing(Artifact::nodeId).thenComparing(Artifact::name));
         StringBuilder manifest = new StringBuilder();
+        io.github.loopforge4j.core.runtime.ManagedFiles files =
+                selected.isEmpty() ? null : new io.github.loopforge4j.core.runtime.ManagedFiles(workspace);
         for (Artifact artifact : selected) {
             String rel = LocalSandbox.CONTROL_DIR + "/inputs/" + segment(artifact.nodeId()) + "/"
                     + segment(artifact.name()) + extension(artifact.mediaType());
             Path target = workspace.resolve(rel);
-            Files.createDirectories(target.getParent());
-            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
-                throw new IOException("artifact input path is not a regular file: " + target);
-            }
-            writeReadOnly(target, artifact.content() == null ? "" : artifact.content());
+            // atomic replace in a verified directory: concurrent branches never see partial files, and a
+            // planted symlink is replaced instead of followed
+            files.write(
+                    target,
+                    (artifact.content() == null ? "" : artifact.content()).getBytes(StandardCharsets.UTF_8),
+                    "r--r--r--");
             manifest.append("## ")
                     .append(artifact.nodeId())
                     .append(" / ")

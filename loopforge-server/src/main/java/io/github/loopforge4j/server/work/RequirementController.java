@@ -91,6 +91,11 @@ class RequirementController {
             @Valid @RequestBody(required = false) StartRequest body,
             Principal principal) {
         access.requireProject(principal, projectId, ProjectRole.DEVELOPER);
+        access.requireIsolatedSandbox(
+                principal,
+                body != null && body.workflowId() != null && !body.workflowId().isBlank()
+                        ? body.workflowId()
+                        : requirements.require(projectId, number).workflowId());
         Run run = requirements.start(
                 projectId,
                 number,

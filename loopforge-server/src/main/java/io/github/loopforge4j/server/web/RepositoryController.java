@@ -38,13 +38,17 @@ class RepositoryController {
     }
 
     @GetMapping
-    List<RepositoryDefinition> list() {
-        return store.repositories();
+    List<RepositoryDefinition> list(java.security.Principal principal) {
+        return store.repositories().stream()
+                .filter(r -> access.canSee(principal, r.projectId()))
+                .toList();
     }
 
     @GetMapping("/{id}")
-    RepositoryDefinition get(@PathVariable String id) {
-        return store.repository(id).orElseThrow(() -> new RunNotFoundException("repository '" + id + "' not found"));
+    RepositoryDefinition get(@PathVariable String id, java.security.Principal principal) {
+        return store.repository(id)
+                .filter(r -> access.canSee(principal, r.projectId()))
+                .orElseThrow(() -> new RunNotFoundException("repository '" + id + "' not found"));
     }
 
     @Operation(summary = "Create or replace a repository (credentials belong in server configuration, not the URL)")

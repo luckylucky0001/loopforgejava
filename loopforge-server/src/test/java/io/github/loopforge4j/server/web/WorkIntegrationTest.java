@@ -70,6 +70,8 @@ class WorkIntegrationTest {
         registry.add("loopforge.engine.scheduler-tick", () -> "50ms");
         registry.add("loopforge.demo-catalog", () -> "false");
         registry.add("loopforge.schedules.poll-interval", () -> "1h");
+        // the test webhook receiver listens on loopback
+        registry.add("loopforge.notifications.allow-private-targets", () -> "true");
     }
 
     @AfterAll
@@ -297,6 +299,23 @@ class WorkIntegrationTest {
                                 .get("status")));
         Thread.sleep(500);
         assertThat(received).isEmpty();
+    }
+
+    @Test
+    void aStalePayloadSlotDoesNotStopASchedule() {
+        Map<String, Object> schedule = send(
+                "POST",
+                "/api/v1/projects/work/schedules",
+                Map.of("name", "stale", "cron", "0 4 * * *", "workflowId", "echo", "enabled", true),
+                201);
+        String id = (String) schedule.get("id");
+        // as after a crash between claim and payload update: only the column says the slot is due
+        jdbc.sql("UPDATE schedules SET next_run_at = next_run_at - INTERVAL '3' DAY WHERE id = :id")
+                .param("id", id)
+                .update();
+        schedules.fireDue();
+        Map<String, Object> fired = send("GET", "/api/v1/projects/work/schedules/" + id, null, 200);
+        assertThat(fired.get("lastRunId")).isNotNull();
     }
 
     private Map<String, Object> requirement(int number) {

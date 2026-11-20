@@ -10,8 +10,6 @@ import io.github.loopforge4j.core.runtime.sandbox.ExecResult;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
 import io.github.loopforge4j.core.runtime.sandbox.Sandbox;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -164,9 +162,8 @@ public abstract class CliAgentExecutor implements AgentExecutor {
     }
 
     private static void writePromptFile(Path workspace, String invocationId, String prompt) throws IOException {
-        Path file = promptFile(workspace, invocationId);
-        Files.createDirectories(file.getParent());
-        Files.writeString(file, prompt, StandardCharsets.UTF_8);
+        new io.github.loopforge4j.core.runtime.ManagedFiles(workspace)
+                .write(promptFile(workspace, invocationId), prompt, false);
     }
 
     private static String tail(String output) {

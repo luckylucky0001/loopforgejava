@@ -21,6 +21,8 @@ final class JsonRows {
     static <T> T store(Supplier<T> action) {
         try {
             return action.get();
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            throw e; // callers retry on unique conflicts
         } catch (DataAccessException e) {
             throw new StoreException("store write failed", e);
         }

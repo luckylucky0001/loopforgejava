@@ -3,10 +3,7 @@ package io.github.loopforge4j.core.runtime.executor;
 import io.github.loopforge4j.core.domain.McpServerDefinition;
 import io.github.loopforge4j.core.runtime.materialize.CompiledAgent;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -63,14 +60,14 @@ final class CodexMcpArgs {
                     add(args, prefix + "env_http_headers={ " + String.join(", ", pairs) + " }");
                 }
             } else {
+                // arguments and environment may hold resolved secrets: they live in an owner-only
+                // launcher script, never on the Codex command line
                 List<String> argv = new ArrayList<>();
                 String command = server.command();
-                if (!server.environment().isEmpty()) {
+                if (!server.environment().isEmpty() || !server.args().isEmpty()) {
                     Path launcher = launcher(compiled.runtimeDir(), server);
                     command = "sh";
                     argv.add(launcher.toString());
-                } else {
-                    argv.addAll(server.args());
                 }
                 add(args, prefix + "command=" + toml(command));
                 if (!argv.isEmpty()) {
@@ -117,12 +114,8 @@ final class CodexMcpArgs {
         server.args().forEach(a -> script.append(' ').append(quote(a)));
         script.append('\n');
         Path file = runtimeDir.resolve("mcp-" + server.id().replaceAll("[^A-Za-z0-9_-]", "_") + ".sh");
-        Files.writeString(file, script, StandardCharsets.UTF_8);
-        try {
-            Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rwx------"));
-        } catch (UnsupportedOperationException e) {
-            // non-POSIX file system
-        }
+        Path workspace = runtimeDir.getParent().getParent().getParent();
+        new io.github.loopforge4j.core.runtime.ManagedFiles(workspace).write(file, script.toString(), true);
         return file;
     }
 

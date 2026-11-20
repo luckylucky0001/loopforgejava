@@ -16,9 +16,48 @@ import org.springframework.stereotype.Component;
 public class AccessPolicy {
 
     private final ProjectStore projects;
+    private final io.github.loopforge4j.core.store.CatalogStore catalog;
+    private final boolean membersRequireIsolation;
+    private final java.util.Set<String> isolatedProfiles;
 
-    public AccessPolicy(ProjectStore projects) {
+    public AccessPolicy(
+            ProjectStore projects,
+            io.github.loopforge4j.core.store.CatalogStore catalog,
+            io.github.loopforge4j.server.config.LoopForgeProperties properties) {
         this.projects = projects;
+        this.catalog = catalog;
+        this.membersRequireIsolation = properties.security().membersRequireIsolation();
+        this.isolatedProfiles = java.util.Set.copyOf(properties.security().isolatedProfiles());
+    }
+
+    /**
+     * Non-administrators may only author or run SOPs in an isolated sandbox profile (unless the
+     * deployment trusts its members): a local-sandbox script or agent runs as the server's OS user.
+     */
+    public void requireIsolatedSandbox(
+            Principal principal, io.github.loopforge4j.core.domain.WorkflowDefinition workflow) {
+        if (!membersRequireIsolation || current(principal).admin() || workflow == null) {
+            return;
+        }
+        if (!isolatedProfiles.contains(workflow.sandboxProfileId())) {
+            throw new AccessDeniedException("SOP '" + workflow.id() + "' uses sandbox profile '"
+                    + workflow.sandboxProfileId() + "'; members may only use isolated profiles " + isolatedProfiles);
+        }
+    }
+
+    public void requireIsolatedSandbox(Principal principal, String workflowId) {
+        if (workflowId != null) {
+            requireIsolatedSandbox(principal, catalog.workflow(workflowId).orElse(null));
+        }
+    }
+
+    /** Whether a project-scoped definition is visible: global ones to everybody, others to members. */
+    public boolean canSee(Principal principal, String projectId) {
+        CurrentUser user = current(principal);
+        if (user.admin() || projectId == null || projectId.isBlank()) {
+            return true;
+        }
+        return projects.rolesOf(user.id()).containsKey(projectId);
     }
 
     public CurrentUser current(Principal principal) {
@@ -82,7 +121,8 @@ public class AccessPolicy {
         }
         String project = run.context().projectId();
         if (project == null || project.isBlank()) {
-            return user.username().equals(run.context().triggeredBy());
+            // only administrators start runs without a project, so only they may see them
+            return false;
         }
         Map<String, ProjectRole> roles = projects.rolesOf(user.id());
         ProjectRole actual = roles.get(project);

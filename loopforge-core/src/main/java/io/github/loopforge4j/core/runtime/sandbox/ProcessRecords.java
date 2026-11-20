@@ -35,12 +35,14 @@ public final class ProcessRecords {
         }
         Path file = directory.resolve(Long.toString(process.pid()));
         try {
-            Files.createDirectories(directory);
-            Files.writeString(
-                    file,
-                    started.get().toEpochMilli() + " " + SELF.pid() + " "
-                            + engineStarted.get().toEpochMilli(),
-                    StandardCharsets.UTF_8);
+            // the workspace is two levels up (<workspace>/.loopforge/procs)
+            new io.github.loopforge4j.core.runtime.ManagedFiles(
+                            directory.getParent().getParent())
+                    .write(
+                            file,
+                            started.get().toEpochMilli() + " " + SELF.pid() + " "
+                                    + engineStarted.get().toEpochMilli(),
+                            false);
         } catch (IOException e) {
             log.warn("cannot record process {}: {}", process.pid(), e.toString());
             return () -> {};

@@ -32,10 +32,15 @@ class NotificationController {
 
     private final NotificationStore store;
     private final AccessPolicy access;
+    private final boolean allowPrivate;
 
-    NotificationController(NotificationStore store, AccessPolicy access) {
+    NotificationController(
+            NotificationStore store,
+            AccessPolicy access,
+            io.github.loopforge4j.server.config.LoopForgeProperties properties) {
         this.store = store;
         this.access = access;
+        this.allowPrivate = properties.notifications().allowPrivateTargets();
     }
 
     @GetMapping
@@ -91,14 +96,19 @@ class NotificationController {
                 null);
     }
 
-    private static void validate(NotificationChannel body) {
+    private void validate(NotificationChannel body) {
         List<String> problems = new ArrayList<>();
         if (body.name() == null || body.name().isBlank() || body.name().length() > 200) {
             problems.add("name is required (at most 200 characters)");
         }
         String url = body.url() == null ? "" : body.url().strip();
-        if (!(url.startsWith("https://") || url.startsWith("http://")) || url.length() > 2000) {
-            problems.add("url must be an http(s) URL");
+        if (url.length() > 2000) {
+            problems.add("url is too long");
+        } else {
+            String problem = WebhookTargets.problem(url, allowPrivate);
+            if (problem != null) {
+                problems.add(problem);
+            }
         }
         for (String event : body.events()) {
             if (!NotificationChannel.EVENTS.contains(event)) {

@@ -42,13 +42,17 @@ class WorkflowController {
     }
 
     @GetMapping("/workflows")
-    List<WorkflowDefinition> list() {
-        return store.workflows();
+    List<WorkflowDefinition> list(java.security.Principal principal) {
+        return store.workflows().stream()
+                .filter(w -> access.canSee(principal, w.projectId()))
+                .toList();
     }
 
     @GetMapping("/workflows/{id}")
-    WorkflowDefinition get(@PathVariable String id) {
-        return store.workflow(id).orElseThrow(() -> new RunNotFoundException("workflow '" + id + "' not found"));
+    WorkflowDefinition get(@PathVariable String id, java.security.Principal principal) {
+        return store.workflow(id)
+                .filter(w -> access.canSee(principal, w.projectId()))
+                .orElseThrow(() -> new RunNotFoundException("workflow '" + id + "' not found"));
     }
 
     @Operation(summary = "Create or replace a workflow; the path id wins over the body id")
@@ -60,6 +64,7 @@ class WorkflowController {
                 .ifPresent(existing -> access.requireProject(
                         principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
         access.requireProject(principal, body.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER);
+        access.requireIsolatedSandbox(principal, body);
         return catalog.saveWorkflow(withId(body, id));
     }
 
@@ -90,7 +95,8 @@ class WorkflowController {
 
     @Operation(summary = "Export the whole catalog as an importable bundle")
     @GetMapping("/catalog/export")
-    CatalogBundle export() {
+    CatalogBundle export(java.security.Principal principal) {
+        access.requireAdmin(principal);
         return new CatalogBundle(
                 store.agents(),
                 store.workflows(),

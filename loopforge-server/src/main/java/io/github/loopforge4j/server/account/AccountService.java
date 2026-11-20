@@ -23,7 +23,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class AccountService {
 
     static final int MIN_PASSWORD = 10;
+    /** Names used by service and system actors in run records. */
+    static final java.util.Set<String> RESERVED = java.util.Set.of("operator", "system", "schedule", "anonymous");
+
     private static final int MAX_FAILURES = 5;
+    /** Bound of the per-instance failure table (unknown usernames would otherwise grow it). */
+    private static final int MAX_TRACKED = 10_000;
+
     private static final Duration LOCKOUT = Duration.ofMinutes(5);
     /** Same work for unknown usernames as for wrong passwords, so timing does not reveal accounts. */
     private static final String DUMMY_HASH =
@@ -58,6 +64,12 @@ public class AccountService {
             throw new AccessPolicy.AccessDeniedException("setup has already been completed");
         }
         User admin = create(username, password, displayName, email, Role.ADMIN);
+        // the primary key makes a concurrent second setup fail and roll back its account
+        try {
+            users.markSetupCompleted(admin.username());
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            throw new AccessPolicy.AccessDeniedException("setup has already been completed");
+        }
         return session(admin);
     }
 
@@ -72,6 +84,14 @@ public class AccountService {
         String hash = user == null ? DUMMY_HASH : users.passwordHash(user.id()).orElse(DUMMY_HASH);
         boolean matches = encoder.matches(password == null ? "" : password, hash);
         if (user == null || !matches || user.disabled()) {
+            if (failures.size() > MAX_TRACKED) {
+                failures.values()
+                        .removeIf(
+                                x -> x.lockedUntil() == null || x.lockedUntil().isBefore(now));
+                if (failures.size() > MAX_TRACKED) {
+                    failures.clear();
+                }
+            }
             failures.compute(name, (k, old) -> {
                 int count = old == null ? 1 : old.count() + 1;
                 return new Failures(count, count >= MAX_FAILURES ? now.plus(LOCKOUT) : null);
@@ -94,6 +114,8 @@ public class AccountService {
         List<String> problems = new ArrayList<>();
         if (!name.matches("[a-z0-9][a-z0-9._-]{1,63}")) {
             problems.add("username must be 2-64 characters of a-z, 0-9, '.', '_' or '-'");
+        } else if (RESERVED.contains(name)) {
+            problems.add("username '" + name + "' is reserved");
         }
         checkPassword(password, problems);
         if (email != null && !email.isBlank() && !email.matches("[^@\\s]{1,200}@[^@\\s]{1,200}")) {

@@ -34,7 +34,8 @@ public record LoopForgeProperties(
         @Valid @DefaultValue Mcp mcp,
         @Valid @DefaultValue Retention retention,
         @DefaultValue List<GitLabHost> gitlab,
-        @DefaultValue List<ModelPrice> pricing) {
+        @DefaultValue List<ModelPrice> pricing,
+        @Valid @DefaultValue Notifications notifications) {
 
     /**
      * @param defaultExecutor executor id used when neither role nor node chooses one
@@ -101,13 +102,19 @@ public record LoopForgeProperties(
      * @param publicDocs expose the OpenAPI document and Swagger UI without a token
      * @param maxRequestSize largest accepted request body; larger ones get 413 before parsing
      * @param sessionTtl lifetime of a login session token
+     * @param membersRequireIsolation non-administrators may only save and start SOPs whose sandbox
+     *     profile is isolated: the local sandbox runs as the server's OS user, so anything a script or
+     *     agent does there can read the server's token, database and configuration
+     * @param isolatedProfiles sandbox profiles that confine runs (containers)
      */
     public record Security(
             @DefaultValue List<String> apiTokens,
             @NotNull @DefaultValue("./data/api-token") Path tokenFile,
             @DefaultValue("true") boolean publicDocs,
             @NotNull @DefaultValue("8MB") org.springframework.util.unit.DataSize maxRequestSize,
-            @NotNull @DefaultValue("12h") Duration sessionTtl) {}
+            @NotNull @DefaultValue("12h") Duration sessionTtl,
+            @DefaultValue("true") boolean membersRequireIsolation,
+            @DefaultValue("docker") List<String> isolatedProfiles) {}
 
     /**
      * Git access of runs. Tokens are injected through a credential helper into the processes of a
@@ -185,6 +192,12 @@ public record LoopForgeProperties(
             double output,
             double cacheRead,
             double cacheWrite) {}
+
+    /**
+     * @param allowPrivateTargets let webhooks call loopback, private and link-local addresses (only
+     *     for trusted maintainers: otherwise a webhook is a probe into the server's network)
+     */
+    public record Notifications(@DefaultValue("false") boolean allowPrivateTargets) {}
 
     /** Replaces the launch command of a built-in executor (e.g. an absolute binary path). */
     public record ExecutorOverride(String binary, List<String> args, String model, String effort) {}

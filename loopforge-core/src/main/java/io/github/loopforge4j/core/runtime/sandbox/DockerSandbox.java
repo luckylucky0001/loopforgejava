@@ -84,7 +84,7 @@ public final class DockerSandbox implements Sandbox {
         inside.put("LANG", "C.UTF-8");
         Path home = privateHome(command.label());
         if (home != null) {
-            java.nio.file.Files.createDirectories(home.resolve("tmp"));
+            new io.github.loopforge4j.core.runtime.ManagedFiles(workspace).directory(home.resolve("tmp"));
             inside.put("HOME", home.toString());
             inside.put("TMPDIR", home.resolve("tmp").toString());
         }

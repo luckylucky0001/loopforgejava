@@ -45,8 +45,6 @@ import io.github.loopforge4j.core.runtime.sandbox.LineListener;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
 import io.github.loopforge4j.core.runtime.sandbox.Sandbox;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -294,8 +292,7 @@ final class NodeRunner {
         String relative = LocalSandbox.CONTROL_DIR + "/scripts/" + node.id().replaceAll("[^A-Za-z0-9._-]", "_")
                 + "-attempt-" + attempt + (language == ScriptLanguage.PYTHON ? ".py" : ".sh");
         Path file = sandbox.workspace().resolve(relative);
-        Files.createDirectories(file.getParent());
-        Files.writeString(file, node.script(), StandardCharsets.UTF_8);
+        new io.github.loopforge4j.core.runtime.ManagedFiles(sandbox.workspace()).write(file, node.script(), false);
         // absolute path: repository-scoped scripts run inside the checkout directory
         List<String> argv = language == ScriptLanguage.PYTHON
                 ? List.of("python3", file.toString())

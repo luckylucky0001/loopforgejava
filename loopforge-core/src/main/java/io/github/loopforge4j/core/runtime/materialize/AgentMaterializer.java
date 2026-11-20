@@ -9,6 +9,7 @@ import io.github.loopforge4j.core.domain.ScriptLanguage;
 import io.github.loopforge4j.core.domain.SkillDefinition;
 import io.github.loopforge4j.core.json.Json;
 import io.github.loopforge4j.core.mcp.GateMcpPackage;
+import io.github.loopforge4j.core.runtime.ManagedFiles;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -92,6 +93,7 @@ public final class AgentMaterializer {
                 servers.add(resolveSecrets(server, request.secrets()));
             }
             if (request.gateResultPath() != null) {
+                files.directory(control.resolve("bin"));
                 servers.add(GateMcpPackage.materialize(
                         control.resolve(GATE_JAR),
                         request.javaBinary() == null ? GateMcpPackage.currentJava() : request.javaBinary(),
@@ -348,8 +350,14 @@ public final class AgentMaterializer {
         new ManagedFiles(workspace).write(file, content, false);
     }
 
+    public static void writeControlFile(Path workspace, Path file, String content, boolean executable)
+            throws IOException {
+        new ManagedFiles(workspace).write(file, content, executable);
+    }
+
     private static void removeStale(ManagedFiles files, Path dir, Set<String> keep) throws IOException {
-        if (!Files.isDirectory(dir)) {
+        files.verify(dir);
+        if (!Files.isDirectory(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
         try (Stream<Path> children = Files.list(dir)) {

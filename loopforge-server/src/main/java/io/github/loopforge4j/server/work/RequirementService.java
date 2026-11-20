@@ -147,6 +147,12 @@ public class RequirementService implements RunListener {
             runs.add(run.id());
             return current.with("in_progress", runs, run.id(), current.deliveries());
         });
+        // a run that settled before it was linked (fast failure) is reflected now
+        try {
+            runChanged(engines.getObject().require(run.id()));
+        } catch (RunNotFoundException e) {
+            // deleted meanwhile
+        }
         return run;
     }
 

@@ -51,17 +51,24 @@ final class TelemetryBuffer {
             write(runId, List.of(event));
             return;
         }
-        Pending p = pending.computeIfAbsent(runId, id -> new Pending());
         boolean full;
-        p.lock.lock();
-        try {
-            if (p.events.size() >= MAX_PENDING) {
-                p.events.removeFirst();
+        while (true) {
+            Pending p = pending.computeIfAbsent(runId, id -> new Pending());
+            p.lock.lock();
+            try {
+                // a flush may have retired this buffer between lookup and lock: use the current one
+                if (pending.get(runId) != p) {
+                    continue;
+                }
+                if (p.events.size() >= MAX_PENDING) {
+                    p.events.removeFirst();
+                }
+                p.events.add(event);
+                full = p.events.size() >= MAX_BATCH;
+                break;
+            } finally {
+                p.lock.unlock();
             }
-            p.events.add(event);
-            full = p.events.size() >= MAX_BATCH;
-        } finally {
-            p.lock.unlock();
         }
         if (full) {
             flush(runId);

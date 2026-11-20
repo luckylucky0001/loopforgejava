@@ -131,6 +131,49 @@ class TelemetryBatchingTest {
         }
     }
 
+    @Test
+    void concurrentProducersNeverLoseEventsToTheFlusher() throws Exception {
+        InMemoryRunStore store = new InMemoryRunStore();
+        List<String> ids = List.of("r0", "r1", "r2", "r3");
+        for (String id : ids) {
+            store.insert(
+                    Run.create(
+                            id,
+                            WorkflowDefinition.builder("wf")
+                                    .node(WorkflowNode.builder("a", NodeType.SCRIPT)
+                                            .script("true")
+                                            .build())
+                                    .build(),
+                            "",
+                            ExecutionContext.EMPTY,
+                            Instant.now()),
+                    List.of());
+        }
+        TelemetryBuffer buffer = new TelemetryBuffer(store, Duration.ofMillis(1), (id, events) -> {});
+        int threads = 8;
+        int perThread = 6_000;
+        List<Thread> producers = new java.util.ArrayList<>();
+        for (int t = 0; t < threads; t++) {
+            int n = t;
+            producers.add(Thread.ofPlatform().start(() -> {
+                for (int i = 0; i < perThread; i++) {
+                    buffer.add(ids.get((n + i) % ids.size()), event(ids.get((n + i) % ids.size()), "e"));
+                    if (i % 97 == 0) {
+                        Thread.yield();
+                    }
+                }
+            }));
+        }
+        for (Thread producer : producers) {
+            producer.join();
+        }
+        buffer.close();
+        long stored = ids.stream()
+                .mapToLong(id -> store.events(id, 0, 1_000_000).size())
+                .sum();
+        assertThat(stored).isEqualTo((long) threads * perThread);
+    }
+
     private static RunEvent event(String runId, String type) {
         return new RunEvent(0, runId, null, "output", type, "info", type, java.util.Map.of(), Instant.now());
     }

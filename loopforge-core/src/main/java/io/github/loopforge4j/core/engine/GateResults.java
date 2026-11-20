@@ -7,8 +7,6 @@ import io.github.loopforge4j.core.domain.GateResult;
 import io.github.loopforge4j.core.json.Json;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 import tools.jackson.core.JacksonException;
@@ -32,7 +30,7 @@ public final class GateResults {
     }
 
     public static void clear(Path workspace, String relative) throws IOException {
-        Files.deleteIfExists(workspace.resolve(relative));
+        new io.github.loopforge4j.core.runtime.ManagedFiles(workspace).delete(workspace.resolve(relative));
     }
 
     /**
@@ -43,15 +41,25 @@ public final class GateResults {
      */
     public static Optional<GateResult> read(Path workspace, String relative) throws IOException {
         Path file = workspace.resolve(relative).normalize();
-        if (!file.startsWith(workspace) || !Files.isRegularFile(file)) {
+        if (!file.startsWith(workspace)) {
             return Optional.empty();
         }
-        String raw = Files.readString(file, StandardCharsets.UTF_8);
+        Optional<String> content;
+        try {
+            content = new io.github.loopforge4j.core.runtime.ManagedFiles(workspace).read(file, 256 * 1024);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("gate result file is not readable: " + e.getMessage(), e);
+        }
+        if (content.isEmpty()) {
+            return Optional.empty();
+        }
+        String raw = content.get();
         GateResult result;
         try {
             result = Json.read(raw, GateResult.class);
         } catch (JacksonException | IllegalArgumentException e) {
-            throw new IllegalArgumentException("gate result payload is invalid: " + e.getMessage(), e);
+            // the parser message (and so the cause) would quote the payload; keep reports and logs free of it
+            throw new IllegalArgumentException("gate result payload is invalid: not JSON of the gate result schema");
         }
         return Optional.of(validate(result));
     }

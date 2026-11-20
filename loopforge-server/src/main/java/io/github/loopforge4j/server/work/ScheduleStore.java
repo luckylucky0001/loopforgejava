@@ -58,25 +58,53 @@ public class ScheduleStore {
     }
 
     public Optional<Schedule> find(String id) {
-        return jdbc.sql("SELECT payload FROM schedules WHERE id = :id")
+        return jdbc.sql("SELECT payload, next_run_at FROM schedules WHERE id = :id")
                 .param("id", id)
-                .query((rs, i) -> JsonRows.read(rs.getString("payload"), Schedule.class))
+                .query(ScheduleStore::map)
                 .optional();
     }
 
+    /**
+     * The indexed {@code next_run_at} column is the source of truth for the slot: a crash between a
+     * claim (which moves only the column) and the payload update must not leave a stale payload slot
+     * that no later claim matches.
+     */
+    private static Schedule map(java.sql.ResultSet rs, int row) throws java.sql.SQLException {
+        Schedule s = JsonRows.read(rs.getString("payload"), Schedule.class);
+        Instant column = SqlTime.read(rs, "next_run_at");
+        return new Schedule(
+                s.id(),
+                s.projectId(),
+                s.name(),
+                s.enabled(),
+                s.cron(),
+                s.zone(),
+                s.workflowId(),
+                s.input(),
+                s.repositories(),
+                s.skipIfRunning(),
+                column,
+                s.lastRunAt(),
+                s.lastRunId(),
+                s.lastError(),
+                s.createdBy(),
+                s.createdAt(),
+                s.updatedAt());
+    }
+
     public List<Schedule> list(String projectId) {
-        return jdbc.sql("SELECT payload FROM schedules WHERE project_id = :p ORDER BY id")
+        return jdbc.sql("SELECT payload, next_run_at FROM schedules WHERE project_id = :p ORDER BY id")
                 .param("p", projectId)
-                .query((rs, i) -> JsonRows.read(rs.getString("payload"), Schedule.class))
+                .query(ScheduleStore::map)
                 .list();
     }
 
     public List<Schedule> due(Instant now, int limit) {
-        return jdbc.sql("SELECT payload FROM schedules WHERE enabled = TRUE AND next_run_at <= :now"
+        return jdbc.sql("SELECT payload, next_run_at FROM schedules WHERE enabled = TRUE AND next_run_at <= :now"
                         + " ORDER BY next_run_at LIMIT :limit")
                 .param("now", SqlTime.of(now))
                 .param("limit", limit)
-                .query((rs, i) -> JsonRows.read(rs.getString("payload"), Schedule.class))
+                .query(ScheduleStore::map)
                 .list();
     }
 

@@ -2,12 +2,9 @@ package io.github.loopforge4j.core.runtime.materialize;
 
 import io.github.loopforge4j.core.domain.McpServerDefinition;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 /**
  * A role compiled into one invocation's workspace files (upstream {@code compiledConfig}).
@@ -55,13 +52,8 @@ public record CompiledAgent(
 
     /** Removes the per-invocation files (they may hold resolved MCP secrets). */
     public void cleanup() throws IOException {
-        if (!Files.exists(runtimeDir)) {
-            return;
-        }
-        try (Stream<Path> walk = Files.walk(runtimeDir)) {
-            for (Path path : walk.sorted(Comparator.reverseOrder()).toList()) {
-                Files.deleteIfExists(path);
-            }
-        }
+        // the agent dir's parent chain is the workspace control directory
+        Path workspace = agentDir.getParent().getParent().getParent();
+        new io.github.loopforge4j.core.runtime.ManagedFiles(workspace).delete(runtimeDir);
     }
 }

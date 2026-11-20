@@ -386,6 +386,37 @@ class GitRepositoryTest {
                 .contains("## Git 仓库交付", "gh pr create", "禁止向 main 直接推送");
     }
 
+    @Test
+    void runsOnlyUseSopsAndRepositoriesOfTheirOwnProject() throws Exception {
+        f.catalog.saveRepository(new RepositoryDefinition(
+                "b-repo",
+                "b-repo",
+                RepositoryProvider.LOCAL,
+                seededRemote("b-remote.git").toString(),
+                null,
+                "main",
+                null,
+                "project-b",
+                null));
+        f.catalog.saveWorkflow(io.github.loopforge4j.core.json.Json.read(
+                "{\"id\":\"b-sop\",\"projectId\":\"project-b\",\"status\":\"published\","
+                        + "\"nodes\":[{\"id\":\"a\",\"type\":\"script\",\"script\":\"true\"}]}",
+                WorkflowDefinition.class));
+        f.workflow(WorkflowDefinition.builder("global")
+                .node(WorkflowNode.builder("a", SCRIPT).script("true").build())
+                .build());
+        ExecutionContext inA = new ExecutionContext("project-a", "dev", null, null, null);
+        ExecutionContext inB = new ExecutionContext("project-b", "dev", null, null, null);
+        assertThatThrownBy(() -> f.engine.start("b-sop", "", inA, List.of())).isInstanceOf(RunNotFoundException.class);
+        assertThatThrownBy(() -> f.engine.start("global", "", inA, List.of(RepositorySelection.of("b-repo"))))
+                .isInstanceOf(RunNotFoundException.class)
+                .hasMessageContaining("b-repo");
+        assertThatThrownBy(() -> f.engine.start("b-sop", "", ExecutionContext.EMPTY, List.of()))
+                .isInstanceOf(RunNotFoundException.class);
+        Run ok = f.engine.start("b-sop", "", inB, List.of(RepositorySelection.of("b-repo")));
+        f.awaitStatus(ok.id(), io.github.loopforge4j.core.domain.RunStatus.SUCCEEDED);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private void mrWorkflow() {

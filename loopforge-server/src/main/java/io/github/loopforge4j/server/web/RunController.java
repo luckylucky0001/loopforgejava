@@ -61,6 +61,7 @@ class RunController {
     @PostMapping
     ResponseEntity<Run> start(@Valid @RequestBody ApiRequests.StartRun request, Principal principal) {
         access.requireProject(principal, request.projectId(), ProjectRole.DEVELOPER);
+        access.requireIsolatedSandbox(principal, request.workflowId());
         ExecutionContext context = new ExecutionContext(request.projectId(), actor(principal), null, null, null);
         Run run = engine.start(request.workflowId(), request.input(), context, request.selections());
         return ResponseEntity.created(URI.create("/api/v1/runs/" + run.id())).body(run);
@@ -77,7 +78,7 @@ class RunController {
         RunQuery query = new RunQuery(status, workflowId, parentRunId, limit);
         java.util.Set<String> projects = access.visibleProjects(principal);
         if (projects != null) {
-            query = query.visibleTo(projects, access.current(principal).username());
+            query = query.visibleTo(projects, null);
         }
         return engine.list(query).stream().map(RunSummary::of).toList();
     }

@@ -260,7 +260,11 @@ class AgentCliExecutorTest {
                 new AgentAssets(
                         List.of(),
                         List.of(new SkillDefinition("tdd", null, "d", "body", Map.of(), null)),
-                        List.of(stdio, http)),
+                        List.of(
+                                stdio,
+                                McpServerDefinition.stdio(
+                                        "plain", "plain-mcp", List.of("--token", "${secret:T}"), Map.of()),
+                                http)),
                 ".loopforge/gate-results/n/attempt-1.json",
                 null,
                 Map.of("T", "top-secret")::get,
@@ -274,7 +278,7 @@ class AgentCliExecutorTest {
                 "x",
                 null));
         String joined = String.join(" ", argv);
-        assertThat(joined).doesNotContain("top-secret");
+        assertThat(joined).doesNotContain("top-secret").contains("mcp_servers.plain.command=\"sh\"");
         assertThat(joined)
                 .contains("mcp_servers.tracker.command=\"sh\"")
                 .contains("mcp_servers.docs.url=\"https://docs/mcp\"")

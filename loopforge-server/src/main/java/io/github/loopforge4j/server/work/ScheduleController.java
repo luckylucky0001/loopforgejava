@@ -43,6 +43,7 @@ class ScheduleController {
     @PostMapping
     ResponseEntity<Schedule> create(@PathVariable String projectId, @RequestBody Schedule body, Principal principal) {
         access.requireProject(principal, projectId, ProjectRole.MAINTAINER);
+        access.requireIsolatedSandbox(principal, body.workflowId());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(schedules.save(
                         projectId, null, body, access.current(principal).username()));
@@ -59,6 +60,7 @@ class ScheduleController {
             @PathVariable String projectId, @PathVariable String id, @RequestBody Schedule body, Principal principal) {
         access.requireProject(principal, projectId, ProjectRole.MAINTAINER);
         find(projectId, id);
+        access.requireIsolatedSandbox(principal, body.workflowId());
         return schedules.save(projectId, id, body, access.current(principal).username());
     }
 
@@ -67,6 +69,7 @@ class ScheduleController {
     Schedule runNow(@PathVariable String projectId, @PathVariable String id, Principal principal) {
         access.requireProject(principal, projectId, ProjectRole.DEVELOPER);
         Schedule schedule = find(projectId, id);
+        access.requireIsolatedSandbox(principal, schedule.workflowId());
         schedules.runNow(schedule);
         return find(projectId, id);
     }

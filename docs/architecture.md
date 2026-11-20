@@ -97,6 +97,8 @@
 
 请求先由 `ApiTokenFilter` 认证：`lfu_` 前缀的账户 Token（会话或个人）在 `user_tokens` 中按 SHA-256 查找（账户未停用、未过期），配置的 API Token 认证为服务身份（管理员）。授权集中在 `AccessPolicy`：管理员与服务身份可做一切；项目资源需要足够的成员角色（viewer 读、developer 启动与操作运行、maintainer 管理项目 SOP/仓库/定时任务/通知、owner 管理成员）；不属于项目的运行只对启动者可见；全局目录（角色、规则、Skills、MCP）由管理员维护。运行表冗余 `project_id`、`triggered_by` 列，列表查询在数据库中按可见性过滤。
 
+项目边界：运行只能使用全局或本项目的 SOP 与代码仓库（其他项目的定义对它不存在）；非管理员只能看到全局与所在项目的 SOP、仓库；没有项目的运行只属于管理员。本地沙箱以服务进程的系统用户运行脚本和 Agent，能读到服务的 Token、数据库与配置，因此默认（`loopforge.security.members-require-isolation=true`）非管理员只能编写和启动隔离沙箱（`isolated-profiles`，默认 `docker`）中的 SOP；只有成员都完全可信的单团队部署才应关闭。Webhook 默认不能指向回环、私有、链路本地（云元数据）等内网地址（`loopforge.notifications.allow-private-targets`），保存时和每次投递前都会检查。
+
 需求、定时任务和通知都监听已提交的运行变化（`RunListener`）：需求跟随最近一次运行与其 PR；通知只在本实例观察到的状态转换上发送一次；定时任务由所有实例轮询，`next_run_at` 上的比较并交换保证每个时间槽只触发一次。
 
 ## 安全
@@ -111,6 +113,7 @@
 - 控制台是静态页面，响应带严格 CSP（禁止内联脚本与样式、只连同源）；所有数据以 `textContent` 渲染，运行输出中的标记不会被解释。
 - 只有 `/actuator/health/**` 公开；`/actuator/info`、`/actuator/prometheus` 需要 Token。
 
+- 工作区：Agent 可以把工作区里的任何目录换成指向宿主机的符号链接（容器里也一样，工作区以相同路径挂载）。引擎侧的所有控制文件操作（角色物化、提示词、脚本、输入产物、门禁结果读取与清理、凭据助手、进程记录）都经过 `ManagedFiles`：拒绝符号链接目录、以临时文件 + 原子重命名替换目标、以 `NOFOLLOW_LINKS` 读取、删除时只删除链接本身。
 - Git：凭据只来自服务端配置。HTTPS token 放在运行进程的环境变量里，由控制目录中的 credential helper 按主机读取（`GIT_CONFIG_COUNT` 注入 `credential.helper`，先清空用户/系统级 helper），因此不会出现在克隆 URL、`.git/config`、运行数据或日志中；SSH 私钥写入控制目录且仅属主可读，`known_hosts` 采用 `accept-new`。`GIT_TERMINAL_PROMPT=0` 防止 CLI 卡在交互式询问。克隆 URL 内嵌凭据、`file:`/本地路径和 `http://` 默认拒绝。
 
 本地沙箱是**环境**边界而非文件系统边界，适用于可信团队；不可信负载需等待 Docker 沙箱（见路线图）。
