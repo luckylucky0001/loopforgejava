@@ -266,7 +266,8 @@ public final class AgentMaterializer {
                 headers,
                 server.workingDirectory(),
                 server.timeoutSec(),
-                server.updatedAt());
+                server.updatedAt(),
+                server.placement());
     }
 
     private static String resolve(McpServerDefinition server, String value, UnaryOperator<String> secrets) {

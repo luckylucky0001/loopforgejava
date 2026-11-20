@@ -868,6 +868,9 @@ async function assetsPage(kind) {
     h('a', { class: k === kind ? 'btn current' : 'btn', href: `#/assets/${k}` }, label)));
   await listPage(kind, KINDS[kind].title, kind === 'rules' ? ['id', 'name', 'priority'] : kind === 'skills' ? ['id', 'name', 'description'] : ['id', 'name', 'transport', 'command']);
   document.querySelector('main').prepend(tabs);
+  if (kind === 'mcp-servers') {
+    document.querySelector('main h1')?.after(h('button', { onclick: () => mcpMarket() }, 'MCP 市场'));
+  }
   if (kind === 'skills') {
     const status = await api('/skillhub/status').catch(() => ({ configured: false }));
     if (status.configured) {
@@ -882,6 +885,20 @@ async function assetsPage(kind) {
       }
     }
   }
+}
+
+/** The MCP market: entries are added to a project by its maintainers; roles bind the market id. */
+async function mcpMarket() {
+  const [market, projects] = await Promise.all([api('/mcp-market'), api('/projects').catch(() => [])]);
+  const body = h('div', {}, h('p', { class: 'muted' }, '把市场里的 MCP 添加到项目后，角色的 MCP 列表写市场 id（如 github）即可在该项目的运行里使用；GitHub 使用运行负责人在「设置」里的 GitHub Token，没有时使用平台的。'),
+    ...market.items.map((item) => {
+      const project = h('select', {}, projects.map((p) => h('option', { value: p.id }, p.name)));
+      return h('div', { class: 'panel' }, h('div', { class: 'row' }, h('strong', {}, item.name), h('span', { class: 'chip' }, item.category), h('span', { class: 'mono muted' }, item.id),
+        h('span', { class: 'spacer' }), project,
+        h('button', { class: 'primary', disabled: projects.length === 0, onclick: () => attempt(() => api('/mcp-market/install', { method: 'POST', body: { marketId: item.id, projectId: project.value } }), () => alert('已添加')) }, '添加到项目')),
+      h('p', { class: 'muted' }, item.description), h('p', { class: 'mono muted' }, item.url));
+    }));
+  modal('MCP 市场', body, () => null);
 }
 
 /** Search the SkillHub market and install a skill (administrators). */
@@ -1024,6 +1041,7 @@ async function projectPage(projectId) {
           h('button', { onclick: () => startRequirement(r), disabled: ['closed', 'cancelled', 'done'].includes(r.status) }, '启动'),
           r.external ? null : h('button', { onclick: () => pushRequirement(r) }, '推送')))))),
     playbooksSection(projectId, workflows.filter((w) => w.status === 'published'), refresh),
+    projectMcpSection(projectId, refresh),
     h('div', { class: 'row' }, h('h2', {}, '外部需求同步'), h('span', { class: 'spacer' }),
       h('button', { onclick: importTapd }, '导入 TAPD 链接'), h('button', { onclick: syncNow }, '立即同步'), h('button', { onclick: editTracker }, '设置')),
     h('p', { class: 'muted' }, tracker && (tracker.issueRepositoryIds.length || tracker.tapdWorkspaceId)
@@ -1068,7 +1086,7 @@ async function settingsPage() {
     shell([h('h1', {}, '设置'), h('p', { class: 'muted' }, '当前使用服务 Token 登录；个人 Token 与密码需要账户登录。')]);
     return;
   }
-  const [tokens, credentials, kinds] = await Promise.all([api('/me/tokens'), api('/me/credentials'), api('/me/credentials/kinds')]);
+  const [tokens, credentials, kinds, myServers] = await Promise.all([api('/me/tokens'), api('/me/credentials'), api('/me/credentials/kinds'), api('/me/mcp-servers').catch(() => [])]);
   const refresh = () => settingsPage();
   const parseVariables = (text) => Object.fromEntries(text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
     const i = l.indexOf('=');
@@ -1116,6 +1134,13 @@ async function settingsPage() {
           h('td', { class: 'mono' }, c.baseUrl || c.username || '—'), h('td', { class: 'mono' }, (c.variables || []).join(', ') || '—'), h('td', {}, time(c.updatedAt)),
           h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => (c.kind.startsWith('git:') ? editGit(c) : editExecutor(c)) }, '修改'),
             h('button', { class: 'danger', onclick: () => confirm(`删除 ${c.kind}？`) && attempt(() => api(`/me/credentials/${encodeURIComponent(c.kind)}`, { method: 'DELETE' }), refresh) }, '删除')))))),
+    h('div', { class: 'row' }, h('h2', {}, '我的 MCP'), h('span', { class: 'spacer' }),
+      h('button', { onclick: () => prompted('添加个人 MCP（HTTP）', [{ name: 'name', label: '名称' }, { name: 'url', label: 'URL（https://…）' }, { name: 'description', label: '说明' }],
+        (v) => api('/me/mcp-servers', { method: 'POST', body: v }).then(refresh)) }, '添加')),
+    h('p', { class: 'muted' }, '只在你负责的运行里、角色绑定了它时使用；密钥不能写在请求头里。'),
+    myServers.length === 0 ? null : h('table', {}, h('tr', {}, ['id', '名称', 'URL', ''].map((t) => h('th', {}, t))),
+      myServers.map((m) => h('tr', {}, h('td', { class: 'mono' }, m.id), h('td', {}, m.name), h('td', { class: 'mono' }, m.url),
+        h('td', {}, h('button', { class: 'danger', onclick: () => attempt(() => api(`/me/mcp-servers/${encodeURIComponent(m.id)}`, { method: 'DELETE' }), refresh) }, '删除'))))),
     h('div', { class: 'row' }, h('h2', {}, 'Token'), h('span', { class: 'spacer' }), h('button', { class: 'primary', onclick: createToken }, '新建个人 Token')),
     h('table', {}, h('tr', {}, ['名称', '类型', '前缀', '创建', '最近使用', '过期', ''].map((t) => h('th', {}, t))),
       tokens.map((t) => h('tr', {}, h('td', {}, t.name), h('td', {}, t.kind), h('td', { class: 'mono' }, `${t.prefix}…`), h('td', {}, time(t.createdAt)),
@@ -1796,6 +1821,21 @@ function businessDomainRow(project, refresh) {
       h('button', { onclick: assign }, project.businessDomainId ? '调整归属' : '设置归属'), h('button', { onclick: history }, '归属历史'));
   }).catch(() => {});
   return row;
+}
+
+function projectMcpSection(projectId, refresh) {
+  const panel = h('div', {});
+  api(`/projects/${encodeURIComponent(projectId)}/mcp-servers`).then((servers) => {
+    const add = () => prompted('添加项目 MCP（HTTP）', [{ name: 'name', label: '名称' }, { name: 'url', label: 'URL（https://…）' }, { name: 'description', label: '说明' }],
+      (v) => api(`/projects/${encodeURIComponent(projectId)}/mcp-servers`, { method: 'POST', body: v }).then(refresh));
+    panel.replaceChildren(h('div', { class: 'row' }, h('h2', {}, 'MCP'), h('span', { class: 'spacer' }), h('button', { onclick: () => mcpMarket() }, 'MCP 市场'), h('button', { onclick: add }, '添加自定义')),
+      servers.length === 0 ? h('p', { class: 'muted' }, '项目还没有 MCP：从市场添加，或添加自定义 HTTP MCP。角色在这个项目的运行里通过 id 或市场 id 使用它们。') :
+        h('table', {}, h('tr', {}, ['id', '名称', '来源', 'URL', ''].map((t) => h('th', {}, t))),
+          servers.map((m) => h('tr', {}, h('td', { class: 'mono' }, m.id), h('td', {}, m.name), h('td', {}, m.placement?.marketId ? `市场 · ${m.placement.marketId}` : '自定义'),
+            h('td', { class: 'mono' }, m.url || '—'),
+            h('td', {}, h('button', { class: 'danger', onclick: () => confirm(`删除 ${m.id}？`) && attempt(() => api(`/projects/${encodeURIComponent(projectId)}/mcp-servers/${encodeURIComponent(m.id)}`, { method: 'DELETE' }), refresh) }, '删除'))))));
+  }).catch(() => panel.replaceChildren());
+  return panel;
 }
 
 function playbooksSection(projectId, workflows, refresh) {

@@ -69,6 +69,7 @@ class AgentMaterializerTest {
                         Map.of("Authorization", "Bearer ${secret:DOCS}"),
                         null,
                         30,
+                        null,
                         null));
         agent = AgentDefinition.builder("dev")
                 .name("开发")

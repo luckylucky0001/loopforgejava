@@ -86,6 +86,7 @@ class ConversationsTest {
                     Map.of("Authorization", "Bearer t"),
                     null,
                     60,
+                    null,
                     null);
             Conversations.Turn first = new Conversations.Turn(
                     "c1",

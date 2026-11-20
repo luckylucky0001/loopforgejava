@@ -34,6 +34,7 @@
 | `internal/observability`（遥测批量）、分析统计 | `core.engine.TelemetryBuffer`、`server.ops.RunMetrics` | 指标以 Micrometer 暴露 |
 | `internal/domain/user.go`、`project.go`、`internal/httpapi` 账户/项目部分 | `server.account` | 密码账户 + Token；未移植 OAuth/企业身份、个人凭据库 |
 | `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*`、`ExternalRef` | 平台需求与外部来源 |
+| `internal/httpapi/mcp_market.go`、`mcp_market_catalog.json`、`internal/engine/assets.go`（MCP 可见性与市场 id）、`internal/runtime/github_mcp.go` | `server.mcp.McpMarketController`、`McpServerDefinition.Placement`、`AgentAssets.resolve`、`AgentAssets.withGitHubToken` | MCP 市场、项目安装、项目与个人 MCP 的可见范围、角色按市场 id 绑定、GitHub Token 注入官方端点 |
 | `internal/domain/business_domain.go`、`internal/httpapi/business_domains.go`、项目归属 | `server.business.*`、`Project.businessDomainId` | 业务域（管理员 / 查看者、启停、乐观并发）、项目首次归属与迁移及历史、业务域报表（汇总、趋势、按域 / 项目、交付指标与趋势）；交付时间取自运行与 PR 的合并时间 |
 | `internal/httpapi/run_workspace.go`、`run_workspace_edit.go`、`internal/runtime/workspace_edit.go` | `server.workspace.*`、`RunEngine.workspace` | 运行工作区：变更、文件树、文件与历史版本、差异、提交、搜索、带 SHA 冲突检查的编辑；未移植终端、接管与快照恢复，执行机器上的工作区暂不可浏览 |
 | `internal/domain/issue_sop.go`、`sop_lane.go`、`internal/repo/requirement.go`（快照）、`internal/httpapi/dispatch.go`（泳道派发与交接） | `server.work.SopBinding`、`SopPlaybook`、`RequirementSnapshot`、`RequirementService`、`PlaybookController`、`core.domain.SopLanes` | 需求 SOP 链与项目套餐、按泳道派发（重跑需显式指定、交接说明）、泳道快照（节点阶段、子 SOP、用量、整体状态与生命周期）、泳道标签与推断 |
@@ -98,6 +99,7 @@
 | SkillHub 安装范围 | 安装到项目 | 安装为全局技能（管理员） | 本项目的技能目录是全局的，由管理员维护 |
 | 运行日志 | Worker 的 stdout / stderr 日志表 | 运行事件即日志；脚本 stdout 与 stderr 合并后逐行写入 `output` 事件（每次最多 2,000 行） | 事件已有游标、保留策略与实时流，不需要第二张日志表 |
 | 澄清结果提交 | Agent 调用 `submit_clarification` MCP 工具 | 回复末尾的 JSON 代码块，无效时在同一会话里重试一次 | 不需要为每轮签发 MCP 凭据；校验规则（问题非空、选择题至少两个不同选项、结论必须有 summary）与上游一致 |
+| 自定义 MCP | 项目 / 个人可添加 stdio 或 HTTP | 只能添加 HTTP，stdio MCP 仍由管理员在目录中维护；请求头不能含明文密钥 | 成员不应定义平台要启动的程序 |
 | 工作区里的 Git | 直接在工作区运行 git | 仓库配置里有会执行程序或指向外部的项时不运行 git，并以 `-c` 关闭 fsmonitor / hooks / 外部 diff | 工作区由 Agent 写入，隔离沙箱里的 Agent 不能借服务器执行命令 |
 | 泳道负责人 | 派发时以泳道负责人作为运行责任人（用其个人凭据） | 负责人只做展示，运行始终以发起人（或定时任务的执行身份）运行 | 避免开发者把别人设为负责人，借用其个人模型与 Git 凭据 |
 | 澄清读取外部原单 | 通过 TAPD / 工蜂 MCP 读原单与评论 | 提示词附原单链接，由 Agent 用自己的工具读取 | 本项目的外部同步不提供读原单的 MCP 服务 |

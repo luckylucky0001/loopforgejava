@@ -210,7 +210,7 @@ class AgentCliExecutorTest {
     void everyKindHasAnArgvShapeAndConfigDocument() {
         McpServerDefinition stdio = McpServerDefinition.stdio("s", "srv", List.of("a"), Map.of("K", "v"));
         McpServerDefinition http = new McpServerDefinition(
-                "h", null, null, "http", null, null, "https://x/mcp", null, Map.of("A", "b"), null, 0, null);
+                "h", null, null, "http", null, null, "https://x/mcp", null, Map.of("A", "b"), null, 0, null, null);
         for (String kind : AgentCliExecutor.KINDS) {
             AgentCliExecutor executor = new AgentCliExecutor(kind, CredentialProvider.NONE);
             List<String> argv = executor.arguments(invocation(
@@ -247,6 +247,7 @@ class AgentCliExecutorTest {
                 Map.of("Authorization", "Bearer ${secret:T}"),
                 null,
                 15,
+                null,
                 null);
         AgentDefinition agent = AgentDefinition.builder("dev")
                 .hooks(List.of(

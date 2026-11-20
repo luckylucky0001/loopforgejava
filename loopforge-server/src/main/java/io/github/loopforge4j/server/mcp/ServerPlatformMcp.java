@@ -165,6 +165,7 @@ public class ServerPlatformMcp implements PlatformMcp {
                 Map.of("Authorization", "Bearer " + token),
                 null,
                 60,
+                null,
                 null);
     }
 }

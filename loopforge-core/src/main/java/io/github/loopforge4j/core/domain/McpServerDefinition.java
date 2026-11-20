@@ -29,8 +29,51 @@ public record McpServerDefinition(
         Map<String, String> headers,
         String workingDirectory,
         int timeoutSec,
-        Instant updatedAt)
+        Instant updatedAt,
+        Placement placement)
         implements CatalogAsset {
+
+    /**
+     * Where a server applies (upstream MCP scope): {@code null} scope is the shared catalog; a
+     * {@code project} server serves that project's runs, a {@code personal} one its owner's.
+     *
+     * @param marketId the market entry it was installed from; roles may bind the market id
+     * @param authType {@code github-token}: the run's GitHub token is sent as the bearer
+     */
+    public record Placement(String scope, String projectId, String owner, String marketId, String authType) {
+        public static final String PROJECT = "project";
+        public static final String PERSONAL = "personal";
+        public static final String GITHUB_TOKEN = "github-token";
+
+        public Placement {
+            scope = blank(scope) ? null : scope.strip();
+            projectId = blank(projectId) ? null : projectId.strip();
+            owner = blank(owner) ? null : owner.strip();
+            marketId = blank(marketId) ? null : marketId.strip();
+            authType = blank(authType) ? null : authType.strip();
+        }
+
+        private static boolean blank(String value) {
+            return value == null || value.isBlank();
+        }
+    }
+
+    /** Shared catalog servers have no placement or no scope. */
+    public boolean shared() {
+        return placement == null || placement.scope() == null;
+    }
+
+    /** Whether a run of {@code projectId} done for {@code responsible} may use this server. */
+    public boolean visibleTo(String projectId, String responsible) {
+        if (shared()) {
+            return true;
+        }
+        return switch (placement.scope()) {
+            case Placement.PROJECT -> projectId != null && projectId.equals(placement.projectId());
+            case Placement.PERSONAL -> responsible != null && responsible.equals(placement.owner());
+            default -> false;
+        };
+    }
 
     public static final String STDIO = "stdio";
     public static final String HTTP = "http";
@@ -51,7 +94,7 @@ public record McpServerDefinition(
     }
 
     public static McpServerDefinition stdio(String id, String command, List<String> args, Map<String, String> env) {
-        return new McpServerDefinition(id, id, null, STDIO, command, args, null, env, null, null, 0, null);
+        return new McpServerDefinition(id, id, null, STDIO, command, args, null, env, null, null, 0, null, null);
     }
 
     @Override
@@ -68,6 +111,7 @@ public record McpServerDefinition(
                 headers,
                 workingDirectory,
                 timeoutSec,
-                instant);
+                instant,
+                placement);
     }
 }

@@ -111,6 +111,12 @@ loopforge:
 
 没有单独的预览源时，页面运行在不透明源里：读不到控制台的登录令牌，也不能借控制台身份调用 API；浏览器存储与 Cookie 用内存模拟。
 
+### MCP 市场与项目 / 个人 MCP
+
+「规则 / Skills / MCP → MCP 服务器」的「MCP 市场」列出可添加的远程 MCP（目前是 GitHub 官方 MCP）。项目维护者把条目添加到项目后，角色的 MCP 列表写市场 id（如 `github`）即可：每个运行用自己项目的那一份，没有安装的项目里自动略过。GitHub MCP 使用运行负责人在「设置」里配置的 GitHub Token（没有时用平台的），只发送给官方 HTTPS 端点；对话只使用发言人自己的 Token。
+
+项目维护者也可以给项目添加自定义 HTTP MCP，每个人可以在「设置 → 我的 MCP」添加自己的 HTTP MCP：项目的只在该项目的运行里可用，个人的只在本人负责的运行里可用，其他人看不到。自定义 MCP 只能是 HTTP（不能定义服务器要启动的程序），请求头里也不能写密钥。
+
 ### SkillHub 技能市场
 
 配置 `loopforge.skillhub.base-url`（与可选的 `api-key`，只发送给市场自己的主机）后，「规则 / Skills / MCP → Skills」可以搜索市场并安装技能（管理员）：指定版本或最新版本的 `SKILL.md` 与文本文件写入技能目录，二进制文件、超限文件与越界路径会被跳过并列出；已安装的技能可以更新到其他版本。市场只看到调用者的匿名标识。
@@ -338,6 +344,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs\|/snapshot\|/sops]]` | 需求、启动泳道（`workflowId`、`rerun`）、泳道快照、SOP 链与套餐 |
 | `GET/PUT` | `/api/v1/projects/{id}/playbooks` | 项目的流程套餐（写入需要维护者） |
+| `GET/POST/DELETE` | `/api/v1/mcp-market[/install]`、`/api/v1/projects/{id}/mcp-servers[/{sid}]`、`/api/v1/me/mcp-servers[/{sid}]` | MCP 市场与安装到项目、项目 MCP、个人 MCP |
 | `GET/PUT` | `/api/v1/business-domains`、`/api/v1/projects/{id}/business-domain[/history]` | 业务域（`createOnly`、乐观并发）、项目归属与历史 |
 | `GET` | `/api/v1/business-domain-report?businessDomainId=&from=&to=&grain=&timeZone=` | 业务域报表：运行汇总与趋势、按业务域 / 项目、交付指标与趋势 |
 | `GET/PUT` | `/api/v1/runs/{id}/workspace[/tree\|/file\|/diff\|/log\|/commit\|/search]` | 运行工作区：变更、文件树、文件（可带 `ref`）、差异、提交、搜索；`PUT /file` 带 `expectedSha256` 写入 |

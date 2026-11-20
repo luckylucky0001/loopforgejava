@@ -558,7 +558,14 @@ final class NodeRunner {
         int maxIterations = agent.loop().effectiveIterations();
         AgentAssets assets;
         try {
-            assets = AgentAssets.resolve(agent, engine.catalog());
+            Run owner = currentRun(runId);
+            assets = AgentAssets.resolve(
+                    agent,
+                    engine.catalog(),
+                    owner.context().projectId(),
+                    owner.context().triggeredBy());
+            var github = engine.gitCredentials().credentialsFor(owner).https().get("github.com");
+            assets = assets.withGitHubToken(github == null ? null : github.token());
         } catch (IllegalArgumentException e) {
             throw new NodeFailure(FailureKind.CONFIGURATION, "agent '" + agent.id() + "': " + e.getMessage());
         }

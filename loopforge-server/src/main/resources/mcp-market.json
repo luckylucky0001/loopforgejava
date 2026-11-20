@@ -1,0 +1,20 @@
+{
+  "source": "loopforge-public",
+  "tag": "public",
+  "fetchedAt": "2026-11-20T00:00:00Z",
+  "items": [
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "GitHub remote MCP server. Runs use the responsible person's GitHub token (personal settings), else the deployment's.",
+      "category": "development",
+      "tags": ["git", "code"],
+      "url": "https://api.githubcopilot.com/mcp/",
+      "transport": "http",
+      "authType": "github-token",
+      "official": true,
+      "detailUrl": "https://github.com/github/github-mcp-server",
+      "aliases": ["github"]
+    }
+  ]
+}

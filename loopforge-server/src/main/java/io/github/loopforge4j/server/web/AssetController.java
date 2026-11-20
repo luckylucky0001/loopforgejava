@@ -30,10 +30,34 @@ class AssetController {
 
     private final CatalogStore store;
     private final CatalogService catalog;
+    private final io.github.loopforge4j.server.account.AccessPolicy access;
 
-    AssetController(CatalogStore store, CatalogService catalog) {
+    AssetController(
+            CatalogStore store, CatalogService catalog, io.github.loopforge4j.server.account.AccessPolicy access) {
         this.store = store;
         this.catalog = catalog;
+        this.access = access;
+    }
+
+    /**
+     * Shared servers are for everyone; a project's servers for its members, a personal server for
+     * its owner (and administrators).
+     */
+    private boolean visible(McpServerDefinition server, java.security.Principal principal) {
+        if (server.shared()) {
+            return true;
+        }
+        var user = access.current(principal);
+        if (user.admin()) {
+            return true;
+        }
+        var placement = server.placement();
+        return switch (placement.scope()) {
+            case McpServerDefinition.Placement.PROJECT -> access.canSee(principal, placement.projectId());
+            case McpServerDefinition.Placement.PERSONAL ->
+                user.username() != null && user.username().equals(placement.owner());
+            default -> false;
+        };
     }
 
     @GetMapping("/rules")
@@ -81,13 +105,19 @@ class AssetController {
     }
 
     @GetMapping("/mcp-servers")
-    List<McpServerDefinition> mcpServers() {
-        return store.assets(AssetKind.MCP_SERVER);
+    List<McpServerDefinition> mcpServers(java.security.Principal principal) {
+        return store.assets(AssetKind.MCP_SERVER).stream()
+                .filter(m -> visible(m, principal))
+                .toList();
     }
 
     @GetMapping("/mcp-servers/{id}")
-    McpServerDefinition mcpServer(@PathVariable String id) {
-        return get(AssetKind.MCP_SERVER, id);
+    McpServerDefinition mcpServer(@PathVariable String id, java.security.Principal principal) {
+        McpServerDefinition server = get(AssetKind.MCP_SERVER, id);
+        if (!visible(server, principal)) {
+            throw new io.github.loopforge4j.core.engine.RunNotFoundException("mcp server '" + id + "' not found");
+        }
+        return server;
     }
 
     @PutMapping("/mcp-servers/{id}")
@@ -106,7 +136,11 @@ class AssetController {
                         body.headers(),
                         body.workingDirectory(),
                         body.timeoutSec(),
-                        null));
+                        null,
+                        // editing a project or personal server keeps where it applies
+                        store.asset(AssetKind.MCP_SERVER, id)
+                                .map(McpServerDefinition::placement)
+                                .orElse(body.placement())));
     }
 
     @DeleteMapping("/mcp-servers/{id}")

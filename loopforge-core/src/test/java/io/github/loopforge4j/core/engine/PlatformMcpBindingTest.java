@@ -80,6 +80,7 @@ class PlatformMcpBindingTest {
                             Map.of("Authorization", "Bearer " + TOKEN),
                             null,
                             60,
+                            null,
                             null)),
                     List.of(new RuleDefinition("kb-rule", "知识库", null, "先检索知识库再动手", 50, null)),
                     List.of("未注入 " + PlatformMcp.KNOWLEDGE_ID + "：测试"));

@@ -1624,6 +1624,10 @@ public final class RunEngine implements AutoCloseable {
         return clock;
     }
 
+    GitCredentialProvider gitCredentials() {
+        return gitCredentials;
+    }
+
     io.github.loopforge4j.core.store.PreviewStore previews() {
         return previews;
     }

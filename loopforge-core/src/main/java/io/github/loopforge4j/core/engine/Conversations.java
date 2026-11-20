@@ -126,8 +126,9 @@ public final class Conversations {
                 .adapter(executor.kind())
                 .orElseThrow(
                         () -> new IllegalArgumentException("executor kind '" + executor.kind() + "' is not supported"));
-        AgentAssets assets =
-                AgentAssets.resolve(turn.bot(), engine.catalog()).with(turn.extraServers(), turn.extraRules());
+        AgentAssets assets = AgentAssets.resolve(turn.bot(), engine.catalog(), null, turn.responsible())
+                .withGitHubToken(githubToken(turn.responsible()))
+                .with(turn.extraServers(), turn.extraRules());
         String invocationId = workspaceId(turn.conversationId()) + "-" + System.currentTimeMillis() + "-"
                 + sequence.incrementAndGet();
         CompiledAgent compiled = adapter.materializes()
@@ -285,5 +286,15 @@ public final class Conversations {
                     bot.effort() != null && !bot.effort().isBlank() ? bot.effort() : definition.effort());
         }
         return definition;
+    }
+
+    /** A conversation only ever gets its speaker's own GitHub token, never the deployment's. */
+    private String githubToken(String responsible) {
+        if (responsible == null) {
+            return null;
+        }
+        var credential =
+                engine.gitCredentials().personalCredentials(responsible).https().get("github.com");
+        return credential == null ? null : credential.token();
     }
 }
