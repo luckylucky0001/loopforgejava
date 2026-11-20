@@ -123,6 +123,10 @@ loopforge:
 
 管理员可以把全局 SOP 标记为通用模板（`generic`）：模板不能直接运行，只能用共享角色。项目维护者在「SOP → 通用模板」把模板复制到项目，得到一份草稿 SOP（标签 `generic-source:<模板 id>`），模板用到的角色复制为项目自己的副本（`<角色 id>-<项目 id>`），之后可以按项目调整；再次复制会复用项目里已有的副本，不覆盖本地修改。
 
+### 页面反馈
+
+控制台每个页面右下角有「反馈」按钮：填写标题与描述，可以在页面上点选出问题的元素，粘贴或选择最多 5 张截图（PNG / JPEG / GIF / WebP，每张 5 MB 以内，服务端按内容识别格式）。提交时附上当前地址（去掉令牌、会话等参数与 URL 里的账号）、视图、窗口大小与浏览器信息，提交人取自登录会话。管理员在「页面反馈」查看全部反馈，其他人只看到自己的；图片以 `nosniff` 和沙箱 CSP 返回，只能作为图片显示。
+
 ### SkillHub 技能市场
 
 配置 `loopforge.skillhub.base-url`（与可选的 `api-key`，只发送给市场自己的主机）后，「规则 / Skills / MCP → Skills」可以搜索市场并安装技能（管理员）：指定版本或最新版本的 `SKILL.md` 与文本文件写入技能目录，二进制文件、超限文件与越界路径会被跳过并列出；已安装的技能可以更新到其他版本。市场只看到调用者的匿名标识。
@@ -349,6 +353,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` | `/api/v1/executors` | 执行器及本机是否已安装 |
 | `GET/PUT/DELETE` | `/api/v1/repositories/{id}` | 代码仓库 |
 | `GET/PUT/DELETE` | `/api/v1/rules/{id}`、`/skills/{id}`、`/mcp-servers/{id}` | 角色可绑定的规则、Skills、MCP 服务器（规则与 Skills 可带 `projectId`） |
+| `POST` / `GET` | `/api/v1/page-feedback`（multipart：`payload` 与 `images`）/ `/api/v1/page-feedback[/{id}[/images/{imageId}]]` | 页面反馈：提交；管理员看全部、其他人看自己的 |
 | `GET` / `POST` | `/api/v1/workflow-templates[/{id}]` / `/api/v1/workflow-templates/{id}/adopt` | 通用 SOP 模板；复制到项目（`projectId`、可选 `id`、`name`，需要维护者） |
 | `GET` / `POST` | `/api/v1/auth/status`、`/auth/setup`、`/auth/login`、`/auth/logout` | 初始化与登录（公开） |
 | `GET/POST/DELETE` | `/api/v1/me`、`/me/tokens`、`/me/password`；`/api/v1/users` | 当前账户与个人 Token；账户管理（管理员） |

@@ -203,9 +203,159 @@ function shell(content) {
   const nav = h('nav', { class: 'side' }, h('div', { class: 'brand' }, 'LoopForge4J'),
     NAV.map(([href, label]) => h('a', { href, class: current.startsWith(href.split('/').slice(0, 2).join('/')) ? 'active' : '' }, label)),
     me?.user?.role === 'admin' || me?.service ? h('a', { href: '#/users', class: current.startsWith('#/users') ? 'active' : '' }, '账户') : null,
+    me?.user ? h('a', { href: '#/feedback', class: current.startsWith('#/feedback') ? 'active' : '' }, me.user.role === 'admin' ? '页面反馈' : '我的反馈') : null,
     h('div', { class: 'who' }, me?.user ? `${me.user.displayName || me.user.username}（${me.user.role}）` : me?.service ? '服务令牌' : '',
       h('br'), h('a', { href: '#', onclick: logout }, '退出登录')));
-  app.replaceChildren(h('div', { class: 'layout' }, nav, h('main', {}, content)));
+  app.replaceChildren(h('div', { class: 'layout' }, nav, h('main', {}, content)),
+    me?.user ? h('button', { class: 'feedback-fab', title: '反馈这个页面的问题', onclick: () => openFeedback() }, '反馈') : null);
+}
+
+// ------------------------------------------------------------------ page feedback
+
+const feedbackDraft = { title: '', description: '', element: null, images: [] };
+
+/** The widget: title, description, a picked element and up to five pasted or chosen images. */
+function openFeedback() {
+  // picking an element closes the card: what was typed is kept until it is submitted
+  const title = h('input', { placeholder: '一句话描述问题（必填，120 字以内）', maxlength: 120, value: feedbackDraft.title,
+    oninput: (e) => { feedbackDraft.title = e.target.value; } });
+  const description = h('textarea', { rows: 5, placeholder: '复现步骤、期望结果……（可选）',
+    oninput: (e) => { feedbackDraft.description = e.target.value; } }, feedbackDraft.description);
+  const picked = h('div', { class: 'muted' });
+  const thumbs = h('div', { class: 'row wrap' });
+  const message = h('div', { class: 'error' });
+  const showPicked = () => picked.replaceChildren(feedbackDraft.element
+    ? h('span', {}, '已选择元素：', h('code', {}, feedbackDraft.element.selector), ' ', h('button', { onclick: () => { feedbackDraft.element = null; showPicked(); } }, '清除'))
+    : '未选择页面元素');
+  const showThumbs = () => thumbs.replaceChildren(...feedbackDraft.images.map((file, i) => h('span', { class: 'thumb' },
+    h('img', { src: URL.createObjectURL(file), alt: file.name || '图片' }),
+    h('button', { onclick: () => { feedbackDraft.images.splice(i, 1); showThumbs(); } }, '×'))));
+  const addFiles = (files) => {
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+      if (feedbackDraft.images.length >= 5) { message.textContent = '最多 5 张图片'; break; }
+      if (file.size > 5 * 1024 * 1024) { message.textContent = `${file.name || '图片'} 超过 5MB`; continue; }
+      feedbackDraft.images.push(file);
+    }
+    showThumbs();
+  };
+  const chooser = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, onchange: (e) => addFiles(e.target.files) });
+  const body = h('div', { class: 'feedback-form' },
+    h('label', {}, '标题', title), h('label', {}, '描述', description),
+    h('div', { class: 'row' }, h('button', { onclick: () => { dialog.close(); pickElement(); } }, '选择页面元素'), picked),
+    h('div', {}, h('label', {}, '截图（可直接粘贴，最多 5 张，每张 5MB 以内）', chooser), thumbs),
+    h('p', { class: 'muted' }, '会附上当前页面地址（去掉令牌等参数）、窗口大小与浏览器信息；不会包含你的登录凭据。'), message);
+  body.addEventListener('paste', (e) => addFiles([...(e.clipboardData?.files || [])]));
+  showPicked();
+  showThumbs();
+  const dialog = modal('反馈问题', body, (d) => h('button', { class: 'primary', onclick: async () => {
+    message.textContent = '';
+    if (!title.value.trim()) { message.textContent = '请填写标题'; return; }
+    const form = new FormData();
+    form.append('payload', new Blob([JSON.stringify({
+      title: title.value.trim(), description: description.value.trim(), url: location.href, route: location.hash,
+      view: document.querySelector('main h1')?.textContent || '', element: feedbackDraft.element || undefined,
+      context: { scroll: { x: scrollX, y: scrollY }, viewport: { width: innerWidth, height: innerHeight }, dpr: devicePixelRatio,
+        userAgent: navigator.userAgent, language: navigator.language, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+        capturedAt: new Date().toISOString() },
+    })], { type: 'application/json' }));
+    for (const file of feedbackDraft.images) form.append('images', file, file.name || 'screenshot.png');
+    const response = await fetch('/api/v1/page-feedback', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: form });
+    if (!response.ok) {
+      let problem = null;
+      try { problem = await response.json(); } catch { /* not json */ }
+      message.textContent = problem?.detail || (response.status === 413 ? '提交内容过大，图片总大小请控制在 25MB 以内' : `提交失败（HTTP ${response.status}）`);
+      return;
+    }
+    Object.assign(feedbackDraft, { title: '', description: '', element: null, images: [] });
+    d.close();
+    alert('感谢反馈，已提交');
+  } }, '提交'));
+  title.focus();
+}
+
+/** Picks an element of the page: hover highlights, click selects, Esc cancels. */
+function pickElement() {
+  const box = h('div', { class: 'pick-box' });
+  const tip = h('div', { class: 'pick-tip' }, '点击要反馈的元素，Esc 取消');
+  document.body.append(box, tip);
+  let target = null;
+  const move = (e) => {
+    target = document.elementFromPoint(e.clientX, e.clientY);
+    if (!target || target === box || target === tip) return;
+    const r = target.getBoundingClientRect();
+    Object.assign(box.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+  };
+  const done = () => {
+    document.removeEventListener('mousemove', move, true);
+    document.removeEventListener('click', click, true);
+    document.removeEventListener('keydown', key, true);
+    box.remove();
+    tip.remove();
+    openFeedback();
+  };
+  const click = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (el) {
+      const r = el.getBoundingClientRect();
+      feedbackDraft.element = { selector: cssPath(el), tag: el.tagName, text: (el.innerText || '').slice(0, 200),
+        rect: { x: r.left, y: r.top, width: r.width, height: r.height },
+        pageRect: { x: r.left + scrollX, y: r.top + scrollY, width: r.width, height: r.height },
+        point: { x: e.clientX, y: e.clientY }, inFrame: false };
+    }
+    done();
+  };
+  const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); done(); } };
+  document.addEventListener('mousemove', move, true);
+  document.addEventListener('click', click, true);
+  document.addEventListener('keydown', key, true);
+}
+
+/** A short CSS path: an id when there is one, otherwise tags with nth-of-type, at most five levels. */
+function cssPath(el) {
+  const parts = [];
+  for (let node = el; node && node.nodeType === 1 && parts.length < 5; node = node.parentElement) {
+    if (node.id) { parts.unshift(`#${CSS.escape(node.id)}`); break; }
+    let part = node.tagName.toLowerCase();
+    const siblings = node.parentElement ? [...node.parentElement.children].filter((c) => c.tagName === node.tagName) : [];
+    if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
+    parts.unshift(part);
+  }
+  return parts.join(' > ');
+}
+
+/** Feedback: administrators see everybody's, others their own. */
+async function feedbackPage(offset = 0) {
+  const page = await api(`/page-feedback?limit=20&offset=${offset}`);
+  const detail = h('div', {});
+  const show = async (f) => {
+    const images = await Promise.all((f.images || []).map(async (img) => {
+      const response = await fetch(img.url, { headers: { Authorization: `Bearer ${token()}` } });
+      return response.ok ? h('a', { href: URL.createObjectURL(await response.blob()), target: '_blank', rel: 'noopener' },
+        h('img', { class: 'feedback-image', alt: img.fileName || '图片' })) : null;
+    }));
+    images.filter(Boolean).forEach((a) => { a.firstChild.src = a.href; });
+    detail.replaceChildren(h('div', { class: 'panel' }, h('h2', {}, f.title),
+      h('p', { class: 'muted' }, `${f.submitter?.displayName || f.submitter?.username || '—'} · ${time(f.createdAt)}`),
+      f.description ? h('pre', {}, f.description) : null,
+      h('p', {}, '页面：', safeHref(f.url) ? h('a', { href: safeHref(f.url), target: '_blank', rel: 'noopener noreferrer' }, f.url) : (f.route || '—')),
+      f.view ? h('p', {}, '视图：', f.view) : null,
+      f.element ? h('p', {}, '元素：', h('code', {}, f.element.selector), f.element.text ? `（${f.element.text}）` : '') : null,
+      h('p', { class: 'muted' }, `窗口 ${Math.round(f.context?.viewport?.width || 0)}×${Math.round(f.context?.viewport?.height || 0)} · ${f.context?.language || ''} · ${f.context?.userAgent || ''}`),
+      h('div', { class: 'row wrap' }, images.filter(Boolean))));
+  };
+  shell([h('div', { class: 'row' }, h('h1', {}, me?.user?.role === 'admin' ? '页面反馈' : '我的反馈'), h('span', { class: 'spacer' }),
+    h('button', { onclick: () => openFeedback() }, '反馈问题')),
+  page.items.length === 0 ? h('p', { class: 'muted' }, '还没有反馈。每个页面右下角的「反馈」按钮可以提交问题与截图。') :
+    h('table', {}, h('tr', {}, ['标题', '提交人', '页面', '图片', '时间'].map((t) => h('th', {}, t))),
+      page.items.map((f) => h('tr', {}, h('td', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); show(f); } }, f.title)),
+        h('td', {}, f.submitter?.displayName || f.submitter?.username || '—'), h('td', { class: 'mono' }, f.route || '—'),
+        h('td', {}, (f.images || []).length), h('td', {}, time(f.createdAt))))),
+  h('div', { class: 'row mt' }, offset > 0 ? h('button', { onclick: () => feedbackPage(Math.max(0, offset - 20)) }, '上一页') : null,
+    h('span', { class: 'muted' }, `共 ${page.total} 条`), page.hasMore ? h('button', { onclick: () => feedbackPage(offset + 20) }, '下一页') : null),
+  detail]);
 }
 
 async function logout(event) {
@@ -235,6 +385,7 @@ const ROUTES = [
   [/^#\/executors$/, executorsPage], [/^#\/settings$/, settingsPage], [/^#\/users$/, usersPage],
   [/^#\/analytics$/, analyticsPage], [/^#\/business$/, businessPage], [/^#\/knowledge$/, knowledgePage], [/^#\/runners$/, runnersPage],
   [/^#\/chat\/([^/]+)$/, chatPage], [/^#\/chat$/, () => chatPage(null)],
+  [/^#\/feedback$/, feedbackPage],
 ];
 
 const SSO_ERRORS = {

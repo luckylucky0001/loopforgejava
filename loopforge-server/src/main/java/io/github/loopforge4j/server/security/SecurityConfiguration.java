@@ -46,7 +46,7 @@ class SecurityConfiguration {
                                 },
                                 new org.springframework.security.web.header.writers.StaticHeadersWriter(
                                         "Content-Security-Policy",
-                                        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+                                        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:;"
                                                 + " connect-src 'self'; object-src 'none'; base-uri 'none';"
                                                 + " frame-ancestors 'none'; form-action 'self'"))))
                 .authorizeHttpRequests(auth -> {
@@ -98,7 +98,16 @@ class SecurityConfiguration {
                                 ? Math.max(
                                         properties.security().maxRequestSize().toBytes(),
                                         properties.preview().maxSize().toBytes())
-                                : properties.security().maxRequestSize().toBytes()),
+                                : "POST".equals(request.getMethod())
+                                                && "/api/v1/page-feedback".equals(request.getRequestURI())
+                                        // five 5 MB images and the form around them
+                                        ? Math.max(
+                                                properties
+                                                        .security()
+                                                        .maxRequestSize()
+                                                        .toBytes(),
+                                                27L << 20)
+                                        : properties.security().maxRequestSize().toBytes()),
                         org.springframework.security.web.header.HeaderWriterFilter.class)
                 .exceptionHandling(e -> e.authenticationEntryPoint((request, response, ex) -> {
                     response.setStatus(HttpStatus.UNAUTHORIZED.value());
