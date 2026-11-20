@@ -123,6 +123,10 @@ public class AccessPolicy {
         }
     }
 
+    public boolean canOperateRun(Principal principal, Run run) {
+        return allowed(principal, run, ProjectRole.DEVELOPER);
+    }
+
     public void requireOperateRun(Principal principal, Run run) {
         if (!allowed(principal, run, ProjectRole.DEVELOPER)) {
             throw new AccessDeniedException("run " + run.id() + " requires developer access");

@@ -119,6 +119,12 @@ loopforge:
 
 已结束的运行页面有「质量评测」：AI 根据这次运行的事实（每个节点的尝试、返工、耗时、Token、重复失败的工具、反复出现的错误、A→B→A 打回）按控制流、耗时、工具、Token、错误恢复、交付六个加权维度打分（准入线 70），列出发现，并给出受限的改进建议：调整节点的尝试 / 返工 / 失败策略 / 超时，给角色加或删门禁，给角色提示词追加一段话。建议只应用到当前的 SOP 或角色（不改这次运行），改 SOP 需要项目维护者、改角色需要管理员，每次修改都留有历史版本。评测使用发起人的凭据。
 
+### 运行工作区
+
+运行页的「工作区」打开这次运行的工作区（子 SOP 显示父运行的工作区）：未提交的变更、文件树、文件内容（可看 HEAD 或某个提交时的版本）、与 HEAD 的差异、最近 50 个提交及其改动的文件、全文搜索。开发者及以上可以直接编辑文本文件（1 MB 以内），保存时带上读取时的 SHA-256，文件在此期间被 Agent 或他人改过就会被拒绝；每次修改都记入运行事件。`.git`、`.loopforge`、SSH / GPG 密钥、`.netrc`、`.npmrc` 与 `.env` 不会显示，`node_modules` 等依赖目录不进文件树。
+
+工作区可能由隔离沙箱里的 Agent 写入，所以仓库的 Git 配置里有会启动程序或指向工作区外的项（fsmonitor、hooks、filter、textconv、diff 驱动、pager、include、worktree 等）时，服务器不在该仓库运行 Git，只提供普通文件浏览。已回收、在执行机器或其他实例上的工作区会说明原因。
+
 ### 需求多泳道
 
 需求可以绑定一条 SOP 链（上游 SOP bindings）：每一步是一条泳道，有顺序、负责人、依赖的前序步骤和预期的交接产物。项目页「流程套餐」可以定义多个命名的 SOP 链（如「完整需求」「仅后端」），新需求自动使用默认套餐；需求页可以换套餐或单独编辑自己的链。SOP 可标注泳道标签（产品 / 前端 / 后端 / 设计 / 修复 / 其他，不标时按名称推断）。
@@ -326,6 +332,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs\|/snapshot\|/sops]]` | 需求、启动泳道（`workflowId`、`rerun`）、泳道快照、SOP 链与套餐 |
 | `GET/PUT` | `/api/v1/projects/{id}/playbooks` | 项目的流程套餐（写入需要维护者） |
+| `GET/PUT` | `/api/v1/runs/{id}/workspace[/tree\|/file\|/diff\|/log\|/commit\|/search]` | 运行工作区：变更、文件树、文件（可带 `ref`）、差异、提交、搜索；`PUT /file` 带 `expectedSha256` 写入 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run\|/executions]]` | 定时任务（`kind`：`sop` / `assistant` / `dispatch`）与执行记录（结果、启动的运行、AI 回复与对话） |
 | `GET/POST/PUT/DELETE` | `/api/v1/notifications[/{id}]` | Webhook 通知 |
 | `GET` / `POST` | `/api/v1/runs/{id}/deliveries` / `/deliveries/refresh` | 运行交付的 PR 与合并状态 |

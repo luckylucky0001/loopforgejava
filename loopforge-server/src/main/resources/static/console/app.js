@@ -218,7 +218,7 @@ async function logout(event) {
 }
 
 const ROUTES = [
-  [/^#\/runs\/([^/]+)$/, runPage], [/^#\/runs$/, runsPage], [/^#\/approvals$/, approvalsPage],
+  [/^#\/runs\/([^/]+)\/workspace$/, workspacePage], [/^#\/runs\/([^/]+)$/, runPage], [/^#\/runs$/, runsPage], [/^#\/approvals$/, approvalsPage],
   [/^#\/workflows\/new$/, () => workflowPage(null)], [/^#\/workflows\/([^/]+)$/, workflowPage], [/^#\/workflows$/, workflowsPage],
   [/^#\/agents\/new$/, () => definitionPage('agents', null)], [/^#\/agents\/([^/]+)$/, (id) => definitionPage('agents', id)],
   [/^#\/agents$/, () => listPage('agents', '角色', ['id', 'name', 'executorId'])],
@@ -428,6 +428,7 @@ async function runPage(runId) {
         run.status === 'waiting' ? control('resume', '继续') : null,
         active ? control('cancel', '取消', 'danger') : null,
         run.status === 'failed' ? control('retry', '重试') : null,
+        h('a', { class: 'btn', href: `#/runs/${encodeURIComponent(runId)}/workspace` }, '工作区'),
         h('button', { onclick: () => attempt(() => download(`/runs/${runId}/logs.txt`, `${runId}-logs.txt`)) }, '下载日志'),
         !active && !run.context?.parentRunId ? h('button', { class: 'danger', onclick: () => confirm('删除这次运行（含子运行、事件、产物与工作区）？')
           && attempt(() => api(`/runs/${runId}`, { method: 'DELETE' }), () => { location.hash = '#/runs'; }) }, '删除') : null),
@@ -1607,6 +1608,78 @@ function analystEntry(content) {
     (result.questions || []).length ? h('ol', {}, result.questions.map((q) => h('li', {}, q.question,
       (q.options || []).length ? h('span', { class: 'muted' }, `（${q.options.join(' / ')}）`) : null))) : null,
     result.ready ? h('div', { class: 'notice' }, '分析师给出了结论') : null);
+}
+
+// ------------------------------------------------------------------ run workspace
+
+const CHANGE_LABEL = { M: '修改', A: '新增', D: '删除', R: '重命名', C: '复制', '?': '未跟踪', U: '冲突' };
+
+async function workspacePage(runId) {
+  const base = `/runs/${encodeURIComponent(runId)}/workspace`;
+  const q = (path) => encodeURIComponent(path);
+  const info = await api(base);
+  const head = h('div', { class: 'row' }, h('h1', {}, '工作区'), h('span', { class: 'spacer' }), h('a', { class: 'btn', href: `#/runs/${encodeURIComponent(runId)}` }, '返回运行'));
+  if (!info.available) {
+    shell([head, h('p', { class: 'muted mono' }, runId), h('div', { class: 'notice' }, info.reason || '工作区不可用')]);
+    return;
+  }
+  const view = h('div', { class: 'panel ws-view' }, h('p', { class: 'muted' }, '从左侧选择文件、变更或提交。'));
+  const showText = (title, text, extra) => view.replaceChildren(h('div', { class: 'row' }, h('strong', { class: 'mono' }, title), h('span', { class: 'spacer' }), ...(extra || [])),
+    h('pre', { class: 'mono ws-code' }, text));
+  const openFile = (path, ref) => attempt(() => api(`${base}/file?path=${q(path)}${ref ? '&ref=' + q(ref) : ''}`), (f) => {
+    const edit = info.readOnly || ref ? null : h('button', { onclick: () => {
+      const area = h('textarea', { class: 'mono ws-edit', rows: 24 }, f.content);
+      view.replaceChildren(h('div', { class: 'row' }, h('strong', { class: 'mono' }, path), h('span', { class: 'spacer' }),
+        h('button', { onclick: () => openFile(path) }, '取消'),
+        h('button', { class: 'primary', onclick: () => attempt(() => api(`${base}/file`, { method: 'PUT', body: { path, content: area.value, expectedSha256: f.sha256 } }), () => openFile(path)) }, '保存')),
+      h('p', { class: 'muted' }, '保存时若文件已被 Agent 或他人改动会被拒绝，请重新打开后再改。'), area);
+    } }, '编辑');
+    showText(ref ? `${path} @ ${ref.slice(0, 10)}` : path, f.content, [h('span', { class: 'muted' }, `${f.size} 字节`), edit].filter(Boolean));
+  });
+  const openDiff = (path) => attempt(() => api(`${base}/diff?path=${q(path)}`), (d) => showText(`${path}（与 HEAD 对比）`, d.diff || '（无差异）', [h('button', { onclick: () => openFile(path) }, '查看当前内容')]));
+  const changes = h('div', {}, info.changes.length === 0 ? h('p', { class: 'muted' }, '没有未提交的变更') : info.changes.map((c) => {
+    const code = c.index !== ' ' && c.index !== '?' ? c.index : c.worktree;
+    return h('div', { class: 'row ws-row' }, h('span', { class: `chip ws-${code === '?' ? 'u' : code}` }, CHANGE_LABEL[code] || code),
+      h('a', { href: '#', class: 'mono', onclick: (e) => { e.preventDefault(); if (code === '?') openFile(c.path); else openDiff(c.path); } }, c.path));
+  }));
+  const tree = h('div', { class: 'ws-tree' }, h('p', { class: 'muted' }, '加载中…'));
+  api(`${base}/tree`).then((t) => tree.replaceChildren(...[...t.entries.map((e) => {
+    const depth = e.path.split('/').length - 1;
+    return e.type === 'directory'
+      ? h('div', { class: `ws-dir d${Math.min(depth, 8)}` }, `${e.name}/`)
+      : h('div', { class: `d${Math.min(depth, 8)}` }, h('a', { href: '#', class: 'mono', onclick: (ev) => { ev.preventDefault(); openFile(e.path); } }, e.name));
+  }), t.truncated ? h('p', { class: 'muted' }, '文件过多，只显示前 5000 项') : null].filter(Boolean))).catch((error) => tree.replaceChildren(errorBox(error)));
+  const search = h('input', { placeholder: '搜索文件内容（至少 2 个字符）' });
+  const hits = h('div', {});
+  search.addEventListener('change', () => attempt(() => api(`${base}/search?q=${q(search.value)}`), (r) => hits.replaceChildren(...[
+    ...(r.results.length === 0 ? [h('p', { class: 'muted' }, '没有匹配')] : r.results.map((x) => h('div', { class: 'ws-row' },
+      h('a', { href: '#', class: 'mono', onclick: (e) => { e.preventDefault(); openFile(x.path); } }, `${x.path}:${x.line}`), h('div', { class: 'muted mono' }, x.preview)))),
+    r.truncated ? h('p', { class: 'muted' }, '结果已截断') : null].filter(Boolean))));
+  const history = h('div', {});
+  const showCommit = (repo, c) => attempt(() => api(`${base}/commit?repository=${q(repo)}&id=${q(c.id)}`), (detail) => view.replaceChildren(
+    h('strong', {}, `${c.id.slice(0, 10)} ${c.message}`),
+    h('p', { class: 'muted' }, `${c.author} · ${time(c.timestamp)}`),
+    ...detail.files.map((f) => h('div', { class: 'row ws-row' }, h('span', { class: 'chip' }, CHANGE_LABEL[f.status] || f.status),
+      h('a', { href: '#', class: 'mono', onclick: (ev) => { ev.preventDefault(); openFile(repo === 'workspace' ? f.path : `${repo}/${f.path}`, c.id); } }, f.path)))));
+  const commitRow = (repo, c) => h('div', { class: 'ws-row' },
+    h('a', { href: '#', class: 'mono', onclick: (e) => { e.preventDefault(); showCommit(repo, c); } }, `${c.id.slice(0, 8)} ${c.message}`),
+    h('span', { class: 'muted' }, ` ${c.author} · ${time(c.timestamp)}`));
+  const loadLog = (repo) => attempt(() => api(`${base}/log?repository=${q(repo)}`), (l) => history.replaceChildren(
+    h('p', { class: 'muted' }, `${repo} · 分支 ${l.branch || '—'}`), ...l.commits.map((c) => commitRow(repo, c))));
+  const repoPicker = h('select', {}, info.repositories.map((r) => h('option', { value: r }, r)));
+  repoPicker.addEventListener('change', () => loadLog(repoPicker.value));
+  if (info.repositories.length) loadLog(info.repositories[0]);
+  shell([head,
+    h('p', { class: 'muted mono' }, `${runId} · ${info.runStatus}${info.shared ? ' · 子 SOP 共享父运行的工作区' : ''}${info.readOnly ? ' · 只读' : ''}`),
+    info.warning ? h('div', { class: 'notice' }, info.warning) : null,
+    h('div', { class: 'ws-layout' },
+      h('div', { class: 'ws-side' },
+        h('div', { class: 'panel' }, h('h2', {}, `变更（${info.changes.length}）`), changes),
+        h('div', { class: 'panel' }, h('h2', {}, '搜索'), search, hits),
+        info.repositories.length ? h('div', { class: 'panel' }, h('div', { class: 'row' }, h('h2', {}, '提交'), h('span', { class: 'spacer' }),
+          info.repositories.length > 1 ? repoPicker : null), history) : null,
+        h('div', { class: 'panel' }, h('h2', {}, '文件'), tree)),
+      view)]);
 }
 
 // ------------------------------------------------------------------ requirement lanes

@@ -172,6 +172,26 @@ public final class PlatformOperations {
                     "Open a link to a run's ready preview. Body: {backendUrl?} (calls of the site go there)",
                     "POST",
                     RUNS + "/{runId}/preview/session"),
+            read(
+                    "runs_workspace_get",
+                    "A run's workspace: availability, Git changes and repositories",
+                    RUNS + "/{runId}/workspace"),
+            read(
+                    "runs_workspace_tree",
+                    "Files of a run's workspace under a path. Query: path",
+                    RUNS + "/{runId}/workspace/tree"),
+            read(
+                    "runs_workspace_file",
+                    "Read a text file of a run's workspace. Query: path, ref (HEAD or a commit id)",
+                    RUNS + "/{runId}/workspace/file"),
+            read(
+                    "runs_workspace_diff",
+                    "Changes of a run's workspace against HEAD. Query: path (optional)",
+                    RUNS + "/{runId}/workspace/diff"),
+            read(
+                    "runs_workspace_search",
+                    "Search the text files of a run's workspace. Query: q",
+                    RUNS + "/{runId}/workspace/search"),
             read("runs_deliveries_list", "List a run's pull/merge requests", RUNS + "/{runId}/deliveries"),
             write(
                     "runs_deliveries_refresh",

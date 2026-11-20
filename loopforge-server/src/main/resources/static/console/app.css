@@ -162,3 +162,18 @@ meter { width: 160px; }
 .chip.st-waiting_approval { border-color: var(--warn); color: var(--warn); }
 .chip.st-failed, .chip.st-cancelled { border-color: var(--err); color: var(--err); }
 .chip.st-pending { color: var(--muted, #888); }
+/* run workspace */
+.ws-layout { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 12px; align-items: start; }
+.ws-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ws-view { min-width: 0; }
+.ws-code { max-height: 70vh; overflow: auto; white-space: pre; }
+.ws-edit { width: 100%; min-height: 60vh; }
+.ws-tree { max-height: 50vh; overflow: auto; font-size: 13px; }
+.ws-tree .ws-dir { color: var(--muted); }
+.ws-row { padding: 2px 0; overflow-wrap: anywhere; }
+.d1 { padding-left: 12px; } .d2 { padding-left: 24px; } .d3 { padding-left: 36px; } .d4 { padding-left: 48px; }
+.d5 { padding-left: 60px; } .d6 { padding-left: 72px; } .d7 { padding-left: 84px; } .d8 { padding-left: 96px; }
+.chip.ws-M { color: var(--warn); border-color: var(--warn); }
+.chip.ws-A, .chip.ws-u { color: var(--ok); border-color: var(--ok); }
+.chip.ws-D { color: var(--err); border-color: var(--err); }
+@media (max-width: 800px) { .ws-layout { grid-template-columns: 1fr; } }

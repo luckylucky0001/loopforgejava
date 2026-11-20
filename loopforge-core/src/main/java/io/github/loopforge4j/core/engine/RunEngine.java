@@ -1151,6 +1151,49 @@ public final class RunEngine implements AutoCloseable {
         }
     }
 
+    /** Where a run's workspace is on this host, or why it cannot be reached from here. */
+    public record WorkspaceLocation(java.nio.file.Path root, String unavailable, boolean shared) {
+        public boolean available() {
+            return root != null;
+        }
+    }
+
+    /**
+     * The workspace a run works in (a child SOP works in its parent's), if it exists on this host
+     * (upstream {@code LocalRunWorkspace}).
+     */
+    public WorkspaceLocation workspace(String runId) {
+        Run run = require(runId);
+        boolean shared = !run.workspaceOwnerId().equals(run.id());
+        Run owner = shared ? runs.find(run.workspaceOwnerId()).orElse(run) : run;
+        if (owner.context().runnerId() != null
+                && !java.util.Objects.equals(owner.context().runnerId(), runnerId)) {
+            return new WorkspaceLocation(null, "工作区在执行机器 " + owner.context().runnerId() + " 上", shared);
+        }
+        if (owner.workspaceReleased()) {
+            return new WorkspaceLocation(null, "工作区已回收", shared);
+        }
+        if (owner.workspaceRoot() == null) {
+            return new WorkspaceLocation(null, "工作区尚未创建", shared);
+        }
+        if (foreignWorkspace(owner)) {
+            return new WorkspaceLocation(null, "工作区在实例 " + owner.workspaceHost() + " 上", shared);
+        }
+        java.nio.file.Path root = java.nio.file.Path.of(owner.workspaceRoot());
+        if (!java.nio.file.Files.isDirectory(root)) {
+            return new WorkspaceLocation(null, "工作区尚未创建或已被清理", shared);
+        }
+        return new WorkspaceLocation(root, null, shared);
+    }
+
+    /** Records a lifecycle event of the run (e.g. a person changed its workspace). */
+    public void note(String runId, String type, String message) {
+        mutateQuietly(runId, c -> {
+            c.event(null, type, message);
+            return true;
+        });
+    }
+
     private boolean foreignWorkspace(Run run) {
         return !settings.sharedWorkspaces()
                 && run.workspaceHost() != null
