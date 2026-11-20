@@ -39,6 +39,7 @@
 | `internal/httpapi/assistant_schedule.go`、`assistant_tasks.go`、调度触发配置 | `server.work.ScheduleService`（`kind` = `assistant` / `dispatch`）、`AssistantService.runScheduled` | AI 定时任务（以最后保存人的身份与凭据、完全权限运行一轮助手对话）与按状态自动派发需求的 SOP |
 | `internal/domain` Dockerfile / Environment / SandboxProfile 与 `/api/dockerfiles`、`/api/environments`、`/api/sandboxes` | `core.domain.*Definition`、`core.runtime.sandbox.ProfileSandboxProvider`、`EnvironmentSandbox`、`server.sandbox.*` | 目录中的沙箱配置（local / native / docker）、环境（变量、PATH、每工作区一次的安装脚本）、按内容哈希构建并复用的 Dockerfile 镜像 |
 | `internal/httpapi/skillhub_client.go`、`skillhub_market.go` | `server.skillhub.*` | SkillHub 市场：浏览、安装与更新为目录技能（来源记录、匿名用户标识、跨主机跳转不带 API Key） |
+| 预览构建（`preview` 节点、预览链接与下载） | `core.domain.PreviewSettings`、`core.engine.NodeRunner.runPreview`、`core.store.PreviewStore`、`server.preview.*` | 构建并归档静态站点，签名到期链接在沙箱 CSP 的隔离源中打开，单页应用回退与 zip 下载 |
 | `internal/runeval/*`、`internal/domain/run_eval.go` | `core.eval.*`、`server.eval.*` | 运行评测：事实、加权维度、评测提示与结果约定、建议应用到当前 SOP / 角色 |
 | `internal/httpapi/clarify_jobs.go`、`clarify_session.go`、`issue_routes.go`（澄清） | `server.work.Clarification*`、`core.engine.Conversations.checkout` | AI 澄清：后台轮次、只读检出、续接会话、范围规则与轮数收敛、结论写入描述与回写原单 |
 | `internal/tracker/service.go`、`tapd_url.go` | `server.tracker`（`TrackerService`、`GitHubIssues`、`GitLabIssues`、`TapdClient`、`TapdLinks`） | 拉取、TAPD 链接导入、推送、交付回写、定时同步；直接调用 GitHub / GitLab / TAPD 开放 API |

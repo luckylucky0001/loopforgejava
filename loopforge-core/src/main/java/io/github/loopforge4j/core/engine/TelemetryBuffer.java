@@ -107,8 +107,41 @@ final class TelemetryBuffer {
             try {
                 flush(runId);
             } catch (RuntimeException e) {
+                if (gone(runId)) {
+                    // deleted (by a person or retention) while telemetry was buffered: nothing to keep
+                    discard(runId);
+                    continue;
+                }
                 log.warn("cannot flush telemetry of run {}: {}", runId, e.toString());
             }
+        }
+    }
+
+    /** Runs with buffered telemetry (tests). */
+    int pendingRuns() {
+        return pending.size();
+    }
+
+    /** Drops the run's buffered telemetry (the run is being deleted). */
+    void discard(String runId) {
+        Pending p = pending.get(runId);
+        if (p == null) {
+            return;
+        }
+        p.lock.lock();
+        try {
+            p.events = new ArrayList<>();
+            pending.remove(runId, p);
+        } finally {
+            p.lock.unlock();
+        }
+    }
+
+    private boolean gone(String runId) {
+        try {
+            return store.find(runId).isEmpty();
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 

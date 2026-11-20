@@ -45,6 +45,7 @@ import io.github.loopforge4j.core.runtime.sandbox.LineListener;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
 import io.github.loopforge4j.core.runtime.sandbox.Sandbox;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -88,6 +89,7 @@ final class NodeRunner {
                 case SCRIPT -> runScript(runId, generation, attempt, node, cancellation);
                 case AGENT -> runAgent(runId, generation, attempt, node, cancellation);
                 case SOP -> runChild(runId, generation, attempt, node, cancellation);
+                case PREVIEW -> runPreview(runId, generation, attempt, node, cancellation);
             }
         } catch (CancelledException e) {
             // whoever cancelled the execution (pause, cancel, rework, shutdown) settles the node
@@ -282,6 +284,22 @@ final class NodeRunner {
 
     private void runScript(String runId, int generation, int attempt, WorkflowNode node, Cancellation cancellation)
             throws NodeFailure, IOException, CancelledException {
+        String output = executeScript(runId, attempt, node, cancellation);
+        Sandbox sandbox = engine.sandbox(currentRun(runId));
+        List<Artifact> artifacts = ArtifactSupport.collect(
+                sandbox.workspace(),
+                currentRun(runId),
+                node,
+                attempt,
+                node.artifactOutputs(),
+                output,
+                engine.clock().instant());
+        commitSuccess(runId, generation, attempt, node, output, artifacts, null);
+    }
+
+    /** Runs the node's script in its scope; returns the (redacted) output or the success summary. */
+    private String executeScript(String runId, int attempt, WorkflowNode node, Cancellation cancellation)
+            throws NodeFailure, IOException, CancelledException {
         Run run = currentRun(runId);
         Sandbox sandbox = engine.sandbox(run);
         run = engine.prepareRepositories(runId, sandbox, cancellation);
@@ -362,6 +380,95 @@ final class NodeRunner {
         String output = combined.toString().isBlank()
                 ? "# 脚本执行结果\n\n- 语言：" + language.wire() + "\n- 状态：成功\n- 耗时：" + durationMillis + " ms\n- 标准输出：无\n"
                 : combined.toString().strip() + "\n";
+        return output;
+    }
+
+    // ---------------------------------------------------------------- preview
+
+    static final int PREVIEW_MAX_FILES = 2_000;
+    static final long PREVIEW_MAX_FILE = 10L << 20;
+    static final long PREVIEW_MAX_TOTAL = 50L << 20;
+    static final int PREVIEW_MAX_PATH = 1_000;
+
+    /** A preview beyond the archive limits: the node fails, it is not an infrastructure error. */
+    private static final class PreviewLimit extends IOException {
+        PreviewLimit(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Builds (when the node has a command) and archives the static site under the preview path, so
+     * reviewers can open it while the run continues (upstream preview build).
+     */
+    private void runPreview(String runId, int generation, int attempt, WorkflowNode node, Cancellation cancellation)
+            throws NodeFailure, IOException, CancelledException {
+        String build = node.script() == null || node.script().isBlank()
+                ? ""
+                : executeScript(runId, attempt, node, cancellation);
+        Sandbox sandbox = engine.sandbox(currentRun(runId));
+        io.github.loopforge4j.core.domain.PreviewSettings settings = node.preview();
+        Path workspace = sandbox.workspace().toRealPath();
+        Path site = workspace.resolve(settings.path()).normalize();
+        if (!site.startsWith(workspace)
+                || Files.isSymbolicLink(site)
+                || !Files.isDirectory(site, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new NodeFailure(FailureKind.SCRIPT, "preview directory '" + settings.path() + "' was not built");
+        }
+        List<io.github.loopforge4j.core.store.PreviewStore.File> files = new ArrayList<>();
+        long[] total = {0};
+        try {
+            Files.walkFileTree(site, new java.nio.file.SimpleFileVisitor<>() {
+                @Override
+                public java.nio.file.FileVisitResult preVisitDirectory(
+                        Path dir, java.nio.file.attribute.BasicFileAttributes attrs) {
+                    return dir.getFileName() != null
+                                    && dir.getFileName().toString().equals(".git")
+                            ? java.nio.file.FileVisitResult.SKIP_SUBTREE
+                            : java.nio.file.FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public java.nio.file.FileVisitResult visitFile(
+                        Path file, java.nio.file.attribute.BasicFileAttributes attrs) throws IOException {
+                    if (!attrs.isRegularFile()) {
+                        return java.nio.file.FileVisitResult.CONTINUE; // links and devices stay out
+                    }
+                    if (files.size() == PREVIEW_MAX_FILES) {
+                        throw new PreviewLimit("preview has more than " + PREVIEW_MAX_FILES + " files");
+                    }
+                    if (attrs.size() > PREVIEW_MAX_FILE) {
+                        throw new PreviewLimit("preview file " + site.relativize(file) + " is larger than 10 MB");
+                    }
+                    total[0] += attrs.size();
+                    if (total[0] > PREVIEW_MAX_TOTAL) {
+                        throw new PreviewLimit("preview is larger than 50 MB");
+                    }
+                    String relative = site.relativize(file).toString().replace('\\', '/');
+                    if (relative.length() > PREVIEW_MAX_PATH) {
+                        throw new PreviewLimit("preview path " + relative.substring(0, 80) + "... is too long");
+                    }
+                    files.add(
+                            new io.github.loopforge4j.core.store.PreviewStore.File(relative, Files.readAllBytes(file)));
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (PreviewLimit e) {
+            throw new NodeFailure(FailureKind.SCRIPT, e.getMessage());
+        }
+        if (files.stream().noneMatch(f -> f.path().equals(settings.index()))) {
+            throw new NodeFailure(
+                    FailureKind.SCRIPT,
+                    "preview entry '" + settings.index() + "' is missing in '" + settings.path() + "'");
+        }
+        boolean kept = engine.previews().save(runId, node.id(), settings, files);
+        String summary = kept
+                ? "预览已归档：" + files.size() + " 个文件 · " + Math.max(1, total[0] / 1024) + " KB · 入口 " + settings.index()
+                : "预览已构建（" + files.size() + " 个文件），此执行环境不保存预览";
+        sinkFor(runId, node)
+                .emit(io.github.loopforge4j.core.runtime.Telemetry.of(
+                        "artifact", "preview.archived", "finish", summary));
+        String output = (build.isBlank() ? "" : build.strip() + "\n\n") + summary + "\n";
         List<Artifact> artifacts = ArtifactSupport.collect(
                 sandbox.workspace(),
                 currentRun(runId),
@@ -371,6 +478,10 @@ final class NodeRunner {
                 output,
                 engine.clock().instant());
         commitSuccess(runId, generation, attempt, node, output, artifacts, null);
+    }
+
+    private io.github.loopforge4j.core.runtime.EventSink sinkFor(String runId, WorkflowNode node) {
+        return engine.sink(runId, node.id());
     }
 
     /** Script output lines streamed to the run's events (logs and live view), per target. */

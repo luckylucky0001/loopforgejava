@@ -89,6 +89,10 @@ loopforge:
 
 仍被引用的环境、Dockerfile 和沙箱配置不能删除。执行机器只支持它本机配置的沙箱。
 
+### 预览节点
+
+SOP 可以加「预览」节点：先运行可选的构建命令（例如 `npm ci && npm run build -- --base=./`），再把工作区里的站点目录（默认 `dist`）归档。运行页面的「预览」面板给出在新标签页打开的签名链接（2 小时有效，过期刷新页面即可）和 zip 下载；站点在隔离的源中运行，拿不到控制台的登录信息。站点需要用相对路径引用资源；勾选「单页应用」后，前端路由回退到入口页。上限 2000 个文件、单文件 10 MB、合计 50 MB；执行机器上运行的预览节点只构建不保存。
+
 ### SkillHub 技能市场
 
 配置 `loopforge.skillhub.base-url`（与可选的 `api-key`，只发送给市场自己的主机）后，「规则 / Skills / MCP → Skills」可以搜索市场并安装技能（管理员）：指定版本或最新版本的 `SKILL.md` 与文本文件写入技能目录，二进制文件、超限文件与越界路径会被跳过并列出；已安装的技能可以更新到其他版本。市场只看到调用者的匿名标识。
@@ -304,6 +308,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/sandboxes[/{id}]`、`/environments[/{id}]`、`/dockerfiles[/{id}]` | 沙箱配置（含是否可用、是否隔离）、环境与 Dockerfile（写入需要管理员） |
 | `GET/POST` | `/api/v1/skillhub/skills[/{slug}[/versions\|/files\|/file]]`、`/categories`、`/install`、`/update`、`/installed` | SkillHub 技能市场：搜索、详情、文件预览、安装与更新（管理员） |
 | `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
+| `GET` | `/api/v1/runs/{id}/preview[/download]`、`/preview/{id}/{签名}/**` | 预览节点归档的站点：信息与 2 小时有效的签名链接、zip 下载、免登录的隔离访问 |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
 | `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |

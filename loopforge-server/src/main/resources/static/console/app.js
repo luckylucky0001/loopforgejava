@@ -443,6 +443,7 @@ async function runPage(runId) {
       artifacts.length ? h('div', { class: 'panel' }, h('h2', {}, '产物'), h('table', {}, h('tr', {}, ['节点', '名称', '路径', '大小'].map((t) => h('th', {}, t))),
         artifacts.map((a) => h('tr', {}, h('td', {}, `${a.nodeId}#${a.attempt}`), h('td', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); showArtifact(runId, a); } }, a.name)),
           h('td', { class: 'mono' }, a.path), h('td', {}, a.size))))) : null,
+      (run.workflowSnapshot?.nodes || []).some((n) => n.type === 'preview') ? previewPanel(runId) : null,
       active ? null : evalPanel(runId),
       h('h2', {}, '事件'), log,
     ]);
@@ -504,7 +505,7 @@ const TEMPLATE = {
 
 const NODE_W = 170;
 const NODE_H = 52;
-const NODE_LABELS = { agent: 'Agent', script: '脚本', approval: '人工审批', sop: '子 SOP' };
+const NODE_LABELS = { agent: 'Agent', script: '脚本', approval: '人工审批', sop: '子 SOP', preview: '预览' };
 
 /** Visual SOP editor: drag nodes, drag from a node's port to connect, edit properties on the right. */
 function designer(wf, catalog, onChange) {
@@ -656,6 +657,17 @@ function designer(wf, catalog, onChange) {
           field('脚本', bind(h('textarea', { rows: 6, class: 'mono' }, n.script || ''), (v) => { n.script = v; })),
           field('执行范围', select(n.executionScope || 'run', [['run', '运行工作区'], ['repositories', '每个代码仓库']], (v) => { n.executionScope = v; }))],
         approval: [],
+        preview: [field('构建命令（可选）', bind(h('textarea', { rows: 4, class: 'mono', placeholder: '例如 npm ci && npm run build -- --base=./' }, n.script || ''), (v) => { n.script = v.trim() ? v : undefined; })),
+          field('语言', select(n.scriptLanguage || 'shell', [['shell', 'shell'], ['python', 'python']], (v) => { n.scriptLanguage = v; })),
+          h('div', { class: 'row' },
+            field('站点目录', bind(h('input', { value: n.preview?.path || 'dist' }), (v) => { n.preview = { ...(n.preview || {}), path: v.trim() || 'dist' }; })),
+            field('入口文件', bind(h('input', { value: n.preview?.index || 'index.html' }), (v) => { n.preview = { ...(n.preview || {}), index: v.trim() || 'index.html' }; }))),
+          (() => {
+            const box = h('input', { type: 'checkbox', checked: !!n.preview?.spa });
+            box.addEventListener('change', () => { n.preview = { ...(n.preview || {}), spa: box.checked }; changed(); });
+            return h('label', { class: 'row' }, box, '单页应用（找不到的路由回退到入口文件）');
+          })(),
+          h('p', { class: 'muted' }, '站点用相对路径引用资源（例如 Vite 的 --base=./）；归档上限 2000 个文件、单文件 10 MB、合计 50 MB。')],
         sop: [field('子 SOP', select(n.sopWorkflowId, [['', '—'], ...catalog.workflows.filter((w) => w.id !== wf.id).map((w) => [w.id, `${w.name}（${w.id}）`])], (v) => { n.sopWorkflowId = v || undefined; }))],
       };
       const artifacts = bind(h('textarea', { rows: 3, placeholder: '每行一个：名称:路径，例如 design:docs/design.md' },
@@ -714,6 +726,7 @@ function designer(wf, catalog, onChange) {
     const y = Math.max(20, ...wf.nodes.map((n) => (n.position?.y || 0) + NODE_H + 30));
     const node = { id, type, name: NODE_LABELS[type], position: { x: 20, y: wf.nodes.length ? y : 20 } };
     if (type === 'script') node.script = 'echo ok';
+    if (type === 'preview') node.preview = { path: 'dist', index: 'index.html', spa: false };
     wf.nodes.push(node);
     selected = { kind: 'node', id };
     changed();
@@ -1448,6 +1461,37 @@ const EVAL_DIMENSIONS = { control: '控制流健康', latency: '耗时与等待'
 const REC_STATUS = { pending: '待应用', applied: '已应用', failed: '应用失败' };
 
 /** The quality evaluation of a settled run: score, dimensions, findings and recommendations to apply. */
+function previewPanel(runId) {
+  const panel = h('div', { class: 'panel' }, h('h2', {}, '预览'), h('p', { class: 'muted' }, '加载中…'));
+  const base = `/runs/${encodeURIComponent(runId)}`;
+  const load = async () => {
+    let p;
+    try { p = await api(`${base}/preview`); } catch (error) { panel.replaceChildren(h('h2', {}, '预览'), errorBox(error)); return; }
+    if (!p.url) {
+      panel.replaceChildren(h('h2', {}, '预览'), h('p', { class: 'muted' }, '预览节点完成后会在这里出现可以直接打开的站点。'),
+        h('button', { onclick: load }, '刷新'));
+      return;
+    }
+    panel.replaceChildren(
+      h('div', { class: 'row' }, h('h2', {}, '预览'), h('span', { class: 'spacer' }),
+        h('a', { class: 'btn', href: /^\/preview\/[^/]+\/[^/]+\/$/.test(p.url) ? p.url : undefined, target: '_blank', rel: 'noopener noreferrer' }, '打开预览'),
+        h('button', { onclick: () => attempt(() => downloadBinary(`${base}/preview/download`, `${runId}-preview.zip`)) }, '下载 zip')),
+      h('p', { class: 'muted' }, `节点 ${p.nodeId} · ${p.path}/${p.index} · ${p.files} 个文件 · ${Math.max(1, Math.round(p.bytes / 1024))} KB${p.spa ? ' · 单页应用' : ''} · ${time(p.createdAt)} 归档`),
+      h('p', { class: 'muted' }, `链接 ${time(p.expiresAt)} 前有效，过期后刷新本页即可获得新链接；预览在隔离的源中运行，读不到控制台的登录信息。`));
+  };
+  load();
+  return panel;
+}
+
+async function downloadBinary(path, filename) {
+  const response = await fetch(`/api/v1${path}`, { headers: token() ? { Authorization: `Bearer ${token()}` } : {} });
+  if (!response.ok) throw new ApiError(response.status, null);
+  const link = h('a', { href: URL.createObjectURL(await response.blob()), download: filename });
+  document.body.append(link);
+  link.click();
+  setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+}
+
 function evalPanel(runId) {
   const panel = h('div', { class: 'panel' }, h('h2', {}, '质量评测'), h('p', { class: 'muted' }, '加载中…'));
   const base = `/runs/${encodeURIComponent(runId)}`;

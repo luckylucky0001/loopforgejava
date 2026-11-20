@@ -77,6 +77,11 @@ class SecurityConfiguration {
                                     org.springframework.http.HttpMethod.POST,
                                     io.github.loopforge4j.server.knowledge.KnowledgeProxyController.PATH)
                             .permitAll();
+                    // preview links carry their own signed, expiring grant (a browser tab has no bearer token)
+                    auth.requestMatchers(
+                                    org.springframework.http.HttpMethod.GET,
+                                    io.github.loopforge4j.server.preview.PreviewController.PATH + "/**")
+                            .permitAll();
                     // the web console is static; every API call it makes needs a token
                     auth.requestMatchers("/", "/index.html", "/console/**", "/favicon.svg")
                             .permitAll();

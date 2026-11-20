@@ -88,6 +88,7 @@ public final class RunEngine implements AutoCloseable {
     private final NodeRunner nodeRunner;
     private final GitCredentialProvider gitCredentials;
     private final java.util.function.Function<String, Optional<SandboxProvider>> sandboxProfiles;
+    private final io.github.loopforge4j.core.store.PreviewStore previews;
     private final LeaseKeeper leases;
     private final AdmissionPolicy admission;
     private final io.github.loopforge4j.core.pricing.TokenPricing pricing;
@@ -114,6 +115,7 @@ public final class RunEngine implements AutoCloseable {
         this.nodeRunner = new NodeRunner(this);
         this.gitCredentials = builder.gitCredentials == null ? GitCredentialProvider.NONE : builder.gitCredentials;
         this.sandboxProfiles = builder.sandboxProfiles;
+        this.previews = builder.previews;
         this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
         this.platformMcp =
                 builder.platformMcp == null ? io.github.loopforge4j.core.mcp.PlatformMcp.NONE : builder.platformMcp;
@@ -537,6 +539,7 @@ public final class RunEngine implements AutoCloseable {
         }
         // children first: a child never outlives its parent
         for (int i = family.size() - 1; i >= 0; i--) {
+            telemetry.discard(family.get(i).id());
             runs.delete(family.get(i).id());
         }
     }
@@ -1541,6 +1544,10 @@ public final class RunEngine implements AutoCloseable {
         return clock;
     }
 
+    io.github.loopforge4j.core.store.PreviewStore previews() {
+        return previews;
+    }
+
     NodeRunner nodeRunner() {
         return nodeRunner;
     }
@@ -2022,6 +2029,15 @@ public final class RunEngine implements AutoCloseable {
         }
 
         private java.util.function.Function<String, Optional<SandboxProvider>> sandboxProfiles = id -> Optional.empty();
+
+        private io.github.loopforge4j.core.store.PreviewStore previews =
+                io.github.loopforge4j.core.store.PreviewStore.NONE;
+
+        /** Where preview nodes archive their sites. */
+        public Builder previews(io.github.loopforge4j.core.store.PreviewStore value) {
+            this.previews = value;
+            return this;
+        }
 
         /** Profiles defined at runtime (the catalog), consulted after the configured providers. */
         public Builder sandboxProfiles(java.util.function.Function<String, Optional<SandboxProvider>> value) {

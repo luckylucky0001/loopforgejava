@@ -232,6 +232,7 @@ class EngineConfiguration {
             java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.DockerSandboxProvider> docker,
             java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider> bwrap,
             io.github.loopforge4j.server.sandbox.CatalogSandboxes catalogSandboxes,
+            io.github.loopforge4j.server.preview.JdbcPreviewStore previews,
             org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.core.mcp.PlatformMcp> platformMcp,
             io.github.loopforge4j.core.store.InstanceRegistry instances,
             LoopForgeProperties properties,
@@ -256,6 +257,7 @@ class EngineConfiguration {
         docker.ifPresent(builder::sandbox);
         bwrap.ifPresent(builder::sandbox);
         builder.sandboxProfiles(catalogSandboxes);
+        builder.previews(previews);
         RunEngine runEngine = builder.instances(instances)
                 .pricing(io.github.loopforge4j.core.pricing.TokenPricing.withOverrides(properties.pricing().stream()
                         .collect(java.util.stream.Collectors.toMap(

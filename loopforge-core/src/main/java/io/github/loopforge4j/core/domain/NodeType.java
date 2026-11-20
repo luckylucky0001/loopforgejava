@@ -8,7 +8,9 @@ public enum NodeType implements WireEnum {
     AGENT("agent"),
     SCRIPT("script"),
     APPROVAL("approval"),
-    SOP("sop");
+    SOP("sop"),
+    /** Builds (optionally) and archives a static site for review (upstream preview build). */
+    PREVIEW("preview");
 
     private final String wire;
 

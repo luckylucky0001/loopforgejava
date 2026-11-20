@@ -35,7 +35,8 @@ public record WorkflowNode(
         int maxReworks,
         Integer timeoutSeconds,
         ExecutionScope executionScope,
-        Position position) {
+        Position position,
+        PreviewSettings preview) {
 
     public WorkflowNode {
         id = id == null ? "" : id.strip();
@@ -44,6 +45,7 @@ public record WorkflowNode(
         carryOver = carryOver == null ? List.of() : List.copyOf(carryOver);
         position = position == null ? Position.ORIGIN : position;
         rejectTo = rejectTo == null || rejectTo.isBlank() ? null : rejectTo.trim();
+        preview = type == NodeType.PREVIEW && preview == null ? PreviewSettings.DEFAULT : preview;
     }
 
     /** Effective number of automatic attempts (at least one). */
@@ -69,8 +71,9 @@ public record WorkflowNode(
         return rejectTo != null && (onFailure == null || onFailure == FailurePolicy.REJECT);
     }
 
+    /** Runs commands without an agent (script and preview nodes): no session, no human context. */
     public boolean scriptNode() {
-        return type == NodeType.SCRIPT;
+        return type == NodeType.SCRIPT || type == NodeType.PREVIEW;
     }
 
     public WorkflowNode withArtifactOutputs(List<ArtifactContract> contracts) {
@@ -93,7 +96,8 @@ public record WorkflowNode(
                 maxReworks,
                 timeoutSeconds,
                 executionScope,
-                position);
+                position,
+                preview);
     }
 
     public static Builder builder(String id, NodeType type) {
@@ -119,6 +123,7 @@ public record WorkflowNode(
         private int maxReworks;
         private Integer timeoutSeconds;
         private ExecutionScope executionScope;
+        private PreviewSettings preview;
 
         private Builder(String id, NodeType type) {
             this.id = id;
@@ -222,7 +227,13 @@ public record WorkflowNode(
                     maxReworks,
                     timeoutSeconds,
                     executionScope,
-                    Position.ORIGIN);
+                    Position.ORIGIN,
+                    preview);
+        }
+
+        public Builder preview(PreviewSettings value) {
+            this.preview = value;
+            return this;
         }
     }
 }

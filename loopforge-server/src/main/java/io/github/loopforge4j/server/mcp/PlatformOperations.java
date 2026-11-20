@@ -163,6 +163,10 @@ public final class PlatformOperations {
                     RUNS + "/{runId}/logs"),
             read("runs_artifacts_list", "List a run's artifacts", RUNS + "/{runId}/artifacts"),
             read("runs_artifact_get", "Read one artifact", RUNS + "/{runId}/artifacts/{artifactId}"),
+            read(
+                    "runs_preview_get",
+                    "Get a run's archived preview site and a signed link (valid for 2 hours) to open it",
+                    RUNS + "/{runId}/preview"),
             read("runs_deliveries_list", "List a run's pull/merge requests", RUNS + "/{runId}/deliveries"),
             write(
                     "runs_deliveries_refresh",

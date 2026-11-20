@@ -395,6 +395,15 @@ public final class WorkflowValidator {
                     problems.add("node " + id + " script is required");
                 }
             }
+            case PREVIEW -> {
+                // the build command is optional (an earlier node may have built the site)
+                if (!strictRelativePath(node.preview().path())) {
+                    problems.add("node " + id + " preview path must be a relative path in the workspace");
+                }
+                if (!strictRelativePath(node.preview().index())) {
+                    problems.add("node " + id + " preview index must be a relative path");
+                }
+            }
         }
         if (node.timeoutSeconds() != null && node.timeoutSeconds() <= 0) {
             problems.add("node " + id + " timeoutSeconds must be positive");
