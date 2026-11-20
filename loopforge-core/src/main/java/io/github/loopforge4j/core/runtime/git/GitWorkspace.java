@@ -154,6 +154,17 @@ public final class GitWorkspace {
         return base.succeeded() ? repository.withBaseSha(base.output().strip()) : repository;
     }
 
+    /**
+     * Moves a read-only scratch checkout (requirement clarification) to the fetched tip of its base
+     * branch, discarding anything the agent left in it.
+     */
+    public void syncReadOnly(RepositoryContext repository) throws GitException, CancelledException {
+        if (!repository.readOnly()) {
+            throw new IllegalArgumentException("only read-only checkouts can be reset");
+        }
+        git(repository.workspaceDir(), "reset", "--hard", "--quiet", "origin/" + repository.baseBranch());
+    }
+
     /** Remote tip of {@code branch} and how many commits it carries beyond {@code base} (MR gate). */
     public PushedWork pushedWork(RepositoryContext repository) throws GitException, CancelledException {
         String dir = repository.workspaceDir();

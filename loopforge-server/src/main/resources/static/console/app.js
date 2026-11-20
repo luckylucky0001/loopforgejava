@@ -202,7 +202,7 @@ const ROUTES = [
   [/^#\/repositories\/new$/, () => definitionPage('repositories', null)],
   [/^#\/repositories\/([^/]+)$/, (id) => definitionPage('repositories', id)],
   [/^#\/repositories$/, () => listPage('repositories', '代码仓库', ['id', 'name', 'provider', 'cloneUrl', 'projectId'])],
-  [/^#\/projects\/([^/]+)$/, projectPage], [/^#\/projects$/, projectsPage],
+  [/^#\/projects\/([^/]+)\/requirements\/(\d+)\/clarify$/, clarifyPage], [/^#\/projects\/([^/]+)$/, projectPage], [/^#\/projects$/, projectsPage],
   [/^#\/executors$/, executorsPage], [/^#\/settings$/, settingsPage], [/^#\/users$/, usersPage],
   [/^#\/analytics$/, analyticsPage], [/^#\/knowledge$/, knowledgePage], [/^#\/runners$/, runnersPage],
   [/^#\/chat\/([^/]+)$/, chatPage], [/^#\/chat$/, () => chatPage(null)],
@@ -467,28 +467,272 @@ const TEMPLATE = {
   edges: [{ source: 'build', target: 'review' }],
 };
 
-async function workflowPage(id) {
-  const workflow = id ? await api(`/workflows/${id}`) : { ...TEMPLATE };
-  const idInput = h('input', { value: id || '', placeholder: 'workflow id', disabled: !!id });
-  const editor = h('textarea', { class: 'code', spellcheck: 'false' }, json(stripMeta(workflow)));
-  const preview = h('div', {});
-  const problems = h('div', {});
-  const refresh = () => {
-    try { preview.replaceChildren(dag(JSON.parse(editor.value))); problems.replaceChildren(); }
-    catch (error) { problems.replaceChildren(h('div', { class: 'error' }, `JSON 无效：${error.message}`)); }
+// ------------------------------------------------------------------ SOP designer
+
+const NODE_W = 170;
+const NODE_H = 52;
+const NODE_LABELS = { agent: 'Agent', script: '脚本', approval: '人工审批', sop: '子 SOP' };
+
+/** Visual SOP editor: drag nodes, drag from a node's port to connect, edit properties on the right. */
+function designer(wf, catalog, onChange) {
+  let selected = null; // { kind: 'node' | 'edge', id }
+  let drag = null;
+  // Definitions written as JSON (or by the API) carry no or default {0,0} positions: lay those out
+  // once on load, but never move nodes the user placed.
+  const ensurePositions = () => {
+    const seen = new Set();
+    const unplaced = wf.nodes.some((n) => {
+      const key = n.position ? `${n.position.x},${n.position.y}` : null;
+      if (key === null || seen.has(key)) return true;
+      seen.add(key);
+      return false;
+    });
+    if (!unplaced) return;
+    const { pos } = layout(wf.nodes, wf.edges);
+    wf.nodes.forEach((n) => { n.position = { ...pos.get(n.id) }; });
   };
-  editor.addEventListener('input', () => { clearTimeout(editor.timer); editor.timer = setTimeout(refresh, 300); });
-  const parsed = () => ({ ...JSON.parse(editor.value), id: id || idInput.value.trim() });
-  const validate = () => attempt(() => api('/workflows/validate', { method: 'POST', body: parsed() }), (r) =>
+  const canvasHost = h('div', { class: 'dag designer-canvas', tabindex: '0' });
+  const panel = h('div', { class: 'panel designer-panel' });
+  const changed = () => { onChange(wf); render(); };
+  const toSvg = (svgEl, event) => {
+    const point = svgEl.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    return point.matrixTransform(svgEl.getScreenCTM().inverse());
+  };
+  const uniqueId = (base) => { let i = 1; let id = base; while (wf.nodes.some((n) => n.id === id)) id = `${base}-${++i}`; return id; };
+
+  function render() {
+    const maxX = Math.max(860, ...wf.nodes.map((n) => n.position.x + NODE_W + 60));
+    const maxY = Math.max(480, ...wf.nodes.map((n) => n.position.y + NODE_H + 60));
+    const root = svg('svg', { width: maxX, height: maxY, viewBox: `0 0 ${maxX} ${maxY}` },
+      svg('defs', {}, svg('marker', { id: 'arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto' },
+        svg('path', { d: 'M0,0 L10,5 L0,10 z', fill: 'currentColor' }))));
+    const byId = new Map(wf.nodes.map((n) => [n.id, n]));
+    for (const e of wf.edges) {
+      const a = byId.get(e.source); const b = byId.get(e.target);
+      if (!a || !b) continue;
+      const x1 = a.position.x + NODE_W; const y1 = a.position.y + NODE_H / 2;
+      const x2 = b.position.x; const y2 = b.position.y + NODE_H / 2;
+      const d = `M${x1},${y1} C${x1 + 40},${y1} ${x2 - 40},${y2} ${x2},${y2}`;
+      const isSel = selected?.kind === 'edge' && selected.id === edgeKey(e);
+      const group = svg('g', { class: `edge-group${isSel ? ' selected' : ''}` },
+        svg('path', { class: 'edge-hit', d }), svg('path', { class: 'edge', d }));
+      group.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); selected = { kind: 'edge', id: edgeKey(e) }; render(); });
+      root.append(group);
+    }
+    for (const n of wf.nodes) {
+      const isSel = selected?.kind === 'node' && selected.id === n.id;
+      const g = svg('g', { class: `node t-${n.type}${isSel ? ' selected' : ''}`, transform: `translate(${n.position.x},${n.position.y})`, 'data-node': n.id },
+        svg('rect', { width: NODE_W, height: NODE_H }),
+        svg('text', { x: 10, y: 21 }, (n.name || n.id).slice(0, 20)),
+        svg('text', { x: 10, y: 39, opacity: 0.65 }, `${NODE_LABELS[n.type] || n.type} · ${n.id}`.slice(0, 26)),
+        svg('circle', { class: 'port', cx: NODE_W, cy: NODE_H / 2, r: 6 }));
+      g.addEventListener('pointerdown', (ev) => {
+        ev.stopPropagation();
+        const p = toSvg(root, ev);
+        if (ev.target.classList.contains('port')) {
+          drag = { kind: 'connect', from: n.id, line: svg('path', { class: 'edge pending', d: '' }) };
+          root.append(drag.line);
+        } else {
+          drag = { kind: 'move', id: n.id, dx: p.x - n.position.x, dy: p.y - n.position.y, moved: false };
+          selected = { kind: 'node', id: n.id };
+        }
+        root.setPointerCapture(ev.pointerId);
+      });
+      root.append(g);
+    }
+    root.addEventListener('pointermove', (ev) => {
+      if (!drag) return;
+      const p = toSvg(root, ev);
+      if (drag.kind === 'move') {
+        const n = byId.get(drag.id);
+        n.position = { x: Math.max(0, Math.round((p.x - drag.dx) / 10) * 10), y: Math.max(0, Math.round((p.y - drag.dy) / 10) * 10) };
+        drag.moved = true;
+        const g = root.querySelector(`g[data-node="${CSS.escape(drag.id)}"]`);
+        g?.setAttribute('transform', `translate(${n.position.x},${n.position.y})`);
+      } else {
+        const a = byId.get(drag.from);
+        const x1 = a.position.x + NODE_W; const y1 = a.position.y + NODE_H / 2;
+        drag.line.setAttribute('d', `M${x1},${y1} L${p.x},${p.y}`);
+      }
+    });
+    root.addEventListener('pointerup', (ev) => {
+      const current = drag;
+      drag = null;
+      if (!current) return;
+      if (current.kind === 'connect') {
+        const p = toSvg(root, ev);
+        const target = [...wf.nodes].reverse().find((n) => p.x >= n.position.x && p.x <= n.position.x + NODE_W && p.y >= n.position.y && p.y <= n.position.y + NODE_H);
+        if (target && target.id !== current.from && !wf.edges.some((e) => e.source === current.from && e.target === target.id)) {
+          wf.edges.push({ source: current.from, target: target.id });
+          selected = { kind: 'edge', id: `${current.from}->${target.id}` };
+        }
+        changed();
+        return;
+      }
+      if (current.moved) changed(); else render();
+    });
+    root.addEventListener('pointerdown', () => { selected = null; render(); });
+    canvasHost.replaceChildren(root);
+    renderPanel();
+  }
+
+  const edgeKey = (e) => `${e.source}->${e.target}`;
+
+  function field(label, input) {
+    return h('label', { class: 'field' }, h('span', {}, label), input);
+  }
+
+  function bind(input, apply) {
+    input.addEventListener('change', () => { apply(input.value); changed(); });
+    return input;
+  }
+
+  function select(value, options, apply) {
+    return bind(h('select', {}, options.map(([v, l]) => h('option', { value: v, selected: (value ?? '') === v }, l))), apply);
+  }
+
+  function renderPanel() {
+    if (selected?.kind === 'edge') {
+      const e = wf.edges.find((x) => edgeKey(x) === selected.id);
+      if (!e) { selected = null; return renderPanel(); }
+      panel.replaceChildren(h('h2', {}, `连线 ${e.source} → ${e.target}`),
+        field('条件（when）', bind(h('input', { value: e.when || 'success' }), (v) => { e.when = v.trim() || undefined; })),
+        h('button', { class: 'danger', onclick: () => { wf.edges = wf.edges.filter((x) => x !== e); selected = null; changed(); } }, '删除连线'));
+      return;
+    }
+    if (selected?.kind === 'node') {
+      const n = wf.nodes.find((x) => x.id === selected.id);
+      if (!n) { selected = null; return renderPanel(); }
+      const others = wf.nodes.filter((x) => x.id !== n.id).map((x) => [x.id, `${x.name || x.id}（${x.id}）`]);
+      const rename = (v) => {
+        const next = v.trim();
+        if (!next || next === n.id || wf.nodes.some((x) => x.id === next)) return;
+        wf.edges.forEach((e) => { if (e.source === n.id) e.source = next; if (e.target === n.id) e.target = next; });
+        wf.nodes.forEach((x) => { if (x.rejectTo === n.id) x.rejectTo = next; });
+        n.id = next;
+        selected = { kind: 'node', id: next };
+      };
+      const num = (key) => bind(h('input', { type: 'number', value: n[key] ?? '' }), (v) => { n[key] = v === '' ? undefined : Number(v); });
+      const typeFields = {
+        agent: [field('角色（agentId）', select(n.agentId, [['', '—'], ...catalog.agents.map((a) => [a.id, `${a.name || a.id}（${a.id}）`])], (v) => { n.agentId = v || undefined; })),
+          field('执行器（覆盖角色）', select(n.executorId, [['', '按角色'], ...catalog.executors.map((x) => [x.id, x.name || x.id])], (v) => { n.executorId = v || undefined; })),
+          field('任务说明（taskPrompt）', bind(h('textarea', { rows: 4 }, n.taskPrompt || ''), (v) => { n.taskPrompt = v || undefined; }))],
+        script: [field('语言', select(n.scriptLanguage || 'shell', [['shell', 'shell'], ['python', 'python']], (v) => { n.scriptLanguage = v; })),
+          field('脚本', bind(h('textarea', { rows: 6, class: 'mono' }, n.script || ''), (v) => { n.script = v; })),
+          field('执行范围', select(n.executionScope || 'run', [['run', '运行工作区'], ['repositories', '每个代码仓库']], (v) => { n.executionScope = v; }))],
+        approval: [],
+        sop: [field('子 SOP', select(n.sopWorkflowId, [['', '—'], ...catalog.workflows.filter((w) => w.id !== wf.id).map((w) => [w.id, `${w.name}（${w.id}）`])], (v) => { n.sopWorkflowId = v || undefined; }))],
+      };
+      const artifacts = bind(h('textarea', { rows: 3, placeholder: '每行一个：名称:路径，例如 design:docs/design.md' },
+        (n.artifactOutputs || []).map((a) => `${a.name}:${a.path}`).join('\n')), (v) => {
+        const list = v.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
+          const i = line.indexOf(':');
+          return i > 0 ? { name: line.slice(0, i).trim(), path: line.slice(i + 1).trim(), required: true } : { name: line, path: line, required: true };
+        });
+        n.artifactOutputs = list.length ? list : undefined;
+      });
+      panel.replaceChildren(h('h2', {}, `${NODE_LABELS[n.type] || n.type} 节点`),
+        field('id', bind(h('input', { value: n.id }), rename)),
+        field('名称', bind(h('input', { value: n.name || '' }), (v) => { n.name = v || undefined; })),
+        ...(typeFields[n.type] || []),
+        n.type === 'approval' ? null : field('产物', artifacts),
+        field('打回到（rejectTo）', select(n.rejectTo, [['', '—'], ...others], (v) => { n.rejectTo = v || undefined; })),
+        field('失败时（onFailure）', select(n.onFailure, [['', '默认'], ['fail', '失败'], ['reject', '打回'], ['human', '转人工'], ['loop', '自修正']], (v) => { n.onFailure = v || undefined; })),
+        h('div', { class: 'row' }, field('最多尝试', num('maxAttempts')), field('最多返工', num('maxReworks')), field('超时（秒）', num('timeoutSeconds'))),
+        h('button', { class: 'danger', onclick: () => {
+          wf.nodes = wf.nodes.filter((x) => x !== n);
+          wf.edges = wf.edges.filter((e) => e.source !== n.id && e.target !== n.id);
+          wf.nodes.forEach((x) => { if (x.rejectTo === n.id) delete x.rejectTo; });
+          selected = null;
+          changed();
+        } }, '删除节点'));
+      return;
+    }
+    panel.replaceChildren(h('h2', {}, 'SOP'),
+      field('名称', bind(h('input', { value: wf.name || '' }), (v) => { wf.name = v; })),
+      field('状态', select(wf.status || 'draft', [['draft', '草稿'], ['published', '已发布'], ['archived', '已归档']], (v) => { wf.status = v; })),
+      field('项目（空 = 全局）', select(wf.projectId, [['', '全局'], ...catalog.projects.map((p) => [p.id, p.name])], (v) => { wf.projectId = v || undefined; })),
+      field('沙箱', bind(h('input', { value: wf.sandboxProfileId || 'local', placeholder: 'local / docker / bwrap' }), (v) => { wf.sandboxProfileId = v.trim() || undefined; })),
+      field('描述', bind(h('textarea', { rows: 3 }, wf.description || ''), (v) => { wf.description = v || undefined; })),
+      h('p', { class: 'muted' }, '拖动节点调整位置；从节点右侧的圆点拖到另一个节点即可连线；点选节点或连线后在这里编辑，Delete 键删除。'));
+  }
+
+  canvasHost.addEventListener('keydown', (ev) => {
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && selected) {
+      if (selected.kind === 'node') {
+        const id = selected.id;
+        wf.nodes = wf.nodes.filter((x) => x.id !== id);
+        wf.edges = wf.edges.filter((e) => e.source !== id && e.target !== id);
+      } else {
+        wf.edges = wf.edges.filter((e) => edgeKey(e) !== selected.id);
+      }
+      selected = null;
+      ev.preventDefault();
+      changed();
+    }
+  });
+  const add = (type) => {
+    const id = uniqueId(type === 'approval' ? 'review' : type);
+    const y = Math.max(20, ...wf.nodes.map((n) => (n.position?.y || 0) + NODE_H + 30));
+    const node = { id, type, name: NODE_LABELS[type], position: { x: 20, y: wf.nodes.length ? y : 20 } };
+    if (type === 'script') node.script = 'echo ok';
+    wf.nodes.push(node);
+    selected = { kind: 'node', id };
+    changed();
+  };
+  const palette = h('div', { class: 'row mb' }, Object.entries(NODE_LABELS).map(([type, label]) => h('button', { onclick: () => add(type) }, `+ ${label}`)),
+    h('span', { class: 'spacer' }),
+    h('button', { onclick: () => { const { pos } = layout(wf.nodes, wf.edges); wf.nodes.forEach((n) => { n.position = { ...pos.get(n.id) }; }); changed(); } }, '自动布局'));
+  ensurePositions();
+  render();
+  return h('div', {}, palette, h('div', { class: 'designer' }, canvasHost, panel));
+}
+
+async function workflowPage(id) {
+  const [loaded, agents, executors, workflows, projects] = await Promise.all([
+    id ? api(`/workflows/${id}`) : Promise.resolve(JSON.parse(JSON.stringify(TEMPLATE))),
+    api('/agents').catch(() => []), api('/executors').catch(() => []), api('/workflows').catch(() => []), api('/projects').catch(() => []),
+  ]);
+  let wf = stripMeta(loaded);
+  wf.nodes ||= [];
+  wf.edges ||= [];
+  const idInput = h('input', { value: id || '', placeholder: 'workflow id', disabled: !!id });
+  const problems = h('div', {});
+  const editor = h('textarea', { class: 'code', spellcheck: 'false' });
+  const body = h('div', {});
+  let mode = 'design';
+  const catalog = { agents, executors, workflows, projects };
+  const showDesign = () => {
+    mode = 'design';
+    body.replaceChildren(designer(wf, catalog, (next) => { wf = next; }));
+    tabs.replaceChildren(tab('design', '设计'), tab('json', 'JSON'));
+  };
+  const showJson = () => {
+    mode = 'json';
+    editor.value = json(wf);
+    const preview = h('div', {}, dag(wf));
+    editor.oninput = () => {
+      try { wf = JSON.parse(editor.value); preview.replaceChildren(dag(wf)); problems.replaceChildren(); } catch (error) {
+        problems.replaceChildren(h('div', { class: 'error' }, `JSON 无效：${error.message}`));
+      }
+    };
+    body.replaceChildren(h('div', { class: 'grid2' }, editor, preview));
+    tabs.replaceChildren(tab('design', '设计'), tab('json', 'JSON'));
+  };
+  const tab = (key, label) => h('a', { href: '#', class: mode === key ? 'btn current' : 'btn', onclick: (e) => { e.preventDefault(); if (key === 'design') { try { wf = JSON.parse(editor.value || json(wf)); } catch { /* keep the last valid */ } showDesign(); } else showJson(); } }, label);
+  const tabs = h('div', { class: 'row mb' });
+  const current = () => ({ ...wf, id: id || idInput.value.trim() });
+  const validate = () => attempt(() => api('/workflows/validate', { method: 'POST', body: current() }), (r) =>
     problems.replaceChildren(r.valid ? h('div', { class: 'notice' }, '校验通过') : h('div', { class: 'error' }, r.problems.join('\n'))));
-  const save = () => attempt(() => api(`/workflows/${encodeURIComponent(id || idInput.value.trim())}`, { method: 'PUT', body: parsed() }),
-    (saved) => { location.hash = `#/workflows/${saved.id}`; if (id) route(); });
+  const save = () => attempt(() => api(`/workflows/${encodeURIComponent(id || idInput.value.trim())}`, { method: 'PUT', body: current() }),
+    (saved) => { problems.replaceChildren(h('div', { class: 'notice' }, '已保存')); if (!id) location.hash = `#/workflows/${saved.id}`; });
   const remove = () => confirm(`删除 SOP ${id}？`) && attempt(() => api(`/workflows/${id}`, { method: 'DELETE' }), () => { location.hash = '#/workflows'; });
-  shell([h('div', { class: 'row' }, h('h1', {}, id ? `SOP ${workflow.name}` : '新建 SOP'), h('span', { class: 'spacer' }),
+  shell([h('div', { class: 'row' }, h('h1', {}, id ? `SOP ${loaded.name}` : '新建 SOP'), h('span', { class: 'spacer' }),
     idInput, h('button', { onclick: validate }, '校验'), h('button', { class: 'primary', onclick: save }, '保存'), id ? h('button', { class: 'danger', onclick: remove }, '删除') : null),
-  h('p', { class: 'muted' }, '节点类型：agent（agentId）、script（script / scriptLanguage）、approval、sop（sopWorkflowId）。发布：status = "published"。'),
-  problems, h('div', { class: 'grid2' }, editor, preview)]);
-  refresh();
+  tabs, problems, body]);
+  showDesign();
 }
 
 function stripMeta(definition) {
@@ -615,7 +859,8 @@ async function projectPage(projectId) {
           `${r.external.source} ${r.external.kind}${r.external.number ? ' #' + r.external.number : ' ' + r.external.externalId}`), ` · ${r.external.state || ''}`) : null),
         h('td', {}, badge(r.status)), h('td', {}, r.priority),
         h('td', { class: 'mono' }, r.workflowId || '—'), h('td', {}, r.latestRunId ? h('a', { href: `#/runs/${r.latestRunId}`, class: 'mono' }, r.latestRunId.slice(0, 14)) : '—'),
-        h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => startRequirement(r), disabled: ['closed', 'cancelled', 'done'].includes(r.status) }, '启动'),
+        h('td', {}, h('div', { class: 'row' }, h('a', { class: 'btn', href: `#/projects/${encodeURIComponent(projectId)}/requirements/${r.number}/clarify` }, '澄清'),
+          h('button', { onclick: () => startRequirement(r), disabled: ['closed', 'cancelled', 'done'].includes(r.status) }, '启动'),
           r.external ? null : h('button', { onclick: () => pushRequirement(r) }, '推送')))))),
     h('div', { class: 'row' }, h('h2', {}, '外部需求同步'), h('span', { class: 'spacer' }),
       h('button', { onclick: importTapd }, '导入 TAPD 链接'), h('button', { onclick: syncNow }, '立即同步'), h('button', { onclick: editTracker }, '设置')),
@@ -1031,9 +1276,118 @@ async function chatPage(id) {
   sync();
   feed.scrollTop = feed.scrollHeight;
   stream = new EventSource(`/api/v1/assistant/sessions/${current.id}/stream?access_token=${encodeURIComponent(token())}`);
-  stream.addEventListener('activity', (e) => { live.append(h('div', {}, JSON.parse(e.data))); live.scrollTop = live.scrollHeight; });
-  stream.addEventListener('message', (e) => { feed.append(chatMessage(JSON.parse(e.data))); feed.scrollTop = feed.scrollHeight; });
-  stream.addEventListener('status', (e) => { generating = JSON.parse(e.data).status !== 'idle'; if (!generating) live.replaceChildren(); sync(); });
+  stream.addEventListener('activity', (e) => { live.append(h('div', {}, String(sseData(e)))); live.scrollTop = live.scrollHeight; });
+  stream.addEventListener('message', (e) => { feed.append(chatMessage(sseData(e))); feed.scrollTop = feed.scrollHeight; });
+  stream.addEventListener('status', (e) => { generating = sseData(e).status !== 'idle'; if (!generating) live.replaceChildren(); sync(); });
+}
+
+// ------------------------------------------------------------------ requirement clarification
+
+/** Server-sent data: JSON for objects, plain text for strings. */
+function sseData(event) {
+  try { return JSON.parse(event.data); } catch { return event.data; }
+}
+
+const CLARIFY_STATUS = { new: '未开始', analyzing: '分析中', cancelling: '停止中', in_progress: '待回答', ready: '已澄清' };
+const WRITE_BACK = { succeeded: '已回写原单', failed: '回写失败', skipped: '未回写（非外部需求或已关闭回写）', pending: '待回写' };
+
+/** One analyst result of the history (stored as the protocol JSON). */
+function analystEntry(content) {
+  let result = null;
+  try { result = JSON.parse(content); } catch { /* older or foreign text */ }
+  if (!result || typeof result !== 'object') return h('div', { class: 'msg-body' }, content);
+  return h('div', {}, result.summary ? h('div', { class: 'msg-body' }, result.summary) : null,
+    (result.questions || []).length ? h('ol', {}, result.questions.map((q) => h('li', {}, q.question,
+      (q.options || []).length ? h('span', { class: 'muted' }, `（${q.options.join(' / ')}）`) : null))) : null,
+    result.ready ? h('div', { class: 'notice' }, '分析师给出了结论') : null);
+}
+
+async function clarifyPage(projectId, number) {
+  const base = `/projects/${encodeURIComponent(projectId)}/requirements/${number}`;
+  const [requirement, initial] = await Promise.all([api(base), api(`${base}/clarification`)]);
+  let state = initial;
+  const header = h('div', {});
+  const history = h('div', { class: 'chat-feed clarify-feed' });
+  const live = h('div', { class: 'log live' });
+  const questionsBox = h('div', {});
+  const conclusion = h('div', {});
+  const notes = h('textarea', { rows: 3, placeholder: '补充说明（可选）：回答之外想告诉分析师的内容' });
+  const startButton = h('button', { class: 'primary' }, '开始澄清');
+  const stopButton = h('button', { class: 'danger' }, '停止');
+  const answers = new Map();
+
+  const running = () => state.status === 'analyzing' || state.status === 'cancelling';
+  const renderHeader = () => header.replaceChildren(...[
+    h('div', { class: 'row' }, h('h1', {}, `澄清需求 #${requirement.number} ${requirement.title}`), h('span', { class: 'spacer' }),
+      h('a', { class: 'btn', href: `#/projects/${encodeURIComponent(projectId)}` }, '返回项目')),
+    h('p', { class: 'muted' }, `${CLARIFY_STATUS[state.status] || state.status} · 沙箱 ${state.sandboxProfileId || '—'} · ${num(state.totalTokens || 0)} Token · ${usd(state.costUsd || 0)}`,
+      state.writeBack ? ` · ${WRITE_BACK[state.writeBack] || state.writeBack}` : '', state.writeBackError ? `：${state.writeBackError}` : ''),
+    state.error ? h('div', { class: 'error' }, state.error, state.pending ? `（未完成的回答：${state.pending}）` : '') : null,
+    h('details', {}, h('summary', {}, '需求描述'), h('div', { class: 'msg-body' }, requirement.description || '（无）'))].filter(Boolean));
+  const renderHistory = () => {
+    history.replaceChildren(...state.history.map((m) => h('div', { class: `msg ${m.role === 'assistant' ? 'assistant' : 'user'}` },
+      h('div', { class: 'msg-meta muted' }, `${m.role === 'assistant' ? '需求分析师' : m.author || '用户'} · ${time(m.at)}`),
+      m.role === 'assistant' ? analystEntry(m.content) : h('div', { class: 'msg-body' }, m.content))));
+    if (!state.history.length) history.append(h('p', { class: 'muted' }, '分析师会读取需求和绑定仓库的代码（只读），只追问阻塞开工的问题；能按现有代码惯例假设的直接写进结论。'));
+    history.scrollTop = history.scrollHeight;
+  };
+  const renderQuestions = () => {
+    answers.clear();
+    if (state.status !== 'in_progress' || !state.questions.length) { questionsBox.replaceChildren(); return; }
+    questionsBox.replaceChildren(h('h2', {}, '待回答'), ...state.questions.map((q) => {
+      const chosen = new Set();
+      answers.set(q.id, { question: q.question, chosen, text: '' });
+      const text = h('input', { placeholder: q.freeText ? '填写回答' : '其他（可选）' });
+      text.addEventListener('input', () => { answers.get(q.id).text = text.value; });
+      const options = (q.options || []).map((option) => {
+        const input = h('input', { type: q.multiSelect ? 'checkbox' : 'radio', name: `q-${q.id}`, value: option });
+        input.addEventListener('change', () => {
+          if (!q.multiSelect) chosen.clear();
+          if (input.checked) chosen.add(option); else chosen.delete(option);
+        });
+        return h('label', { class: 'option' }, input, ` ${option}`);
+      });
+      return h('div', { class: 'panel question' }, h('strong', {}, q.question), h('div', { class: 'row wrap' }, options), text);
+    }));
+  };
+  const renderConclusion = () => {
+    if (running() || (!state.summary && state.status !== 'ready')) { conclusion.replaceChildren(); return; }
+    const editor = h('textarea', { rows: 10 }, state.summary || '');
+    const save = (ready) => attempt(() => api(`${base}/clarification`, { method: 'PUT', body: { summary: editor.value, ready } }), (next) => { state = next; render(); });
+    conclusion.replaceChildren(h('h2', {}, state.status === 'ready' ? '结论（已写入需求描述）' : '当前理解'), editor,
+      h('div', { class: 'row mt' }, h('span', { class: 'spacer' }),
+        h('button', { onclick: () => save(false) }, '保存草稿'),
+        h('button', { class: 'primary', onclick: () => save(true) }, state.status === 'ready' ? '更新结论' : '确认为结论')));
+  };
+  const message = () => {
+    const parts = [];
+    for (const { question, chosen, text } of answers.values()) {
+      const picked = [...chosen, ...(text.trim() ? [text.trim()] : [])];
+      if (picked.length) parts.push(`问：${question}\n答：${picked.join('；')}`);
+    }
+    if (notes.value.trim()) parts.push(`补充：${notes.value.trim()}`);
+    return parts.join('\n\n');
+  };
+  const render = () => {
+    renderHeader(); renderHistory(); renderQuestions(); renderConclusion();
+    startButton.textContent = state.status === 'new' ? '开始澄清' : state.status === 'ready' ? '继续澄清' : '提交回答';
+    startButton.disabled = running();
+    stopButton.hidden = !running();
+    if (!running()) live.replaceChildren();
+  };
+  startButton.addEventListener('click', () => attempt(() => api(`${base}/clarification`, { method: 'POST', body: { message: message() || undefined } }),
+    (next) => { state = next; notes.value = ''; live.replaceChildren(h('div', {}, '分析中…')); render(); }));
+  stopButton.addEventListener('click', () => attempt(() => api(`${base}/clarification/cancel`, { method: 'POST' })));
+  const reset = () => confirm('清空澄清对话并删除分析工作区？需求描述里已有的结论会保留。')
+    && attempt(() => api(`${base}/clarification`, { method: 'DELETE' }), () => clarifyPage(projectId, number));
+  shell([header, history, live, questionsBox,
+    h('div', { class: 'panel mt' }, notes, h('div', { class: 'row mt' }, h('button', { onclick: reset }, '重新开始'), h('span', { class: 'spacer' }), stopButton, startButton)),
+    conclusion]);
+  render();
+  stream = new EventSource(`/api/v1${base}/clarification/stream?access_token=${encodeURIComponent(token())}`);
+  stream.addEventListener('activity', (e) => { live.append(h('div', {}, String(sseData(e)))); live.scrollTop = live.scrollHeight; });
+  stream.addEventListener('done', (e) => { state = sseData(e); render(); });
+  stream.addEventListener('status', (e) => { if (sseData(e).status === 'analyzing' && !running()) { state = { ...state, status: 'analyzing' }; render(); } });
 }
 
 route();

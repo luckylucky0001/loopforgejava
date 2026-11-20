@@ -8,5 +8,9 @@ public interface GitCredentialProvider {
 
     GitCredentialProvider NONE = run -> GitCredentials.NONE;
 
+    /**
+     * @param run the run the credentials are for; {@code null} for work outside runs (conversations,
+     *     requirement clarification)
+     */
     GitCredentials credentialsFor(Run run);
 }

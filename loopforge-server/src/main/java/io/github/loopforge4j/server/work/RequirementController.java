@@ -31,11 +31,17 @@ class RequirementController {
     private final RequirementService requirements;
     private final RequirementStore store;
     private final AccessPolicy access;
+    private final ClarificationService clarifications;
 
-    RequirementController(RequirementService requirements, RequirementStore store, AccessPolicy access) {
+    RequirementController(
+            RequirementService requirements,
+            RequirementStore store,
+            AccessPolicy access,
+            ClarificationService clarifications) {
         this.requirements = requirements;
         this.store = store;
         this.access = access;
+        this.clarifications = clarifications;
     }
 
     record StartRequest(
@@ -80,6 +86,7 @@ class RequirementController {
         access.requireProject(principal, projectId, ProjectRole.MAINTAINER);
         Requirement requirement = requirements.require(projectId, number);
         store.delete(requirement.id());
+        clarifications.requirementDeleted(requirement.id());
         return ResponseEntity.noContent().build();
     }
 

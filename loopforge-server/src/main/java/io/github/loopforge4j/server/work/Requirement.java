@@ -118,6 +118,30 @@ public record Requirement(
                 updatedAt);
     }
 
+    /** The description with a clarification conclusion, and the status it moves to. */
+    Requirement clarified(String newDescription, String newStatus) {
+        return new Requirement(
+                id,
+                projectId,
+                number,
+                title,
+                newDescription,
+                newStatus,
+                priority,
+                assignee,
+                workflowId,
+                repositoryIds,
+                baseBranch,
+                runIds,
+                latestRunId,
+                deliveries,
+                source,
+                external,
+                createdBy,
+                createdAt,
+                updatedAt);
+    }
+
     Requirement withStatus(String newStatus) {
         return with(newStatus, runIds, latestRunId, deliveries);
     }

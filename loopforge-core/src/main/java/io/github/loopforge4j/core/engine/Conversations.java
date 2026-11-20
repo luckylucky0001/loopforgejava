@@ -3,6 +3,8 @@ package io.github.loopforge4j.core.engine;
 import io.github.loopforge4j.core.domain.AgentDefinition;
 import io.github.loopforge4j.core.domain.ExecutorDefinition;
 import io.github.loopforge4j.core.domain.McpServerDefinition;
+import io.github.loopforge4j.core.domain.RepositoryContext;
+import io.github.loopforge4j.core.domain.RepositoryDefinition;
 import io.github.loopforge4j.core.domain.RuleDefinition;
 import io.github.loopforge4j.core.domain.TokenUsage;
 import io.github.loopforge4j.core.runtime.Cancellation;
@@ -12,6 +14,8 @@ import io.github.loopforge4j.core.runtime.executor.AgentExecutor;
 import io.github.loopforge4j.core.runtime.executor.AgentInvocation;
 import io.github.loopforge4j.core.runtime.executor.AgentResult;
 import io.github.loopforge4j.core.runtime.executor.ExecutorException;
+import io.github.loopforge4j.core.runtime.git.GitException;
+import io.github.loopforge4j.core.runtime.git.GitWorkspace;
 import io.github.loopforge4j.core.runtime.materialize.AgentAssets;
 import io.github.loopforge4j.core.runtime.materialize.AgentMaterializer;
 import io.github.loopforge4j.core.runtime.materialize.CompiledAgent;
@@ -144,6 +148,59 @@ public final class Conversations {
                 }
             }
         }
+    }
+
+    /** A repository checked out read-only into a conversation workspace, or why it could not be. */
+    public record Checkout(String repositoryId, String name, String dir, String baseBranch, String error) {
+        public boolean ok() {
+            return error == null;
+        }
+    }
+
+    /**
+     * Checks repositories out read-only into the conversation's workspace at the tip of their base
+     * branch (requirement clarification reads the code it asks about). A checkout that fails is
+     * reported, not thrown: the conversation goes on without that repository.
+     *
+     * @param baseBranch branch to read, {@code null} for each repository's default branch
+     */
+    public List<Checkout> checkout(
+            String conversationId,
+            String sandboxProfileId,
+            List<RepositoryDefinition> repositories,
+            String baseBranch,
+            Cancellation cancellation)
+            throws IOException, CancelledException {
+        if (repositories.isEmpty()) {
+            return List.of();
+        }
+        SandboxProvider provider = engine.sandboxProvider(sandboxProfileId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("sandbox profile '" + sandboxProfileId + "' is not available"));
+        Sandbox sandbox = provider.acquire(workspaceId(conversationId));
+        java.util.Set<String> dirs = new java.util.HashSet<>();
+        List<RepositoryContext> contexts = new java.util.ArrayList<>();
+        for (RepositoryDefinition repository : repositories) {
+            RepositoryContext rc = RepositoryContext.of(repository, baseBranch).withMode(true, false, false);
+            String base = RunEngine.directoryName(rc);
+            String dir = base;
+            for (int n = 2; !dirs.add(dir); n++) {
+                dir = base + "-" + n;
+            }
+            contexts.add(rc.withWorkspaceDir(dir));
+        }
+        GitWorkspace git = new GitWorkspace(sandbox, engine.gitEnvironment(sandbox, contexts), cancellation);
+        List<Checkout> out = new java.util.ArrayList<>();
+        for (RepositoryContext rc : contexts) {
+            try {
+                git.prepare(rc);
+                git.syncReadOnly(rc);
+                out.add(new Checkout(rc.repositoryId(), rc.name(), rc.workspaceDir(), rc.baseBranch(), null));
+            } catch (GitException e) {
+                out.add(new Checkout(rc.repositoryId(), rc.name(), rc.workspaceDir(), rc.baseBranch(), e.getMessage()));
+            }
+        }
+        return out;
     }
 
     /** Deletes the conversation's workspace. */

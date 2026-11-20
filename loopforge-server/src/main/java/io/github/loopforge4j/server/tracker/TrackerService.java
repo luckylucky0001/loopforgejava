@@ -463,6 +463,21 @@ public class TrackerService {
         }
     }
 
+    /**
+     * Comments a requirement's clarification conclusion on its external item (upstream write-back of
+     * clarification).
+     *
+     * @return {@code false} when the requirement is not synced from a tracker or write-back is off
+     */
+    public boolean commentClarification(Requirement requirement, String text) throws TrackerException {
+        if (requirement.external() == null
+                || !settings.settings(requirement.projectId()).writeBack()) {
+            return false;
+        }
+        comment(requirement.projectId(), requirement.external(), text);
+        return true;
+    }
+
     private void comment(String projectId, ExternalRef ref, String text) throws TrackerException {
         if ("tapd".equals(ref.source())) {
             tapd.comment(ref.workspaceId(), ref.kind(), ref.externalId(), text);

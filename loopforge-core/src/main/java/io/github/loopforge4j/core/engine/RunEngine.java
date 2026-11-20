@@ -1567,6 +1567,11 @@ public final class RunEngine implements AutoCloseable {
     }
 
     /** Environment for every process of the run: git credentials, commit identity, repository manifest. */
+    /** Git environment of work outside runs (conversations): the deployment's credentials. */
+    Map<String, String> gitEnvironment(Sandbox sandbox, List<RepositoryContext> repositories) throws IOException {
+        return GitEnvironment.build(sandbox.workspace(), gitCredentials.credentialsFor(null), repositories);
+    }
+
     Map<String, String> processEnvironment(Run run, Sandbox sandbox) throws IOException {
         return GitEnvironment.build(sandbox.workspace(), gitCredentials.credentialsFor(run), run.repositories());
     }

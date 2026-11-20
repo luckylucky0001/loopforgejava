@@ -15,11 +15,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
  * Bearer-token authentication. Browsers cannot set headers on {@code EventSource}, so the SSE stream
- * endpoint alone also accepts an {@code access_token} query parameter.
+ * endpoints alone also accept an {@code access_token} query parameter.
  */
 class ApiTokenFilter extends OncePerRequestFilter {
 
-    private static final Pattern STREAM = Pattern.compile("^/api/v1/(runs/[^/]+|assistant/sessions/[^/]+)/stream$");
+    private static final Pattern STREAM = Pattern.compile("^/api/v1/(runs/[^/]+|assistant/sessions/[^/]+"
+            + "|projects/[^/]+/requirements/\\d+/clarification)/stream$");
 
     private final ApiTokens tokens;
     private final io.github.loopforge4j.server.account.TokenStore accountTokens;

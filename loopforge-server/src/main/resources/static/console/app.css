@@ -115,4 +115,30 @@ input.grow { flex: 1; min-width: 240px; }
 .msg-meta { font-size: 12px; margin-bottom: 4px; }
 .msg-body { white-space: pre-wrap; word-break: break-word; }
 .log.live { margin-top: 8px; max-height: 180px; }
+.log.live:empty { display: none; }
 @media (max-width: 900px) { .chat { grid-template-columns: 1fr; } }
+
+/* SOP designer */
+.designer { display: grid; grid-template-columns: 1fr 320px; gap: 14px; align-items: start; }
+.designer-canvas { min-height: 520px; max-height: 70vh; outline: none; }
+.designer-canvas:focus-visible { border-color: var(--accent); }
+.designer-panel { max-height: 70vh; overflow: auto; }
+.designer-panel h2 { margin-top: 0; }
+.designer svg g.node { cursor: grab; }
+.designer svg g.node rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; rx: 8; }
+.designer svg g.node.t-agent rect { stroke: var(--accent); }
+.designer svg g.node.t-approval rect { stroke: var(--warn); }
+.designer svg g.node.t-sop rect { stroke-dasharray: 5 3; }
+.designer svg g.node.selected rect { stroke-width: 3; fill: var(--accent-soft); }
+.designer svg circle.port { fill: var(--panel); stroke: var(--accent); stroke-width: 2; cursor: crosshair; }
+.designer svg .edge { stroke: var(--idle); fill: none; marker-end: url(#arrow); stroke-width: 1.5; pointer-events: none; }
+.designer svg .edge.pending { stroke: var(--accent); stroke-dasharray: 4 3; }
+.designer svg .edge-hit { stroke: transparent; stroke-width: 12; fill: none; cursor: pointer; }
+.designer svg g.edge-group.selected .edge { stroke: var(--accent); stroke-width: 3; }
+@media (max-width: 1100px) { .designer { grid-template-columns: 1fr; } }
+
+/* requirement clarification */
+.clarify-feed { max-height: 50vh; }
+.question { margin-top: 10px; display: grid; gap: 8px; }
+.option { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; cursor: pointer; }
+.row.wrap { flex-wrap: wrap; }

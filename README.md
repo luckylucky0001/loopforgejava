@@ -20,7 +20,8 @@
 | 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止；bubblewrap 轻量沙箱（Linux）：只挂载系统目录（只读）、JDK 与本运行工作区，私有 /tmp、独立用户/PID 命名空间；看不到 /run、/var（主机上的 Docker、数据库等套接字）、各用户主目录与其他运行；Docker 沙箱：每个运行一个容器、资源限制、只读根文件系统、变量不上命令行 |
 | 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话；多实例部署：运行租约、心跳与过期接管、工作区主机绑定 |
 | 运维 | 遥测批量写入；保留策略（执行器遥测、终态运行）；Prometheus 指标：运行与节点结果、节点耗时、返工、门禁决策、token 与成本 |
-| 协作 | 账户与 Token、OIDC 单点登录、项目与成员角色、需求（自动工作分支与状态推进；从 GitHub / GitLab（工蜂）Issue 与 TAPD 迭代同步、按链接导入 TAPD、推送到外部、交付后回写 PR 链接）、定时任务、Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理、分析、知识库） |
+| 协作 | 账户与 Token、OIDC 单点登录、项目与成员角色、需求（自动工作分支与状态推进；从 GitHub / GitLab（工蜂）Issue 与 TAPD 迭代同步、按链接导入 TAPD、推送到外部、交付后回写 PR 链接）、定时任务、Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人通知；Web 控制台（运行视图与实时事件、待处理收件箱、拖拽式 SOP 设计器、项目管理、分析、知识库） |
+| 需求 AI 澄清 | 分析师 Agent 只读检出需求绑定的仓库、对照代码只追问阻塞开工的 1–3 个问题（选择题 / 多选 / 填写）；多轮续接同一 CLI 会话，几轮后主动收敛；结论按「本次范围 / 不在本次范围 / 验收标准 / 假设」写入需求描述并回写外部原单；后台运行、可停止、可手动修改结论 |
 | 平台助手（Main Bot） | 个人或项目对话：助手是一个 CLI Agent，每个对话有一个持久的沙箱工作区并续接 CLI 会话；以本轮发言人的身份（无管理员权限）通过平台 MCP 查需求、建需求、启动 SOP、审批节点，接入知识库时先检索；实时显示工具调用，可随时停止 |
 | 执行机器 | 个人机器与共享执行池（upstream runner）：机器只向服务端发起 HTTPS 连接，认领分配给它的运行，用本机已登录的 CLI 与凭据执行；人工审批、取消等在控制台操作，机器在下一个调度周期内响应；PR 核验由服务端用自己的 API 凭据完成 |
 | 平台 MCP | `/mcp` 把公开 API 作为 MCP 工具（按调用者本人的权限执行）；角色开启 `platformMcp` 后，Agent 拿到只读、限本项目、随运行结束失效的运行令牌；JDK-only stdio 桥 |
@@ -173,6 +174,14 @@ loopforge:
 
 通知渠道的 `kind` 可选 `webhook`（通用 JSON + HMAC 签名）、`wecom`（企业微信群机器人 Markdown）、`feishu`（飞书 / Lark 自定义机器人，可加签）、`dingtalk`（钉钉自定义机器人 Markdown，可加签）、`slack`（Incoming Webhook）；平台返回的错误码（如 `errcode`）计为投递失败。
 
+### SOP 设计器
+
+控制台「SOP」里打开一个 SOP 即进入设计视图：从工具栏添加 Agent / 脚本 / 人工审批 / 子 SOP 节点，拖动节点调整位置（保存到 `position`），从节点右侧的圆点拖到另一个节点即可连线；点选节点或连线后在右侧面板编辑角色、执行器、任务说明、脚本、产物、打回目标、失败策略与预算，Delete 键删除。「JSON」页签保留原始定义，两边同步；「校验」一次列出全部问题。
+
+### 需求 AI 澄清
+
+项目页需求行的「澄清」打开澄清页。每一轮在服务端后台运行（关闭网页不会中断）：分析师 Agent 在需求专属的工作区里只读检出需求绑定的仓库（每轮重置到基础分支最新提交），对照代码只追问阻塞开工的问题；你在页面上选择或填写回答后提交下一轮，第三轮起会主动收敛。结论写入需求描述末尾的「## LoopForge 澄清结论」（再次澄清会替换这一段），待规划的需求转为待办；从 GitHub / GitLab（工蜂）/ TAPD 同步来的需求同时把结论评论到原单（同一结论只回写一次）。澄清是可选步骤，不阻止启动 SOP；执行器与沙箱沿用 `loopforge.assistant.*`，单轮上限 `loopforge.assistant.clarify-timeout`（默认 10 分钟）。
+
 ### 平台助手（对话）
 
 控制台「助手」里新建个人或项目对话。每一轮由默认执行器（或 `loopforge.assistant.executor`）在对话专属的工作区里运行，下一轮续接同一个 CLI 会话；助手拿到的平台 MCP 凭据代表本轮发言人（项目对话只限该项目），只在这一轮回复期间有效，永远没有管理员权限。工作区沙箱默认 `loopforge.assistant.sandbox-profile=local`，成员仍受隔离沙箱要求约束（为成员开放请设为 `docker` 或 `bwrap`）。
@@ -260,6 +269,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |
 | `POST` | `/api/v1/projects/{id}/requirements/{n}/external` | 把本地需求推送为 GitHub / GitLab Issue 或 TAPD 需求 |
 | `GET/POST/DELETE` | `/api/v1/assistant/sessions[/{id}[/messages\|/cancel\|/stream]]` | 平台助手对话、发言、停止与实时事件（SSE） |
+| `GET/POST/PUT/DELETE` | `/api/v1/projects/{p}/requirements/{n}/clarification[/cancel\|/stream]` | 需求 AI 澄清：开始 / 回答一轮、修改结论、停止、重新开始、实时事件（SSE） |
 | `GET/POST/DELETE` | `/api/v1/runners[/{id}]`、`/api/v1/runners/agent.jar` | 执行机器的注册、列表、移除与程序下载 |
 | `*` | `/api/v1/runner-api/**` | 执行机器调用的接口（机器 Token 认证，只能访问分配给它的运行） |
 | `POST` | `/mcp` | 平台 MCP（无状态 Streamable HTTP）；`GET /api/v1/capabilities` 列出全部操作 |

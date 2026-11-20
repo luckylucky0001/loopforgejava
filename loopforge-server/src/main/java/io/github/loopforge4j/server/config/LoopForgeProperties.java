@@ -51,13 +51,16 @@ public record LoopForgeProperties(
      * @param executor executor of the assistant, the engine default when empty
      * @param turnTimeout limit for one turn
      * @param history messages replayed when no CLI session can be continued
+     * @param clarifyTimeout limit for one round of requirement clarification (same profile and
+     *     executor)
      */
     public record Assistant(
             @DefaultValue("true") boolean enabled,
             @DefaultValue("local") String sandboxProfile,
             String executor,
             @NotNull @DefaultValue("30m") Duration turnTimeout,
-            @DefaultValue("30") int history) {}
+            @DefaultValue("30") int history,
+            @NotNull @DefaultValue("10m") Duration clarifyTimeout) {}
 
     /**
      * TAPD open API account (https://open.tapd.cn): Basic authentication with the API user.
