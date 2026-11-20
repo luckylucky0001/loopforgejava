@@ -94,6 +94,10 @@ public final class PlatformOperations {
             write("schedules_save", "Update a scheduled run", "PUT", SCHED + "/{id}"),
             write("schedules_run_now", "Start a scheduled run now", "POST", SCHED + "/{id}/run"),
             write("schedules_delete", "Delete a scheduled run", "DELETE", SCHED + "/{id}"),
+            read(
+                    "schedule_executions_list",
+                    "Recent firings of a scheduled run with their run status. Query: limit",
+                    SCHED + "/{id}/executions"),
             // notifications
             read("notifications_list", "List notification channels. Query: projectId", "/api/v1/notifications"),
             write("notifications_create", "Create a webhook notification channel", "POST", "/api/v1/notifications"),
@@ -104,6 +108,22 @@ public final class PlatformOperations {
             read("workflows_get", "Get one SOP definition", "/api/v1/workflows/{id}"),
             write("workflows_save", "Create or update an SOP definition", "PUT", "/api/v1/workflows/{id}"),
             write("workflows_delete", "Delete an SOP definition", "DELETE", "/api/v1/workflows/{id}"),
+            read("workflow_revisions_list", "List an SOP's saved revisions", "/api/v1/workflows/{id}/revisions"),
+            read(
+                    "workflow_revisions_get",
+                    "Get one saved revision of an SOP",
+                    "/api/v1/workflows/{id}/revisions/{revision}"),
+            write(
+                    "workflow_revisions_restore",
+                    "Restore an SOP revision as the newest one",
+                    "POST",
+                    "/api/v1/workflows/{id}/revisions/{revision}/restore"),
+            write("workflows_publish", "Validate and publish an SOP", "POST", "/api/v1/workflows/{id}/publish"),
+            write(
+                    "workflows_clone",
+                    "Copy an SOP as a new draft. Body: {id, name?, projectId?}",
+                    "POST",
+                    "/api/v1/workflows/{id}/clone"),
             write(
                     "workflows_validate",
                     "Validate an SOP definition without saving it",
@@ -113,6 +133,8 @@ public final class PlatformOperations {
             read("agents_get", "Get one role definition", "/api/v1/agents/{id}"),
             write("agents_save", "Create or update a role definition", "PUT", "/api/v1/agents/{id}"),
             write("agents_delete", "Delete a role definition", "DELETE", "/api/v1/agents/{id}"),
+            read("agent_revisions_list", "List a role's saved revisions", "/api/v1/agents/{id}/revisions"),
+            read("agent_revisions_get", "Get one saved revision of a role", "/api/v1/agents/{id}/revisions/{revision}"),
             read("rules_list", "List rule assets", "/api/v1/rules"),
             read("rules_get", "Get one rule asset", "/api/v1/rules/{id}"),
             write("rules_save", "Create or update a rule asset", "PUT", "/api/v1/rules/{id}"),
@@ -135,6 +157,10 @@ public final class PlatformOperations {
             write("runs_start", "Start an SOP run. Body: {workflowId, input, projectId?, repositories?}", "POST", RUNS),
             read("runs_get", "Get one run with its node states", RUNS + "/{runId}"),
             read("runs_events", "Read a run's events. Query: after (sequence), limit", RUNS + "/{runId}/events"),
+            read(
+                    "runs_logs",
+                    "Read a page of a run's logs. Query: nodeId, after or before (sequence), limit (max 200)",
+                    RUNS + "/{runId}/logs"),
             read("runs_artifacts_list", "List a run's artifacts", RUNS + "/{runId}/artifacts"),
             read("runs_artifact_get", "Read one artifact", RUNS + "/{runId}/artifacts/{artifactId}"),
             read("runs_deliveries_list", "List a run's pull/merge requests", RUNS + "/{runId}/deliveries"),

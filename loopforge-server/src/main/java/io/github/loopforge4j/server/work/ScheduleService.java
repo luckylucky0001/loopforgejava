@@ -26,13 +26,42 @@ public class ScheduleService {
     private static final Logger log = LoggerFactory.getLogger(ScheduleService.class);
 
     private final ScheduleStore store;
+    private final ScheduleExecutionStore executions;
     private final RunEngine engine;
     private final Clock clock;
 
-    public ScheduleService(ScheduleStore store, RunEngine engine, Clock clock) {
+    public ScheduleService(ScheduleStore store, ScheduleExecutionStore executions, RunEngine engine, Clock clock) {
         this.store = store;
+        this.executions = executions;
         this.engine = engine;
         this.clock = clock;
+    }
+
+    /** The schedule's recent firings, newest first, with the current status of the runs they started. */
+    public List<ScheduleExecution> executions(String scheduleId, int limit) {
+        return executions.list(scheduleId, limit).stream()
+                .map(e -> {
+                    if (e.runId() == null) {
+                        return e;
+                    }
+                    String status;
+                    try {
+                        status = engine.require(e.runId()).status().wire();
+                    } catch (RunNotFoundException gone) {
+                        status = null;
+                    }
+                    return new ScheduleExecution(
+                            e.id(),
+                            e.scheduleId(),
+                            e.trigger(),
+                            e.status(),
+                            e.runId(),
+                            status,
+                            e.error(),
+                            e.actor(),
+                            e.firedAt());
+                })
+                .toList();
     }
 
     public Schedule save(String projectId, String id, Schedule body, String actor) {
@@ -129,10 +158,11 @@ public class ScheduleService {
         // the claim moved only the indexed column; the payload follows with the same slot
         Schedule latest = store.find(schedule.id()).orElse(schedule);
         store.save(latest.fired(now, latest.enabled() ? next : null, runId, error));
+        executions.record(schedule, "cron", runId, error, "schedule", now);
     }
 
     /** Manual trigger: starts a run now without moving the cron slot. */
-    public void runNow(Schedule schedule) {
+    public void runNow(Schedule schedule, String actor) {
         String runId = null;
         String error = null;
         try {
@@ -148,8 +178,10 @@ public class ScheduleService {
         } catch (RuntimeException e) {
             error = e.getMessage();
         }
+        Instant now = clock.instant();
         Schedule latest = store.find(schedule.id()).orElse(schedule);
-        store.save(latest.fired(clock.instant(), latest.nextRunAt(), runId, error));
+        store.save(latest.fired(now, latest.nextRunAt(), runId, error));
+        executions.record(schedule, "manual", runId, error, actor, now);
     }
 
     private boolean previousActive(Schedule schedule) {

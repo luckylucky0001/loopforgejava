@@ -89,13 +89,27 @@ public class JdbcCatalogStore implements CatalogStore {
                 statement = statement.param("createdAt", Timestamps.of(stamped.createdAt()));
             }
             statement.update();
+            recordRevision(
+                    DefinitionRevision.WORKFLOW,
+                    stamped.id(),
+                    stamped.revision(),
+                    stamped.name(),
+                    RevisionSummary.of(previous.orElse(null), stamped),
+                    stamped,
+                    now);
             return stamped;
         }));
     }
 
     @Override
     public boolean deleteWorkflow(String id) {
-        return jdbc.sql("DELETE FROM workflows WHERE id = :id").param("id", id).update() > 0;
+        return Boolean.TRUE.equals(tx.execute(status -> {
+            deleteRevisions(DefinitionRevision.WORKFLOW, id);
+            return jdbc.sql("DELETE FROM workflows WHERE id = :id")
+                            .param("id", id)
+                            .update()
+                    > 0;
+        }));
     }
 
     @Override
@@ -116,11 +130,11 @@ public class JdbcCatalogStore implements CatalogStore {
     @Override
     public AgentDefinition saveAgent(AgentDefinition definition) {
         return withUpsertRetry(() -> tx.execute(status -> {
-            boolean exists = jdbc.sql("SELECT id FROM agents WHERE id = :id FOR UPDATE")
+            Optional<AgentDefinition> previous = jdbc.sql("SELECT payload FROM agents WHERE id = :id FOR UPDATE")
                     .param("id", definition.id())
-                    .query(String.class)
-                    .optional()
-                    .isPresent();
+                    .query((rs, row) -> Json.read(rs.getString("payload"), AgentDefinition.class))
+                    .optional();
+            boolean exists = previous.isPresent();
             AgentDefinition stamped = definition.withUpdatedAt(clock.instant());
             String sql = exists
                     ? "UPDATE agents SET name = :name, payload = :payload, updated_at = :updatedAt WHERE id = :id"
@@ -131,8 +145,60 @@ public class JdbcCatalogStore implements CatalogStore {
                     .param("payload", Json.write(stamped))
                     .param("updatedAt", Timestamps.of(stamped.updatedAt()))
                     .update();
+            int revision = jdbc.sql("SELECT COALESCE(MAX(revision), 0) FROM definition_revisions"
+                                    + " WHERE kind = 'agent' AND entity_id = :id")
+                            .param("id", stamped.id())
+                            .query(Integer.class)
+                            .single()
+                    + 1;
+            recordRevision(
+                    DefinitionRevision.AGENT,
+                    stamped.id(),
+                    revision,
+                    stamped.name(),
+                    RevisionSummary.of(previous.orElse(null), stamped),
+                    stamped,
+                    stamped.updatedAt());
             return stamped;
         }));
+    }
+
+    /** Writes a revision in the caller's transaction and drops the ones beyond the kept history. */
+    private void recordRevision(
+            String kind, String id, int revision, String name, String summary, Object payload, Instant at) {
+        jdbc.sql("INSERT INTO definition_revisions (kind, entity_id, revision, name, author, summary, payload,"
+                        + " created_at) VALUES (:kind, :id, :rev, :name, :author, :summary, :payload, :at)")
+                .param("kind", kind)
+                .param("id", id)
+                .param("rev", revision)
+                .param("name", name)
+                .param("author", author())
+                .param("summary", summary)
+                .param("payload", Json.write(payload))
+                .param("at", Timestamps.of(at))
+                .update();
+        jdbc.sql("DELETE FROM definition_revisions WHERE kind = :kind AND entity_id = :id AND revision <= :oldest")
+                .param("kind", kind)
+                .param("id", id)
+                .param("oldest", revision - DefinitionRevision.KEEP)
+                .update();
+    }
+
+    private void deleteRevisions(String kind, String id) {
+        jdbc.sql("DELETE FROM definition_revisions WHERE kind = :kind AND entity_id = :id")
+                .param("kind", kind)
+                .param("id", id)
+                .update();
+    }
+
+    /** Who is saving: the signed-in account (or agent), {@code system} for startup imports and jobs. */
+    private static String author() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext()
+                .getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof io.github.loopforge4j.server.account.CurrentUser user) {
+            return user.username();
+        }
+        return "system";
     }
 
     private static <T> T withUpsertRetry(java.util.function.Supplier<T> write) {
@@ -151,7 +217,10 @@ public class JdbcCatalogStore implements CatalogStore {
 
     @Override
     public boolean deleteAgent(String id) {
-        return jdbc.sql("DELETE FROM agents WHERE id = :id").param("id", id).update() > 0;
+        return Boolean.TRUE.equals(tx.execute(status -> {
+            deleteRevisions(DefinitionRevision.AGENT, id);
+            return jdbc.sql("DELETE FROM agents WHERE id = :id").param("id", id).update() > 0;
+        }));
     }
 
     @Override

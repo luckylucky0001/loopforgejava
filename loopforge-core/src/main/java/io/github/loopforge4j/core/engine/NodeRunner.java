@@ -294,9 +294,10 @@ final class NodeRunner {
         Path file = sandbox.workspace().resolve(relative);
         new io.github.loopforge4j.core.runtime.ManagedFiles(sandbox.workspace()).write(file, node.script(), false);
         // absolute path: repository-scoped scripts run inside the checkout directory
+        // stderr joins stdout so both reach the run's logs, in order
         List<String> argv = language == ScriptLanguage.PYTHON
-                ? List.of("python3", file.toString())
-                : List.of("sh", "-l", file.toString());
+                ? List.of("sh", "-c", "exec python3 \"$0\" 2>&1", file.toString())
+                : List.of("sh", "-c", "exec sh -l \"$0\" 2>&1", file.toString());
         EventSink sink = engine.sink(runId, node.id());
         sink.emit(Telemetry.of("script", "script.started", "start", language.wire() + " 脚本开始执行"));
         List<ScopeTarget> targets = targets(run, node.effectiveScope());
@@ -307,7 +308,8 @@ final class NodeRunner {
             env.putAll(scriptEnvironment(runId, node, attempt));
             env.putAll(target.environment());
             CommandSpec spec = new CommandSpec(argv, target.directory(), env, null, timeout(node), "script");
-            ExecResult result = sandbox.exec(spec, LineListener.NONE, cancellation);
+            ExecResult result =
+                    sandbox.exec(spec, scriptOutput(sink, targets.size() > 1 ? target.label() : null), cancellation);
             durationMillis += result.duration().toMillis();
             if (targets.size() > 1) {
                 combined.append("## ").append(target.label()).append("\n\n");
@@ -361,6 +363,26 @@ final class NodeRunner {
                 output,
                 engine.clock().instant());
         commitSuccess(runId, generation, attempt, node, output, artifacts, null);
+    }
+
+    /** Script output lines streamed to the run's events (logs and live view), per target. */
+    static final int SCRIPT_OUTPUT_LINES = 2_000;
+
+    private static LineListener scriptOutput(EventSink sink, String target) {
+        java.util.concurrent.atomic.AtomicInteger lines = new java.util.concurrent.atomic.AtomicInteger();
+        Map<String, Object> where = target == null ? Map.of() : Map.of("target", target);
+        return line -> {
+            int n = lines.incrementAndGet();
+            if (n <= SCRIPT_OUTPUT_LINES) {
+                String text = line.length() > 2_000 ? line.substring(0, 2_000) + "…" : line;
+                sink.emit(Telemetry.of("output", "script.output", "progress", text)
+                        .withAttributes(where));
+            } else if (n == SCRIPT_OUTPUT_LINES + 1) {
+                sink.emit(Telemetry.of(
+                                "output", "script.output", "progress", "（输出超过 " + SCRIPT_OUTPUT_LINES + " 行，其余见节点结果）")
+                        .withAttributes(where));
+            }
+        };
     }
 
     /** Where a command runs: the workspace root, or each repository checkout (upstream executionTargets). */

@@ -20,9 +20,11 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -107,6 +109,101 @@ class RunController {
             Principal principal) {
         readable(runId, principal);
         return engine.events(runId, after, limit);
+    }
+
+    @Operation(
+            summary = "A page of the run's logs (events): after a sequence, before one, or the newest page;"
+                    + " optionally of one node")
+    @GetMapping("/{runId}/logs")
+    Map<String, Object> logs(
+            @PathVariable String runId,
+            @RequestParam(required = false) String nodeId,
+            @RequestParam(required = false) @Min(0) Long after,
+            @RequestParam(required = false) @Min(0) Long before,
+            @RequestParam(defaultValue = "100") @Min(1) @Max(200) int limit,
+            Principal principal) {
+        readable(runId, principal);
+        String node = nodeId == null || nodeId.isBlank() ? null : nodeId;
+        List<RunEvent> page = engine.eventPage(runId, node, after, after == null ? before : null, limit + 1);
+        boolean more = page.size() > limit;
+        if (more) {
+            // the extra event only tells there is more in the paging direction
+            page = after != null ? page.subList(0, limit) : page.subList(1, page.size());
+        }
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("runId", runId);
+        out.put("logs", page);
+        out.put("nextAfter", page.isEmpty() ? after : page.getLast().sequence());
+        out.put("nextBefore", page.isEmpty() ? before : page.getFirst().sequence());
+        out.put("hasMore", more);
+        return out;
+    }
+
+    static final int LOG_EXPORT_LIMIT = 20_000;
+
+    @Operation(summary = "Download the run's logs as text (at most 20,000 lines)")
+    @GetMapping(path = "/{runId}/logs.txt", produces = "text/plain;charset=UTF-8")
+    ResponseEntity<String> logsText(
+            @PathVariable String runId, @RequestParam(required = false) String nodeId, Principal principal) {
+        Run run = readable(runId, principal);
+        String node = nodeId == null || nodeId.isBlank() ? null : nodeId;
+        StringBuilder text = new StringBuilder()
+                .append("# LoopForge4J run ")
+                .append(runId)
+                .append(" · ")
+                .append(run.workflow().name())
+                .append(" · ")
+                .append(run.status().wire())
+                .append('\n');
+        if (node != null) {
+            text.append("# node ").append(node).append('\n');
+        }
+        text.append("# time | node | category/type | level | message\n");
+        long cursor = 0;
+        int lines = 0;
+        while (lines < LOG_EXPORT_LIMIT) {
+            List<RunEvent> page = engine.eventPage(runId, node, cursor, null, 1000);
+            if (page.isEmpty()) {
+                break;
+            }
+            for (RunEvent e : page) {
+                if (lines++ == LOG_EXPORT_LIMIT) {
+                    break;
+                }
+                text.append(e.timestamp())
+                        .append(" | ")
+                        .append(e.nodeId() == null ? "-" : e.nodeId())
+                        .append(" | ")
+                        .append(e.category())
+                        .append('/')
+                        .append(e.type())
+                        .append(" | ")
+                        .append(e.level())
+                        .append(" | ")
+                        .append(e.message() == null ? "" : e.message().replace("\n", "\n    "))
+                        .append('\n');
+            }
+            cursor = page.getLast().sequence();
+        }
+        if (lines > LOG_EXPORT_LIMIT) {
+            text.append("# truncated at ").append(LOG_EXPORT_LIMIT).append(" lines\n");
+        }
+        return ResponseEntity.ok()
+                .header(
+                        "Content-Disposition",
+                        "attachment; filename=\"" + runId.replaceAll("[^A-Za-z0-9_-]", "_") + "-logs.txt\"")
+                .header("X-Content-Type-Options", "nosniff")
+                .contentType(new MediaType("text", "plain", StandardCharsets.UTF_8))
+                .body(text.toString());
+    }
+
+    @Operation(summary = "Delete a settled run with its child runs, events, artifacts and workspace")
+    @DeleteMapping("/{runId}")
+    ResponseEntity<Void> delete(@PathVariable String runId, Principal principal) {
+        Run run = readable(runId, principal);
+        access.requireProject(principal, run.context().projectId(), ProjectRole.MAINTAINER);
+        engine.delete(runId);
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "Artifact metadata of every node attempt")

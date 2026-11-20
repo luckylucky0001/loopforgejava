@@ -52,6 +52,23 @@ public interface RunStore {
         return List.of();
     }
 
+    /**
+     * A page of events, oldest first: after {@code after} when given, else before {@code before} when
+     * given, else the newest page; only {@code nodeId}'s events when given.
+     */
+    default List<RunEvent> eventPage(String runId, String nodeId, Long after, Long before, int limit) {
+        List<RunEvent> all = events(runId, 0, 0).stream()
+                .filter(e -> nodeId == null || nodeId.equals(e.nodeId()))
+                .toList();
+        if (after != null) {
+            return all.stream().filter(e -> e.sequence() > after).limit(limit).toList();
+        }
+        List<RunEvent> older = before == null
+                ? all
+                : all.stream().filter(e -> e.sequence() < before).toList();
+        return older.subList(Math.max(0, older.size() - limit), older.size());
+    }
+
     /** Deletes a run together with its events and artifacts; returns whether it existed. */
     default boolean delete(String runId) {
         return false;

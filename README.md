@@ -249,7 +249,9 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | --- | --- | --- |
 | `GET/PUT/DELETE` | `/api/v1/workflows/{id}` | SOP 定义（写入前完整校验，返回所有问题） |
 | `POST` | `/api/v1/workflows/validate` | 只校验不保存 |
-| `GET/PUT/DELETE` | `/api/v1/agents/{id}` | 角色定义 |
+| `GET/POST` | `/api/v1/workflows/{id}/revisions[/{r}[/restore]]`、`/publish`、`/clone` | SOP 历史版本（作者、变化摘要）与恢复；发布（版本 + 1）；复制为草稿 |
+| `GET/PUT/DELETE` | `/api/v1/agents/{id}` | 角色定义（仍被 SOP 使用时拒绝删除） |
+| `GET/POST` | `/api/v1/agents/{id}/revisions[/{r}[/restore]]` | 角色历史版本与恢复 |
 | `GET` / `POST` | `/api/v1/catalog/export` / `/import` | 目录导出 / 导入（默认不覆盖） |
 | `GET` | `/api/v1/executors` | 执行器及本机是否已安装 |
 | `GET/PUT/DELETE` | `/api/v1/repositories/{id}` | 代码仓库 |
@@ -258,12 +260,14 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/POST/DELETE` | `/api/v1/me`、`/me/tokens`、`/me/password`；`/api/v1/users` | 当前账户与个人 Token；账户管理（管理员） |
 | `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs]]` | 需求与启动需求运行 |
-| `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run]]` | 定时任务 |
+| `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run\|/executions]]` | 定时任务与执行记录（定时 / 手动、结果、运行当前状态） |
 | `GET/POST/PUT/DELETE` | `/api/v1/notifications[/{id}]` | Webhook 通知 |
 | `GET` / `POST` | `/api/v1/runs/{id}/deliveries` / `/deliveries/refresh` | 运行交付的 PR 与合并状态 |
 | `POST` / `GET` | `/api/v1/runs` | 启动运行 / 列表（按状态、SOP、父运行过滤） |
 | `GET` | `/api/v1/runs/{id}`、`/events`、`/artifacts`、`/artifacts/{aid}` | 运行详情、事件、产物 |
 | `GET` | `/api/v1/runs/{id}/stream` | SSE 实时流（浏览器可用 `?access_token=`） |
+| `GET` | `/api/v1/runs/{id}/logs`、`/logs.txt` | 日志分页（`nodeId`、`after` / `before` 游标）与文本下载（含脚本输出，最多 20,000 行） |
+| `DELETE` | `/api/v1/runs/{id}` | 删除已结束的运行（含子运行、事件、产物与工作区；项目维护者） |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
 | `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |

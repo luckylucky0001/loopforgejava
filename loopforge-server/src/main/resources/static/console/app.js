@@ -86,12 +86,38 @@ async function attempt(action, after) {
 
 function modal(title, body, actions) {
   const dialog = h('dialog', {});
+  const extra = actions(dialog);
   dialog.append(h('h2', {}, title), body, h('div', { class: 'row mt' }, h('span', { class: 'spacer' }),
-    h('button', { onclick: () => dialog.close() }, '取消'), actions(dialog)));
+    h('button', { onclick: () => dialog.close() }, extra ? '取消' : '关闭'), extra));
   document.body.append(dialog);
   dialog.addEventListener('close', () => dialog.remove());
   dialog.showModal();
   return dialog;
+}
+
+/** Saved revisions of a definition, with view and restore (restore is a new revision). */
+async function showRevisions(base, onRestored) {
+  const revisions = await api(`${base}/revisions`);
+  const viewer = h('pre', { class: 'mono revision-view', hidden: true });
+  const body = h('div', {}, revisions.length === 0 ? h('p', { class: 'muted' }, '还没有历史版本') :
+    h('table', {}, h('tr', {}, ['版本', '时间', '作者', '变化', ''].map((t) => h('th', {}, t))),
+      revisions.map((r, i) => h('tr', {}, h('td', { class: 'mono' }, `r${r.revision}`), h('td', {}, time(r.createdAt)), h('td', {}, r.author || '—'),
+        h('td', {}, r.summary || ''),
+        h('td', {}, h('div', { class: 'row' },
+          h('button', { onclick: () => attempt(() => api(`${base}/revisions/${r.revision}`), (full) => { viewer.hidden = false; viewer.textContent = json(stripMeta(full.payload)); }) }, '查看'),
+          i === 0 ? null : h('button', { onclick: () => confirm(`恢复到 r${r.revision}？当前内容会保留在历史里。`)
+            && attempt(() => api(`${base}/revisions/${r.revision}/restore`, { method: 'POST' }), (restored) => { dialog.close(); onRestored(restored); }) }, '恢复')))))),
+    viewer);
+  const dialog = modal('历史版本', body, () => null);
+}
+
+/** Downloads an authenticated text response as a file. */
+async function download(path, filename) {
+  const text = await api(path, { raw: true });
+  const link = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })), download: filename });
+  document.body.append(link);
+  link.click();
+  setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
 }
 
 function prompted(title, fields, submit) {
@@ -398,7 +424,10 @@ async function runPage(runId) {
         active && run.status === 'running' ? control('pause', '暂停') : null,
         run.status === 'waiting' ? control('resume', '继续') : null,
         active ? control('cancel', '取消', 'danger') : null,
-        run.status === 'failed' ? control('retry', '重试') : null),
+        run.status === 'failed' ? control('retry', '重试') : null,
+        h('button', { onclick: () => attempt(() => download(`/runs/${runId}/logs.txt`, `${runId}-logs.txt`)) }, '下载日志'),
+        !active && !run.context?.parentRunId ? h('button', { class: 'danger', onclick: () => confirm('删除这次运行（含子运行、事件、产物与工作区）？')
+          && attempt(() => api(`/runs/${runId}`, { method: 'DELETE' }), () => { location.hash = '#/runs'; }) }, '删除') : null),
       h('p', { class: 'muted mono' }, `${run.id} · ${run.context?.projectId ? '项目 ' + run.context.projectId + ' · ' : ''}${run.context?.triggeredBy || ''} · ${time(run.createdAt)}`),
       run.input ? h('details', { class: 'panel' }, h('summary', {}, '任务输入'), h('pre', {}, run.input)) : null,
       dag(run.workflowSnapshot, statuses, showNode),
@@ -729,8 +758,16 @@ async function workflowPage(id) {
   const save = () => attempt(() => api(`/workflows/${encodeURIComponent(id || idInput.value.trim())}`, { method: 'PUT', body: current() }),
     (saved) => { problems.replaceChildren(h('div', { class: 'notice' }, '已保存')); if (!id) location.hash = `#/workflows/${saved.id}`; });
   const remove = () => confirm(`删除 SOP ${id}？`) && attempt(() => api(`/workflows/${id}`, { method: 'DELETE' }), () => { location.hash = '#/workflows'; });
-  shell([h('div', { class: 'row' }, h('h1', {}, id ? `SOP ${loaded.name}` : '新建 SOP'), h('span', { class: 'spacer' }),
-    idInput, h('button', { onclick: validate }, '校验'), h('button', { class: 'primary', onclick: save }, '保存'), id ? h('button', { class: 'danger', onclick: remove }, '删除') : null),
+  const reload = () => workflowPage(id);
+  const history = () => attempt(() => showRevisions(`/workflows/${encodeURIComponent(id)}`, reload));
+  const publish = () => attempt(() => api(`/workflows/${encodeURIComponent(id)}/publish`, { method: 'POST' }), reload);
+  const copy = () => prompted('复制 SOP', [{ name: 'id', label: '新 id', value: `${id}-copy` }, { name: 'name', label: '名称', value: `${loaded.name} 副本` }],
+    (v) => api(`/workflows/${encodeURIComponent(id)}/clone`, { method: 'POST', body: v }).then((c) => { location.hash = `#/workflows/${encodeURIComponent(c.id)}`; return c; }));
+  shell([h('div', { class: 'row' }, h('h1', {}, id ? `SOP ${loaded.name}` : '新建 SOP'),
+    id ? h('span', { class: 'muted' }, `v${loaded.version} · r${loaded.revision} · ${loaded.status}`) : null, h('span', { class: 'spacer' }),
+    idInput, h('button', { onclick: validate }, '校验'), h('button', { class: 'primary', onclick: save }, '保存'),
+    id ? h('button', { onclick: publish }, '发布') : null, id ? h('button', { onclick: history }, '历史') : null, id ? h('button', { onclick: copy }, '复制') : null,
+    id ? h('button', { class: 'danger', onclick: remove }, '删除') : null),
   tabs, problems, body]);
   showDesign();
 }
@@ -773,8 +810,10 @@ async function definitionPage(kind, id) {
   const save = () => attempt(() => api(`${meta.path}/${encodeURIComponent(id || idInput.value.trim())}`, { method: 'PUT', body: JSON.parse(editor.value) }),
     () => { message.replaceChildren(h('div', { class: 'notice' }, '已保存')); if (!id) location.hash = `${meta.back}/${encodeURIComponent(idInput.value.trim())}`; });
   const remove = () => confirm(`删除 ${id}？`) && attempt(() => api(`${meta.path}/${encodeURIComponent(id)}`, { method: 'DELETE' }), () => { location.hash = meta.back; });
+  const history = () => attempt(() => showRevisions(`${meta.path}/${encodeURIComponent(id)}`, () => definitionPage(kind, id)));
   shell([h('div', { class: 'row' }, h('h1', {}, `${meta.title} ${id || '（新建）'}`), h('span', { class: 'spacer' }), idInput,
-    h('button', { class: 'primary', onclick: save }, '保存'), id ? h('button', { class: 'danger', onclick: remove }, '删除') : null),
+    h('button', { class: 'primary', onclick: save }, '保存'), id && kind === 'agents' ? h('button', { onclick: history }, '历史') : null,
+    id ? h('button', { class: 'danger', onclick: remove }, '删除') : null),
   kind === 'mcp-servers' ? h('p', { class: 'muted' }, '敏感值写成 ${secret:NAME}，值配置在服务端 loopforge.mcp.secrets。') : null,
   kind === 'repositories' ? h('p', { class: 'muted' }, '凭据配置在服务端（loopforge.git），不要写进克隆 URL。') : null,
   message, editor]);
@@ -876,6 +915,12 @@ async function projectPage(projectId) {
       schedules.map((s) => h('tr', {}, h('td', {}, s.name, s.enabled ? null : h('span', { class: 'muted' }, '（停用）')), h('td', { class: 'mono' }, `${s.cron} ${s.zone}`), h('td', { class: 'mono' }, s.workflowId),
         h('td', {}, time(s.nextRunAt)), h('td', {}, s.lastRunId ? h('a', { href: `#/runs/${s.lastRunId}` }, time(s.lastRunAt)) : '—', s.lastError ? h('div', { class: 'error' }, s.lastError) : null),
         h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => attempt(() => api(`/projects/${projectId}/schedules/${s.id}/run`, { method: 'POST' }), refresh) }, '立即运行'),
+          h('button', { onclick: () => attempt(() => api(`/projects/${projectId}/schedules/${s.id}/executions`), (rows) => modal(`执行记录 · ${s.name}`,
+            rows.length === 0 ? h('p', { class: 'muted' }, '还没有执行过') : h('table', {}, h('tr', {}, ['时间', '触发', '结果', '运行', '说明'].map((t) => h('th', {}, t))),
+              rows.map((e) => h('tr', {}, h('td', {}, time(e.firedAt)), h('td', {}, e.trigger === 'cron' ? '定时' : `手动 · ${e.actor || ''}`),
+                h('td', {}, badge(e.status === 'started' ? (e.runStatus || 'deleted') : e.status === 'skipped' ? 'waiting' : 'failed')),
+                h('td', {}, e.runId ? h('a', { href: `#/runs/${e.runId}`, class: 'mono' }, e.runId.slice(0, 14)) : '—'),
+                h('td', { class: 'muted' }, e.error || (e.runStatus === null && e.runId ? '运行已删除' : ''))))), () => null)) }, '记录'),
           h('button', { onclick: () => attempt(() => api(`/projects/${projectId}/schedules/${s.id}`, { method: 'PUT', body: { ...s, enabled: !s.enabled } }), refresh) }, s.enabled ? '停用' : '启用'),
           h('button', { class: 'danger', onclick: () => confirm('删除定时任务？') && attempt(() => api(`/projects/${projectId}/schedules/${s.id}`, { method: 'DELETE' }), refresh) }, '删除')))))),
     channels === null ? null : [

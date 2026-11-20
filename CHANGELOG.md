@@ -22,6 +22,11 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 13)
+- SOP 与角色的历史版本（`/revisions`，作者、变化摘要、查看与恢复），SOP 发布与复制；仍被 SOP 使用的角色不能删除。
+- 运行日志接口（`/runs/{id}/logs` 分页、`/logs.txt` 下载）；脚本的标准输出与错误输出逐行进入运行事件；删除已结束的运行（含子运行与工作区）。
+- 定时任务执行记录（`/schedules/{id}/executions`）；平台 MCP 新增历史版本、日志与执行记录工具；控制台对应入口。
+
 ### Added (迭代 12)
 - 拖拽式 SOP 设计器：添加节点、拖动定位、拖拽连线、属性面板（角色、执行器、脚本、产物、打回、失败策略、预算）、自动布局，与 JSON 视图同步。
 - 需求 AI 澄清（`/api/v1/projects/{p}/requirements/{n}/clarification`）：后台分析轮次在需求专属工作区里只读检出仓库并续接 CLI 会话；问题卡片（选择、多选、填写）；结论写入描述并回写外部原单；停止、修改结论、重新开始；控制台澄清页。

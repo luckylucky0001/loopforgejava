@@ -142,3 +142,7 @@ input.grow { flex: 1; min-width: 240px; }
 .question { margin-top: 10px; display: grid; gap: 8px; }
 .option { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; cursor: pointer; }
 .row.wrap { flex-wrap: wrap; }
+
+/* revision history */
+.revision-view { max-height: 40vh; overflow: auto; margin-top: 10px; }
+dialog { max-width: min(920px, 92vw); }

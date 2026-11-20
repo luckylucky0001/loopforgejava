@@ -327,6 +327,30 @@ public class JdbcRunStore implements RunStore {
     }
 
     @Override
+    public List<RunEvent> eventPage(String runId, String nodeId, Long after, Long before, int limit) {
+        String node = nodeId == null ? "" : " AND node_id = :node";
+        String select = "SELECT seq, run_id, node_id, category, type, level, message, attributes, created_at"
+                + " FROM run_events WHERE run_id = :runId" + node;
+        var statement = after != null
+                ? jdbc.sql(select + " AND seq > :after ORDER BY seq LIMIT :limit")
+                        .param("after", after)
+                : before != null
+                        ? jdbc.sql(select + " AND seq < :before ORDER BY seq DESC LIMIT :limit")
+                                .param("before", before)
+                        : jdbc.sql(select + " ORDER BY seq DESC LIMIT :limit");
+        statement = statement.param("runId", runId).param("limit", Math.max(1, limit));
+        if (nodeId != null) {
+            statement = statement.param("node", nodeId);
+        }
+        List<RunEvent> events = new java.util.ArrayList<>(
+                statement.query(JdbcRunStore::mapEvent).list());
+        if (after == null) {
+            java.util.Collections.reverse(events);
+        }
+        return events;
+    }
+
+    @Override
     public List<Artifact> artifacts(String runId) {
         return jdbc.sql("""
                 SELECT id, run_id, node_id, attempt, name, path, media_type, size_bytes, sha256, content, created_at

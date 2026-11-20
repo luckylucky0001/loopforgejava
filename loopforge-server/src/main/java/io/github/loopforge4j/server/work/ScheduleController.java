@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Scheduled runs of a project; maintainers manage them. */
@@ -70,8 +71,23 @@ class ScheduleController {
         access.requireProject(principal, projectId, ProjectRole.DEVELOPER);
         Schedule schedule = find(projectId, id);
         access.requireIsolatedSandbox(principal, schedule.workflowId());
-        schedules.runNow(schedule);
+        schedules.runNow(schedule, access.current(principal).username());
         return find(projectId, id);
+    }
+
+    @Operation(summary = "Recent firings of the schedule (cron and manual), newest first")
+    @GetMapping("/{id}/executions")
+    List<ScheduleExecution> executions(
+            @PathVariable String projectId,
+            @PathVariable String id,
+            @RequestParam(defaultValue = "50")
+                    @jakarta.validation.constraints.Min(1)
+                    @jakarta.validation.constraints.Max(ScheduleExecution.KEEP)
+                    int limit,
+            Principal principal) {
+        access.requireProject(principal, projectId, ProjectRole.VIEWER);
+        find(projectId, id);
+        return schedules.executions(id, limit);
     }
 
     @DeleteMapping("/{id}")

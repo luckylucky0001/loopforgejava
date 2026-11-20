@@ -496,6 +496,55 @@ public final class RunEngine implements AutoCloseable {
         return runs.events(runId, afterSequence, limit);
     }
 
+    /** A page of a run's events (see {@link RunStore#eventPage}). */
+    public List<RunEvent> eventPage(String runId, String nodeId, Long after, Long before, int limit) {
+        require(runId);
+        telemetry.flush(runId);
+        return runs.eventPage(runId, nodeId, after, before, limit);
+    }
+
+    /**
+     * Deletes a settled top-level run with its child runs, events, artifacts and workspace (upstream
+     * force-delete of settled history).
+     *
+     * @throws RunStateException when the run (or one of its child runs) has not settled, or it is a
+     *     child run
+     */
+    public void delete(String runId) {
+        Run run = require(runId);
+        if (run.context().childRun()) {
+            throw new RunStateException(
+                    "run " + runId + " belongs to " + run.context().parentRunId() + "; delete the parent run");
+        }
+        List<Run> family = new ArrayList<>();
+        collect(run, family);
+        for (Run r : family) {
+            if (!r.status().terminal() || scheduling(r.id())) {
+                throw new RunStateException("run " + r.id() + " has not settled");
+            }
+        }
+        if (!run.workspaceReleased() && !foreignWorkspace(run)) {
+            sandboxProvider(run.workflow().sandboxProfileId()).ifPresent(provider -> {
+                try {
+                    provider.release(runId);
+                } catch (IOException e) {
+                    log.warn("run {}: cannot delete workspace: {}", runId, e.toString());
+                }
+            });
+        }
+        // children first: a child never outlives its parent
+        for (int i = family.size() - 1; i >= 0; i--) {
+            runs.delete(family.get(i).id());
+        }
+    }
+
+    private void collect(Run run, List<Run> into) {
+        into.add(run);
+        for (Run child : runs.list(new RunQuery(Set.of(), null, run.id(), 500, null, null))) {
+            collect(child, into);
+        }
+    }
+
     public List<Artifact> artifacts(String runId) {
         require(runId);
         return runs.artifacts(runId);

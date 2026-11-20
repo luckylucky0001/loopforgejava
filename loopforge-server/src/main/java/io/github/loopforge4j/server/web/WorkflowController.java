@@ -31,14 +31,19 @@ class WorkflowController {
 
     private final CatalogStore store;
     private final CatalogService catalog;
+    private final io.github.loopforge4j.server.persistence.DefinitionRevisionStore revisions;
 
     private final io.github.loopforge4j.server.account.AccessPolicy access;
 
     WorkflowController(
-            CatalogStore store, CatalogService catalog, io.github.loopforge4j.server.account.AccessPolicy access) {
+            CatalogStore store,
+            CatalogService catalog,
+            io.github.loopforge4j.server.persistence.DefinitionRevisionStore revisions,
+            io.github.loopforge4j.server.account.AccessPolicy access) {
         this.access = access;
         this.store = store;
         this.catalog = catalog;
+        this.revisions = revisions;
     }
 
     @GetMapping("/workflows")
@@ -76,6 +81,107 @@ class WorkflowController {
         return store.deleteWorkflow(id)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();
+    }
+
+    @Operation(summary = "Saved revisions of a workflow, newest first")
+    @GetMapping("/workflows/{id}/revisions")
+    List<io.github.loopforge4j.server.persistence.DefinitionRevision> revisions(
+            @PathVariable String id, java.security.Principal principal) {
+        get(id, principal);
+        return revisions.list(io.github.loopforge4j.server.persistence.DefinitionRevision.WORKFLOW, id);
+    }
+
+    @GetMapping("/workflows/{id}/revisions/{revision}")
+    io.github.loopforge4j.server.persistence.DefinitionRevision revision(
+            @PathVariable String id, @PathVariable int revision, java.security.Principal principal) {
+        get(id, principal);
+        return revisions
+                .find(
+                        io.github.loopforge4j.server.persistence.DefinitionRevision.WORKFLOW,
+                        id,
+                        revision,
+                        WorkflowDefinition.class)
+                .orElseThrow(() -> new RunNotFoundException("revision " + revision + " of '" + id + "' not found"));
+    }
+
+    @Operation(summary = "Restore a revision: its definition is saved as the newest revision")
+    @PostMapping("/workflows/{id}/revisions/{revision}/restore")
+    WorkflowDefinition restore(@PathVariable String id, @PathVariable int revision, java.security.Principal principal) {
+        WorkflowDefinition old =
+                (WorkflowDefinition) revision(id, revision, principal).payload();
+        return put(id, old, principal);
+    }
+
+    @Operation(summary = "Validate and publish a workflow (version + 1)")
+    @PostMapping("/workflows/{id}/publish")
+    WorkflowDefinition publish(@PathVariable String id, java.security.Principal principal) {
+        WorkflowDefinition current = get(id, principal);
+        return put(
+                id,
+                copy(
+                        current,
+                        id,
+                        current.name(),
+                        current.projectId(),
+                        io.github.loopforge4j.core.domain.WorkflowStatus.PUBLISHED,
+                        current.version() + 1),
+                principal);
+    }
+
+    record CloneRequest(
+            @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max = 200)
+            String id,
+
+            @jakarta.validation.constraints.Size(max = 500) String name,
+            String projectId) {}
+
+    @Operation(summary = "Copy a workflow as a new draft (optionally into another project)")
+    @PostMapping("/workflows/{id}/clone")
+    ResponseEntity<WorkflowDefinition> cloneWorkflow(
+            @PathVariable String id,
+            @jakarta.validation.Valid @RequestBody CloneRequest body,
+            java.security.Principal principal) {
+        WorkflowDefinition source = get(id, principal);
+        String target = body.id().strip();
+        if (store.workflow(target).isPresent()) {
+            throw new ApiException(HttpStatus.CONFLICT, "workflow '" + target + "' already exists");
+        }
+        String project =
+                body.projectId() == null ? source.projectId() : body.projectId().isBlank() ? null : body.projectId();
+        WorkflowDefinition copy = copy(
+                source,
+                target,
+                body.name() == null || body.name().isBlank()
+                        ? source.name() + " 副本"
+                        : body.name().strip(),
+                project,
+                io.github.loopforge4j.core.domain.WorkflowStatus.DRAFT,
+                1);
+        return ResponseEntity.status(HttpStatus.CREATED).body(put(target, copy, principal));
+    }
+
+    private static WorkflowDefinition copy(
+            WorkflowDefinition w,
+            String id,
+            String name,
+            String projectId,
+            io.github.loopforge4j.core.domain.WorkflowStatus status,
+            int version) {
+        return new WorkflowDefinition(
+                id,
+                name,
+                version,
+                w.revision(),
+                status,
+                projectId,
+                w.owner(),
+                w.tags(),
+                w.description(),
+                w.sandboxProfileId(),
+                w.nodes(),
+                w.edges(),
+                null,
+                null);
     }
 
     @Operation(summary = "Validate a workflow without saving it")
