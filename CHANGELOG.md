@@ -22,6 +22,13 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 14)
+- 个人凭据（`/api/v1/me/credentials`）：每个执行器的 API Key、Base URL 与凭据变量，按主机的 Git Token；AES-256-GCM 加密（`loopforge.security.credential-key`），从不返回密钥。
+- 运行、定时任务、助手发言与需求澄清按负责人使用个人凭据；执行器凭据整体替代平台凭据，Git Token 按主机替代；控制台「设置 → 个人凭据」。
+
+### Security (迭代 14)
+- 助手代表发言人时（以及任何 Agent 令牌）不能再创建个人 Token、修改密码、管理个人凭据或注册执行机器；此前代表发言人的助手令牌可以创建比本轮回复更持久的个人 Token。
+
 ### Added (迭代 13)
 - SOP 与角色的历史版本（`/revisions`，作者、变化摘要、查看与恢复），SOP 发布与复制；仍被 SOP 使用的角色不能删除。
 - 运行日志接口（`/runs/{id}/logs` 分页、`/logs.txt` 下载）；脚本的标准输出与错误输出逐行进入运行事件；删除已结束的运行（含子运行与工作区）。

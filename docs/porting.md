@@ -35,6 +35,7 @@
 | `internal/domain/user.go`、`project.go`、`internal/httpapi` 账户/项目部分 | `server.account` | 密码账户 + Token；未移植 OAuth/企业身份、个人凭据库 |
 | `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*`、`ExternalRef` | 平台需求与外部来源；未移植多泳道 |
 | `internal/repo/revisions*`、`internal/httpapi`（revisions / publish / clone / logs / schedule-job-executions） | `server.persistence.DefinitionRevision*`、`RevisionSummary`、`web.WorkflowController`、`RunController`、`work.ScheduleExecution*` | SOP 与角色历史版本（保留 100 个、作者、变化摘要）与恢复、发布与复制、运行日志分页与下载、删除已结束运行、定时任务执行记录（保留 200 条） |
+| `internal/repo` 个人配置（执行器凭据、Git 连接）、`internal/runtime/agent_cli.go`（凭据映射） | `server.account.PersonalCredentials*`、`CredentialCipher`、`core.runtime.executor.PersonalCredentialVariables` | 个人模型凭据与 Git Token：加密保存、按负责人（运行发起人、定时任务创建人、发言人、澄清发起人）解析，执行器凭据整体替代平台凭据 |
 | `internal/httpapi/clarify_jobs.go`、`clarify_session.go`、`issue_routes.go`（澄清） | `server.work.Clarification*`、`core.engine.Conversations.checkout` | AI 澄清：后台轮次、只读检出、续接会话、范围规则与轮数收敛、结论写入描述与回写原单 |
 | `internal/tracker/service.go`、`tapd_url.go` | `server.tracker`（`TrackerService`、`GitHubIssues`、`GitLabIssues`、`TapdClient`、`TapdLinks`） | 拉取、TAPD 链接导入、推送、交付回写、定时同步；直接调用 GitHub / GitLab / TAPD 开放 API |
 | `internal/domain/shared_schedule.go`、`schedule_execution.go` | `server.work.Schedule*` | cron 定时运行 |
@@ -83,10 +84,11 @@
 | bwrap 沙箱可见范围 | 只读挂载整个根文件系统 | 只挂载系统目录、JDK 与本运行工作区 | 只读挂载挡不住连接主机套接字（Docker、数据库），也不应读到其他运行或服务端的登录凭据 |
 | 执行机器协议 | 机器认领任务（节点）并回传结果 | 机器认领整个运行，运行完整引擎，通过版本号比较提交运行状态 | 复用引擎的所有语义（返工、门禁、恢复、遥测），无需第二套节点执行实现 |
 | 单点登录账户绑定 | 企业身份 | issuer + subject 绑定；重名时改用新用户名，邮箱关联需显式开启 | 防止身份提供方里的同名用户接管本地账户（含管理员） |
+| 个人 GitHub 连接 | 内置 OAuth App 的设备码授权 | 个人设置里粘贴 Token（按主机） | 不内置第三方 OAuth App 凭据；Token 同样只加密保存 |
 | 运行日志 | Worker 的 stdout / stderr 日志表 | 运行事件即日志；脚本 stdout 与 stderr 合并后逐行写入 `output` 事件（每次最多 2,000 行） | 事件已有游标、保留策略与实时流，不需要第二张日志表 |
 | 澄清结果提交 | Agent 调用 `submit_clarification` MCP 工具 | 回复末尾的 JSON 代码块，无效时在同一会话里重试一次 | 不需要为每轮签发 MCP 凭据；校验规则（问题非空、选择题至少两个不同选项、结论必须有 summary）与上游一致 |
 | 澄清读取外部原单 | 通过 TAPD / 工蜂 MCP 读原单与评论 | 提示词附原单链接，由 Agent 用自己的工具读取 | 本项目的外部同步不提供读原单的 MCP 服务 |
 
 ## 尚未移植
 
-对话的群协作与浏览器工具、对话内自动登记 PR、需求多泳道、云端执行池的自动扩缩容、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、Agent CLI 的模型网关与个人凭据、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建。排期见 [roadmap.md](roadmap.md)。
+对话的群协作与浏览器工具、对话内自动登记 PR、需求多泳道、云端执行池的自动扩缩容、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建。排期见 [roadmap.md](roadmap.md)。

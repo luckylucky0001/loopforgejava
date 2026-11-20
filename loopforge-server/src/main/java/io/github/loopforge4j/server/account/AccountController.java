@@ -208,7 +208,7 @@ class AccountController {
     }
 
     private String account(Principal principal) {
-        CurrentUser user = access.current(principal);
+        CurrentUser user = access.requireHuman(principal, "manage account credentials");
         if (user.service()) {
             throw new AccessPolicy.AccessDeniedException("the service token has no account");
         }

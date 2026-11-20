@@ -93,7 +93,7 @@ public abstract class CliAgentExecutor implements AgentExecutor {
             env.putAll(invocation.compiled().environment());
         }
         env.putAll(environment(invocation, sandbox));
-        env.putAll(credentials.environmentFor(kind()));
+        env.putAll(credentials.environmentFor(kind(), invocation.responsible()));
         CommandSpec spec = new CommandSpec(argv, null, env, stdin, invocation.timeout(), kind());
         StreamParser parser = parser(sink);
         sink.emit(new Telemetry(

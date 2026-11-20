@@ -225,7 +225,8 @@ public class AssistantService {
                     config.turnTimeout(),
                     binding.servers(),
                     binding.rules(),
-                    Map.of("LOOPFORGE_CONVERSATION_ID", id));
+                    Map.of("LOOPFORGE_CONVERSATION_ID", id),
+                    speaker.username());
             Conversations.Reply reply = engines.getObject()
                     .conversations()
                     .turn(

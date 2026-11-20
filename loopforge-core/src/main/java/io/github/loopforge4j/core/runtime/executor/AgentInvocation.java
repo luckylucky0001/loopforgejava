@@ -31,7 +31,40 @@ public record AgentInvocation(
         List<ArtifactContract> artifacts,
         Duration timeout,
         java.util.Map<String, String> environment,
-        io.github.loopforge4j.core.runtime.materialize.CompiledAgent compiled) {
+        io.github.loopforge4j.core.runtime.materialize.CompiledAgent compiled,
+        String responsible) {
+
+    /** Without a responsible person: the deployment's credentials apply. */
+    public AgentInvocation(
+            String runId,
+            String nodeId,
+            int attempt,
+            String invocationId,
+            ExecutorDefinition executor,
+            AgentDefinition agent,
+            String prompt,
+            String resumeSessionId,
+            String gateResultPath,
+            List<ArtifactContract> artifacts,
+            Duration timeout,
+            java.util.Map<String, String> environment,
+            io.github.loopforge4j.core.runtime.materialize.CompiledAgent compiled) {
+        this(
+                runId,
+                nodeId,
+                attempt,
+                invocationId,
+                executor,
+                agent,
+                prompt,
+                resumeSessionId,
+                gateResultPath,
+                artifacts,
+                timeout,
+                environment,
+                compiled,
+                null);
+    }
 
     public AgentInvocation {
         Objects.requireNonNull(executor, "executor");

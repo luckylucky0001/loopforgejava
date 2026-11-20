@@ -471,7 +471,8 @@ final class NodeRunner {
                 gatePath,
                 runEnvironment,
                 assets,
-                inlineRules);
+                inlineRules,
+                run.context().triggeredBy());
 
         NodeFailure failure = null;
         AgentResult last = null;
@@ -695,7 +696,8 @@ final class NodeRunner {
             String gatePath,
             Map<String, String> environment,
             AgentAssets assets,
-            List<String> inlineRules) {}
+            List<String> inlineRules,
+            String responsible) {}
 
     private String freshPrompt(Run current, AgentCall call, String manifest) {
         return PromptCompiler.compile(
@@ -752,7 +754,8 @@ final class NodeRunner {
                 call.contracts(),
                 timeout(call.node()),
                 call.environment(),
-                compile(call, invocationId));
+                compile(call, invocationId),
+                call.responsible());
         try {
             AgentResult result = call.adapter().execute(invocation, call.sandbox(), call.sink(), call.cancellation());
             recordInvocation(call, result);

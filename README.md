@@ -79,6 +79,10 @@ loopforge:
       model: sonnet
 ```
 
+### 个人凭据
+
+「设置 → 个人凭据」里每个人可以配置自己的模型凭据（每个执行器：API Key、模型网关 Base URL、其他凭据变量）和 Git Token（按主机）。你启动的运行、你创建的定时任务、你在助手里的发言和你发起的需求澄清使用这些凭据：某个执行器配置了个人凭据时完全替代平台的 `loopforge.credentials`，Git Token 按主机替代 `loopforge.git.https`。密钥加密保存（生产环境请配置 `loopforge.security.credential-key`），接口只返回末尾几位。执行机器上的运行仍使用机器本地的凭据。
+
 ### 让运行改代码并提交 PR
 
 ```yaml
@@ -258,6 +262,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/rules/{id}`、`/skills/{id}`、`/mcp-servers/{id}` | 角色可绑定的规则、Skills、MCP 服务器 |
 | `GET` / `POST` | `/api/v1/auth/status`、`/auth/setup`、`/auth/login`、`/auth/logout` | 初始化与登录（公开） |
 | `GET/POST/DELETE` | `/api/v1/me`、`/me/tokens`、`/me/password`；`/api/v1/users` | 当前账户与个人 Token；账户管理（管理员） |
+| `GET/PUT/DELETE` | `/api/v1/me/credentials[/{kind}\|/kinds]` | 个人凭据：`executor:<kind>`（apiKey、baseUrl、variables）与 `git:<host>`（token、username）；从不返回密钥 |
 | `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs]]` | 需求与启动需求运行 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run\|/executions]]` | 定时任务与执行记录（定时 / 手动、结果、运行当前状态） |

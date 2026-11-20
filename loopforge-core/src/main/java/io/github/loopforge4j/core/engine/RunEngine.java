@@ -1616,9 +1616,24 @@ public final class RunEngine implements AutoCloseable {
     }
 
     /** Environment for every process of the run: git credentials, commit identity, repository manifest. */
-    /** Git environment of work outside runs (conversations): the deployment's credentials. */
-    Map<String, String> gitEnvironment(Sandbox sandbox, List<RepositoryContext> repositories) throws IOException {
-        return GitEnvironment.build(sandbox.workspace(), gitCredentials.credentialsFor(null), repositories);
+    /** Git environment of work outside runs done for {@code responsible}: theirs over the deployment's. */
+    Map<String, String> gitEnvironment(Sandbox sandbox, List<RepositoryContext> repositories, String responsible)
+            throws IOException {
+        return GitEnvironment.build(sandbox.workspace(), gitCredentials.credentialsForUser(responsible), repositories);
+    }
+
+    /** {@code responsible}'s own Git credentials only (conversation workspaces); empty when none. */
+    Map<String, String> personalGitEnvironment(Sandbox sandbox, String responsible) throws IOException {
+        if (responsible == null) {
+            return Map.of();
+        }
+        io.github.loopforge4j.core.runtime.git.GitCredentials personal =
+                gitCredentials.personalCredentials(responsible);
+        if (personal.https().isEmpty()
+                && (personal.sshPrivateKey() == null || personal.sshPrivateKey().isBlank())) {
+            return Map.of();
+        }
+        return GitEnvironment.build(sandbox.workspace(), personal, List.of());
     }
 
     Map<String, String> processEnvironment(Run run, Sandbox sandbox) throws IOException {

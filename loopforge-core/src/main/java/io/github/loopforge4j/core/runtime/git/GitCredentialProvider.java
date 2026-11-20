@@ -13,4 +13,17 @@ public interface GitCredentialProvider {
      *     requirement clarification)
      */
     GitCredentials credentialsFor(Run run);
+
+    /** Credentials for work outside runs done for {@code responsible}: theirs over the deployment's. */
+    default GitCredentials credentialsForUser(String responsible) {
+        return credentialsFor(null);
+    }
+
+    /**
+     * Only {@code responsible}'s own credentials (conversation workspaces, where the person can read
+     * the environment and must not receive the deployment's tokens).
+     */
+    default GitCredentials personalCredentials(String responsible) {
+        return GitCredentials.NONE;
+    }
 }

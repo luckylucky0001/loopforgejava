@@ -280,6 +280,7 @@ public class ClarificationService {
                     running.sandboxProfileId(),
                     repositories(requirement),
                     requirement.baseBranch(),
+                    speaker,
                     cancellation);
             for (Conversations.Checkout c : checkouts) {
                 note(
@@ -309,7 +310,8 @@ public class ClarificationService {
                                 config.clarifyTimeout(),
                                 List.of(),
                                 List.of(),
-                                Map.of("LOOPFORGE_REQUIREMENT_ID", id)),
+                                Map.of("LOOPFORGE_REQUIREMENT_ID", id),
+                                speaker),
                         telemetry -> {
                             String line = line(telemetry);
                             if (line != null) {

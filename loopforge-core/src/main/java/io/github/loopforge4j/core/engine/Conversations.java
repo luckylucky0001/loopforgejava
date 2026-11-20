@@ -46,6 +46,7 @@ public final class Conversations {
      * @param resumeSessionId the CLI session to continue, {@code null} for a fresh one
      * @param extraServers platform-served MCP servers for this turn, credentials included
      * @param extraRules usage rules that come with them
+     * @param responsible the person speaking: their own executor and Git credentials apply
      */
     public record Turn(
             String conversationId,
@@ -56,7 +57,31 @@ public final class Conversations {
             Duration timeout,
             List<McpServerDefinition> extraServers,
             List<RuleDefinition> extraRules,
-            Map<String, String> environment) {
+            Map<String, String> environment,
+            String responsible) {
+
+        public Turn(
+                String conversationId,
+                String sandboxProfileId,
+                AgentDefinition bot,
+                String prompt,
+                String resumeSessionId,
+                Duration timeout,
+                List<McpServerDefinition> extraServers,
+                List<RuleDefinition> extraRules,
+                Map<String, String> environment) {
+            this(
+                    conversationId,
+                    sandboxProfileId,
+                    bot,
+                    prompt,
+                    resumeSessionId,
+                    timeout,
+                    extraServers,
+                    extraRules,
+                    environment,
+                    null);
+        }
 
         public Turn {
             extraServers = extraServers == null ? List.of() : List.copyOf(extraServers);
@@ -116,6 +141,10 @@ public final class Conversations {
                         engine.mcpSecrets(),
                         List.of()))
                 : null;
+        // the speaker's own Git credentials, never the deployment's: they can read this environment
+        Map<String, String> environment =
+                new java.util.HashMap<>(engine.personalGitEnvironment(sandbox, turn.responsible()));
+        environment.putAll(turn.environment());
         AgentInvocation invocation = new AgentInvocation(
                 turn.conversationId(),
                 "chat",
@@ -128,8 +157,9 @@ public final class Conversations {
                 null,
                 List.of(),
                 turn.timeout(),
-                turn.environment(),
-                compiled);
+                environment,
+                compiled,
+                turn.responsible());
         try {
             AgentResult result = adapter.execute(invocation, sandbox, sink, cancellation);
             return reply(executor, result, false);
@@ -163,12 +193,14 @@ public final class Conversations {
      * reported, not thrown: the conversation goes on without that repository.
      *
      * @param baseBranch branch to read, {@code null} for each repository's default branch
+     * @param responsible whose Git credentials (over the deployment's) read the repositories
      */
     public List<Checkout> checkout(
             String conversationId,
             String sandboxProfileId,
             List<RepositoryDefinition> repositories,
             String baseBranch,
+            String responsible,
             Cancellation cancellation)
             throws IOException, CancelledException {
         if (repositories.isEmpty()) {
@@ -189,7 +221,8 @@ public final class Conversations {
             }
             contexts.add(rc.withWorkspaceDir(dir));
         }
-        GitWorkspace git = new GitWorkspace(sandbox, engine.gitEnvironment(sandbox, contexts), cancellation);
+        GitWorkspace git =
+                new GitWorkspace(sandbox, engine.gitEnvironment(sandbox, contexts, responsible), cancellation);
         List<Checkout> out = new java.util.ArrayList<>();
         for (RepositoryContext rc : contexts) {
             try {

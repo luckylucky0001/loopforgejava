@@ -39,10 +39,7 @@ public class RunnerService {
 
     /** A personal machine of the caller, or (administrators) a pool machine. */
     public Registered register(String name, boolean shared, Principal principal) {
-        CurrentUser user = access.current(principal);
-        if (user.readOnly()) {
-            throw new AccessPolicy.AccessDeniedException("agents cannot register machines");
-        }
+        CurrentUser user = access.requireHuman(principal, "register machines");
         if (shared && !user.admin()) {
             throw new AccessPolicy.AccessDeniedException("only administrators register pool machines");
         }

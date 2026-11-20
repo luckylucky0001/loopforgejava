@@ -12,4 +12,13 @@ public interface CredentialProvider {
     CredentialProvider NONE = kind -> Map.of();
 
     Map<String, String> environmentFor(String executorKind);
+
+    /**
+     * The environment for work done for {@code responsible} (who started the run or speaks in the
+     * conversation, as recorded; {@code null} when nobody is): their own credentials over the
+     * deployment's.
+     */
+    default Map<String, String> environmentFor(String executorKind, String responsible) {
+        return environmentFor(executorKind);
+    }
 }

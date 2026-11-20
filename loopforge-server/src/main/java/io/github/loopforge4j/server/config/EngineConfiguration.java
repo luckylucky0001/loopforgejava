@@ -36,11 +36,29 @@ class EngineConfiguration {
         return Clock.systemUTC();
     }
 
-    /** Credentials come from configuration (typically environment variables), never from run data. */
+    /**
+     * Deployment credentials come from configuration (typically environment variables), never from run
+     * data. A person's own credential for an executor kind replaces the deployment's for that kind
+     * entirely: a personal base URL must never receive the deployment's key.
+     */
     @Bean
-    CredentialProvider credentialProvider(LoopForgeProperties properties) {
+    CredentialProvider credentialProvider(
+            LoopForgeProperties properties,
+            org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.server.account.PersonalCredentials>
+                    personal) {
         Map<String, Map<String, String>> credentials = properties.credentials();
-        return kind -> credentials.getOrDefault(kind, Map.of());
+        return new CredentialProvider() {
+            @Override
+            public Map<String, String> environmentFor(String kind) {
+                return credentials.getOrDefault(kind, Map.of());
+            }
+
+            @Override
+            public Map<String, String> environmentFor(String kind, String responsible) {
+                Map<String, String> own = personal.getObject().executorEnvironment(kind, responsible);
+                return own.isEmpty() ? environmentFor(kind) : own;
+            }
+        };
     }
 
     @Bean
@@ -118,7 +136,10 @@ class EngineConfiguration {
 
     /** Deployment-wide Git credentials (upstream resolves them per responsible user). */
     @Bean
-    GitCredentialProvider gitCredentialProvider(LoopForgeProperties properties) {
+    GitCredentialProvider gitCredentialProvider(
+            LoopForgeProperties properties,
+            org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.server.account.PersonalCredentials>
+                    personal) {
         LoopForgeProperties.Git git = properties.git();
         Map<String, GitCredentials.HttpsCredential> https = new java.util.LinkedHashMap<>();
         git.https().forEach(credential -> {
@@ -137,7 +158,35 @@ class EngineConfiguration {
             }
         }
         GitCredentials credentials = new GitCredentials(https, sshKey, git.authorName(), git.authorEmail());
-        return run -> credentials;
+        return new GitCredentialProvider() {
+            @Override
+            public GitCredentials credentialsFor(io.github.loopforge4j.core.domain.Run run) {
+                return credentialsForUser(run == null ? null : run.context().triggeredBy());
+            }
+
+            /** A person's token for a host replaces the deployment's for that host. */
+            @Override
+            public GitCredentials credentialsForUser(String responsible) {
+                Map<String, GitCredentials.HttpsCredential> own =
+                        personal.getObject().gitHttps(responsible);
+                if (own.isEmpty()) {
+                    return credentials;
+                }
+                Map<String, GitCredentials.HttpsCredential> merged = new java.util.LinkedHashMap<>(credentials.https());
+                merged.putAll(own);
+                return new GitCredentials(
+                        merged, credentials.sshPrivateKey(), credentials.authorName(), credentials.authorEmail());
+            }
+
+            @Override
+            public GitCredentials personalCredentials(String responsible) {
+                Map<String, GitCredentials.HttpsCredential> own =
+                        personal.getObject().gitHttps(responsible);
+                return own.isEmpty()
+                        ? GitCredentials.NONE
+                        : new GitCredentials(own, null, credentials.authorName(), credentials.authorEmail());
+            }
+        };
     }
 
     @Bean

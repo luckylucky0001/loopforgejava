@@ -177,6 +177,8 @@ public record LoopForgeProperties(
      *     profile is isolated: the local sandbox runs as the server's OS user, so anything a script or
      *     agent does there can read the server's token, database and configuration
      * @param isolatedProfiles sandbox profiles that confine runs (containers)
+     * @param credentialKey base64 AES-256 key that encrypts personal credentials; generated and kept in
+     *     the database when empty (set it to keep the key out of database backups)
      */
     public record Security(
             @DefaultValue List<String> apiTokens,
@@ -186,7 +188,8 @@ public record LoopForgeProperties(
             @NotNull @DefaultValue("12h") Duration sessionTtl,
             @DefaultValue("true") boolean membersRequireIsolation,
             @DefaultValue("docker") List<String> isolatedProfiles,
-            @Valid @DefaultValue Oidc oidc) {}
+            @Valid @DefaultValue Oidc oidc,
+            String credentialKey) {}
 
     /**
      * OpenID Connect single sign-on (authorization code flow with PKCE).

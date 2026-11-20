@@ -140,6 +140,19 @@ public class AccessPolicy {
         return actual != null && actual.atLeast(role);
     }
 
+    /**
+     * Refuses agents, including the conversation assistant acting for a person: durable credentials
+     * (access tokens, machine tokens, personal keys, the password) are managed by the person only, so
+     * a prompt-injected agent cannot create access that outlives its turn.
+     */
+    public CurrentUser requireHuman(Principal principal, String action) {
+        CurrentUser user = current(principal);
+        if (user.agent() != null) {
+            throw new AccessDeniedException("agents cannot " + action);
+        }
+        return user;
+    }
+
     /** Project roles of the caller: an agent views exactly its run's project. */
     public Map<String, ProjectRole> rolesOf(CurrentUser user) {
         if (user.agent() != null && user.agent().delegated()) {

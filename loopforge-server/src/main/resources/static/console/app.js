@@ -943,8 +943,32 @@ async function settingsPage() {
     shell([h('h1', {}, '设置'), h('p', { class: 'muted' }, '当前使用服务 Token 登录；个人 Token 与密码需要账户登录。')]);
     return;
   }
-  const tokens = await api('/me/tokens');
+  const [tokens, credentials, kinds] = await Promise.all([api('/me/tokens'), api('/me/credentials'), api('/me/credentials/kinds')]);
   const refresh = () => settingsPage();
+  const parseVariables = (text) => Object.fromEntries(text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const i = l.indexOf('=');
+    return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : [l, ''];
+  }));
+  const editExecutor = (existing) => prompted(existing ? `模型凭据 · ${existing.kind.slice(9)}` : '添加模型凭据', [
+    existing ? null : { name: 'kind', label: '执行器', type: 'select', options: kinds.executors, value: 'claude-code' },
+    { name: 'apiKey', label: existing ? 'API Key（留空 = 保留已保存的）' : 'API Key', type: 'password' },
+    { name: 'baseUrl', label: 'Base URL（模型网关，可选）', value: existing?.baseUrl || '' },
+    { name: 'variables', label: `其他变量（每行 NAME=值，可选；${kinds.variables}）${existing?.variables?.length ? '；留空 = 保留：' + existing.variables.join(', ') : ''}`, type: 'textarea', rows: 3 },
+  ].filter(Boolean), (v) => {
+    const body = { baseUrl: v.baseUrl };
+    if (v.apiKey) body.apiKey = v.apiKey;
+    if (v.variables.trim()) body.variables = parseVariables(v.variables);
+    return api(`/me/credentials/${encodeURIComponent(existing ? existing.kind : `executor:${v.kind}`)}`, { method: 'PUT', body }).then(refresh);
+  });
+  const editGit = (existing) => prompted(existing ? `Git 凭据 · ${existing.kind.slice(4)}` : '添加 Git 凭据', [
+    existing ? null : { name: 'host', label: '主机（如 github.com、git.code.tencent.com）' },
+    { name: 'token', label: existing ? 'Token（留空 = 保留已保存的）' : 'Token', type: 'password' },
+    { name: 'username', label: '用户名（可选，默认 x-access-token）', value: existing?.username || '' },
+  ].filter(Boolean), (v) => {
+    const body = { username: v.username };
+    if (v.token) body.token = v.token;
+    return api(`/me/credentials/${encodeURIComponent(existing ? existing.kind : `git:${v.host.trim().toLowerCase()}`)}`, { method: 'PUT', body }).then(refresh);
+  });
   const createToken = () => prompted('新建个人 Token', [{ name: 'name', label: '名称' }, { name: 'days', label: '有效天数（留空=永久）', type: 'number' }],
     async (v) => {
       const expiresAt = v.days ? new Date(Date.now() + Number(v.days) * 86400000).toISOString() : undefined;
@@ -958,6 +982,15 @@ async function settingsPage() {
   shell([h('h1', {}, '设置'),
     h('div', { class: 'panel' }, h('div', { class: 'row' }, h('strong', {}, me.user.username), h('span', { class: 'muted' }, me.user.email || ''), h('span', { class: 'spacer' }),
       h('button', { onclick: changePassword }, '修改密码'))),
+    h('div', { class: 'row' }, h('h2', {}, '个人凭据'), h('span', { class: 'spacer' }),
+      h('button', { onclick: () => editExecutor(null) }, '添加模型凭据'), h('button', { onclick: () => editGit(null) }, '添加 Git 凭据')),
+    h('p', { class: 'muted' }, '你启动的运行、你创建的定时任务、你在助手里的发言和你发起的需求澄清使用这里的凭据；某个执行器配置了个人凭据时完全替代平台的凭据，Git Token 按主机替代。密钥加密保存，任何接口都不会返回。'),
+    credentials.length === 0 ? h('p', { class: 'muted' }, '未配置：使用平台管理员配置的凭据。') :
+      h('table', {}, h('tr', {}, ['类型', 'Key / Token', 'Base URL / 用户名', '其他变量', '更新', ''].map((t) => h('th', {}, t))),
+        credentials.map((c) => h('tr', {}, h('td', { class: 'mono' }, c.kind), h('td', { class: 'mono' }, c.hint || '—'),
+          h('td', { class: 'mono' }, c.baseUrl || c.username || '—'), h('td', { class: 'mono' }, (c.variables || []).join(', ') || '—'), h('td', {}, time(c.updatedAt)),
+          h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => (c.kind.startsWith('git:') ? editGit(c) : editExecutor(c)) }, '修改'),
+            h('button', { class: 'danger', onclick: () => confirm(`删除 ${c.kind}？`) && attempt(() => api(`/me/credentials/${encodeURIComponent(c.kind)}`, { method: 'DELETE' }), refresh) }, '删除')))))),
     h('div', { class: 'row' }, h('h2', {}, 'Token'), h('span', { class: 'spacer' }), h('button', { class: 'primary', onclick: createToken }, '新建个人 Token')),
     h('table', {}, h('tr', {}, ['名称', '类型', '前缀', '创建', '最近使用', '过期', ''].map((t) => h('th', {}, t))),
       tokens.map((t) => h('tr', {}, h('td', {}, t.name), h('td', {}, t.kind), h('td', { class: 'mono' }, `${t.prefix}…`), h('td', {}, time(t.createdAt)),
