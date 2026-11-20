@@ -6,7 +6,12 @@ COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
 COPY loopforge-core/pom.xml loopforge-core/
 COPY loopforge-server/pom.xml loopforge-server/
-RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -ntp -q dependency:go-offline -DexcludeReactor=true || true
+# Downloads are retried: a transient registry hiccup should not fail the image build.
+RUN --mount=type=cache,target=/root/.m2 \
+    for attempt in 1 2 3 4 5; do ./mvnw -B -ntp -q --version > /dev/null && break; sleep $((attempt * 5)); done; \
+    ./mvnw -B -ntp -q --version > /dev/null
+RUN --mount=type=cache,target=/root/.m2 \
+    for attempt in 1 2 3; do ./mvnw -B -ntp -q dependency:go-offline -DexcludeReactor=true && break; sleep 10; done || true
 COPY loopforge-core/src loopforge-core/src
 COPY loopforge-server/src loopforge-server/src
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -ntp -q package -DskipTests -Dspotless.check.skip=true -Djacoco.skip=true \
