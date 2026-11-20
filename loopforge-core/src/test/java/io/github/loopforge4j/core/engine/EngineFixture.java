@@ -54,6 +54,42 @@ final class EngineFixture implements AutoCloseable {
             GitCredentialProvider git,
             DeliveryProvider delivery,
             io.github.loopforge4j.core.mcp.PlatformMcp platform) {
+        this(
+                root,
+                runs,
+                releaseWorkspace,
+                git,
+                delivery,
+                platform,
+                io.github.loopforge4j.core.store.WorkspaceSnapshotStore.NONE,
+                io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits.DEFAULT);
+    }
+
+    /** Released workspaces are snapshotted into {@code snapshots}. */
+    EngineFixture(
+            Path root,
+            io.github.loopforge4j.core.store.WorkspaceSnapshotStore snapshots,
+            io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits limits) {
+        this(
+                root,
+                new InMemoryRunStore(),
+                true,
+                GitCredentialProvider.NONE,
+                DeliveryProvider.NONE,
+                io.github.loopforge4j.core.mcp.PlatformMcp.NONE,
+                snapshots,
+                limits);
+    }
+
+    EngineFixture(
+            Path root,
+            RunStore runs,
+            boolean releaseWorkspace,
+            GitCredentialProvider git,
+            DeliveryProvider delivery,
+            io.github.loopforge4j.core.mcp.PlatformMcp platform,
+            io.github.loopforge4j.core.store.WorkspaceSnapshotStore snapshots,
+            io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits limits) {
         this.root = root;
         this.runs = runs;
         ExecutorRegistry registry = ExecutorRegistry.withBuiltIns(CredentialProvider.NONE)
@@ -68,6 +104,8 @@ final class EngineFixture implements AutoCloseable {
                 .gitCredentials(git)
                 .delivery(delivery)
                 .platformMcp(platform)
+                .snapshots(snapshots)
+                .snapshotLimits(limits)
                 .settings(new EngineSettings(
                         "test", "mock", Duration.ofMinutes(2), Duration.ofMillis(25), releaseWorkspace))
                 .build();

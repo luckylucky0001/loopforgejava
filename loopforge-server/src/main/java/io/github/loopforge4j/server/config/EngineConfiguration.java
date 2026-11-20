@@ -241,6 +241,7 @@ class EngineConfiguration {
             java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider> bwrap,
             io.github.loopforge4j.server.sandbox.CatalogSandboxes catalogSandboxes,
             io.github.loopforge4j.server.preview.JdbcPreviewStore previews,
+            io.github.loopforge4j.server.workspace.JdbcWorkspaceSnapshotStore snapshots,
             org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.core.mcp.PlatformMcp> platformMcp,
             io.github.loopforge4j.core.store.InstanceRegistry instances,
             LoopForgeProperties properties,
@@ -269,7 +270,12 @@ class EngineConfiguration {
                 .previewLimits(new io.github.loopforge4j.core.preview.PreviewArchive.Limits(
                         properties.preview().maxFiles(),
                         properties.preview().maxFileSize().toBytes(),
-                        properties.preview().maxSize().toBytes()));
+                        properties.preview().maxSize().toBytes()))
+                .snapshots(snapshots)
+                .snapshotLimits(new io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits(
+                        properties.engine().snapshotMaxSize().toBytes(),
+                        io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits.DEFAULT.maxExpandedBytes(),
+                        io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits.DEFAULT.maxFiles()));
         RunEngine runEngine = builder.instances(instances)
                 .pricing(io.github.loopforge4j.core.pricing.TokenPricing.withOverrides(properties.pricing().stream()
                         .collect(java.util.stream.Collectors.toMap(

@@ -1913,7 +1913,17 @@ async function workspacePage(runId) {
   const info = await api(base);
   const head = h('div', { class: 'row' }, h('h1', {}, '工作区'), h('span', { class: 'spacer' }), h('a', { class: 'btn', href: `#/runs/${encodeURIComponent(runId)}` }, '返回运行'));
   if (!info.available) {
-    shell([head, h('p', { class: 'muted mono' }, runId), h('div', { class: 'notice' }, info.reason || '工作区不可用')]);
+    const snapshot = info.snapshot;
+    shell([head, h('p', { class: 'muted mono' }, runId), h('div', { class: 'notice' }, info.reason || '工作区不可用'),
+      snapshot ? h('div', { class: 'panel' }, h('strong', {}, '工作区快照'),
+        h('p', { class: 'muted' }, `${time(snapshot.savedAt)} 保存 · ${snapshot.files} 个条目 · ${(snapshot.bytes / 1048576).toFixed(1)} MB（压缩后 ${(snapshot.archiveBytes / 1048576).toFixed(1)} MB）。从某个节点重跑时会自动恢复；下载的压缩包不含密钥、.env 等敏感文件。`),
+        h('button', { onclick: () => attempt(async () => {
+          const response = await fetch(`/api/v1/runs/${encodeURIComponent(runId)}/workspace/snapshot`, { headers: { Authorization: `Bearer ${token()}` } });
+          if (!response.ok) throw new ApiError(response.status, null);
+          const link = h('a', { href: URL.createObjectURL(await response.blob()), download: `workspace-${runId}.zip` });
+          document.body.append(link); link.click();
+          setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+        }) }, '下载快照')) : null]);
     return;
   }
   const view = h('div', { class: 'panel ws-view' }, h('p', { class: 'muted' }, '从左侧选择文件、变更或提交。'));

@@ -120,6 +120,15 @@ public class RunWorkspaceController {
         body.put("shared", location.shared());
         if (!location.available()) {
             body.put("reason", location.unavailable());
+            // a released workspace may have left a snapshot: replaying a node restores it
+            engine.snapshotInfo(run.workspaceOwnerId()).ifPresent(info -> {
+                Map<String, Object> snapshot = new LinkedHashMap<>();
+                snapshot.put("savedAt", info.savedAt());
+                snapshot.put("files", info.files());
+                snapshot.put("bytes", info.bytes());
+                snapshot.put("archiveBytes", info.size());
+                body.put("snapshot", snapshot);
+            });
             return body;
         }
         boolean writable = !location.shared() && humanEditable(run) && access.canOperateRun(principal, run);
@@ -156,6 +165,31 @@ public class RunWorkspaceController {
             body.put("warning", String.join("；", warnings));
         }
         return body;
+    }
+
+    @Operation(summary = "Download the snapshot of a released workspace (zip, sensitive files left out)")
+    @GetMapping("/snapshot")
+    void snapshot(@PathVariable String runId, Principal principal, jakarta.servlet.http.HttpServletResponse response)
+            throws java.io.IOException {
+        Run run = readable(runId, principal);
+        if (engine.snapshotInfo(run.workspaceOwnerId()).isEmpty()) {
+            throw new io.github.loopforge4j.server.web.ApiException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "该运行没有工作区快照");
+        }
+        response.setContentType("application/zip");
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader(
+                "Content-Disposition",
+                org.springframework.http.ContentDisposition.attachment()
+                        .filename("workspace-" + runId.replaceAll("[^A-Za-z0-9_-]", "_") + ".zip")
+                        .build()
+                        .toString());
+        engine.readSnapshot(runId, in -> {
+            // the same paths the workspace page never shows (keys, .env, .npmrc, ...)
+            io.github.loopforge4j.core.runtime.WorkspaceSnapshot.filter(
+                    in, response.getOutputStream(), WorkspaceFiles::sensitive);
+            return Boolean.TRUE;
+        });
     }
 
     @Operation(summary = "Files and directories under a path (sensitive paths and dependency folders are hidden)")

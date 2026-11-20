@@ -156,6 +156,9 @@ public record LoopForgeProperties(
      *     move between hosts
      * @param maxActiveRuns running top-level runs in the deployment before new ones queue (0: no limit)
      * @param maxActiveRunsPerProject the same per project
+     * @param snapshots save a snapshot of a finished workspace before it is released and restore it
+     *     when the run is replayed; a workspace whose snapshot cannot be saved is kept
+     * @param snapshotMaxSize largest compressed snapshot
      */
     public record Engine(
             @NotBlank @DefaultValue("claude") String defaultExecutor,
@@ -168,7 +171,9 @@ public record LoopForgeProperties(
             String workspaceHost,
             @DefaultValue("false") boolean sharedWorkspaces,
             @DefaultValue("0") int maxActiveRuns,
-            @DefaultValue("0") int maxActiveRunsPerProject) {}
+            @DefaultValue("0") int maxActiveRunsPerProject,
+            @DefaultValue("true") boolean snapshots,
+            @NotNull @DefaultValue("100MB") org.springframework.util.unit.DataSize snapshotMaxSize) {}
 
     /**
      * @param passthroughEnv host variables forwarded to processes; never list secrets here

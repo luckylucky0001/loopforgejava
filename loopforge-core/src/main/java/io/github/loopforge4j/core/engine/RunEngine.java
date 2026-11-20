@@ -89,6 +89,8 @@ public final class RunEngine implements AutoCloseable {
     private final GitCredentialProvider gitCredentials;
     private final java.util.function.Function<String, Optional<SandboxProvider>> sandboxProfiles;
     private final io.github.loopforge4j.core.store.PreviewStore previews;
+    private final io.github.loopforge4j.core.store.WorkspaceSnapshotStore snapshots;
+    private final io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits snapshotLimits;
     private final io.github.loopforge4j.core.preview.PreviewArchive.Limits previewLimits;
     private final LeaseKeeper leases;
     private final AdmissionPolicy admission;
@@ -117,6 +119,8 @@ public final class RunEngine implements AutoCloseable {
         this.gitCredentials = builder.gitCredentials == null ? GitCredentialProvider.NONE : builder.gitCredentials;
         this.sandboxProfiles = builder.sandboxProfiles;
         this.previews = builder.previews;
+        this.snapshots = builder.snapshots;
+        this.snapshotLimits = builder.snapshotLimits;
         this.previewLimits = builder.previewLimits;
         this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
         this.platformMcp =
@@ -185,6 +189,7 @@ public final class RunEngine implements AutoCloseable {
                         }
                     });
                 }
+                snapshots.delete(id);
                 if (runs.delete(id)) {
                     deleted++;
                 }
@@ -547,6 +552,7 @@ public final class RunEngine implements AutoCloseable {
         // children first: a child never outlives its parent
         for (int i = family.size() - 1; i >= 0; i--) {
             telemetry.discard(family.get(i).id());
+            snapshots.delete(family.get(i).id());
             runs.delete(family.get(i).id());
         }
     }
@@ -1651,6 +1657,10 @@ public final class RunEngine implements AutoCloseable {
             // a child SOP still works in the shared checkout; the last one to settle releases it
             return;
         }
+        if (!snapshot(owner)) {
+            // work that could not be saved is never deleted (upstream checkpoint rule)
+            return;
+        }
         sandboxProvider(owner.workflow().sandboxProfileId()).ifPresent(provider -> {
             try {
                 provider.release(ownerId);
@@ -1663,6 +1673,84 @@ public final class RunEngine implements AutoCloseable {
                 log.warn("failed to release workspace of run {}: {}", ownerId, e.toString());
             }
         });
+    }
+
+    /**
+     * Saves the snapshot of a workspace about to be released.
+     *
+     * @return whether the workspace may be released (saved, or nothing to save)
+     */
+    private boolean snapshot(Run owner) {
+        if (!snapshots.enabled() || owner.workspaceRoot() == null || foreignWorkspace(owner)) {
+            return true;
+        }
+        java.nio.file.Path root = java.nio.file.Path.of(owner.workspaceRoot());
+        java.nio.file.Path archive = null;
+        try {
+            if (!io.github.loopforge4j.core.runtime.WorkspaceSnapshot.hasContent(root)) {
+                return true;
+            }
+            archive = java.nio.file.Files.createTempFile("loopforge-snapshot-", ".zip");
+            io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Summary summary;
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (java.io.OutputStream out =
+                    new java.security.DigestOutputStream(java.nio.file.Files.newOutputStream(archive), digest)) {
+                summary = io.github.loopforge4j.core.runtime.WorkspaceSnapshot.create(root, out, snapshotLimits);
+            }
+            snapshots.save(
+                    owner.id(),
+                    archive,
+                    summary.files(),
+                    summary.bytes(),
+                    java.util.HexFormat.of().formatHex(digest.digest()));
+            emit(
+                    owner.id(),
+                    null,
+                    new Telemetry(
+                            "sandbox",
+                            "workspace.snapshot.saved",
+                            "finish",
+                            "info",
+                            "工作区快照已保存（" + summary.files() + " 个条目）",
+                            null,
+                            null,
+                            null,
+                            Map.of(
+                                    "files",
+                                    summary.files(),
+                                    "bytes",
+                                    summary.bytes(),
+                                    "archiveBytes",
+                                    java.nio.file.Files.size(archive))));
+            return true;
+        } catch (IOException | java.security.GeneralSecurityException | RuntimeException e) {
+            log.warn("run {}: workspace snapshot failed: {}", owner.id(), e.toString());
+            emit(
+                    owner.id(),
+                    null,
+                    Telemetry.of("sandbox", "workspace.snapshot.failed", "finish", "工作区快照保存失败，工作区保留：" + e.getMessage())
+                            .withLevel("warn"));
+            return false;
+        } finally {
+            if (archive != null) {
+                try {
+                    java.nio.file.Files.deleteIfExists(archive);
+                } catch (IOException e) {
+                    log.debug("cannot delete snapshot temp file {}", archive);
+                }
+            }
+        }
+    }
+
+    /** The snapshot of a released workspace, if one was saved (workspace page, download). */
+    public Optional<io.github.loopforge4j.core.store.WorkspaceSnapshotStore.Info> snapshotInfo(String runId) {
+        return snapshots.info(runId);
+    }
+
+    /** Hands the snapshot of {@code runId}'s workspace owner to {@code reader}. */
+    public <T> Optional<T> readSnapshot(
+            String runId, io.github.loopforge4j.core.store.WorkspaceSnapshotStore.Reader<T> reader) throws IOException {
+        return snapshots.read(require(runId).workspaceOwnerId(), reader);
     }
 
     private boolean hasLiveDescendant(String runId) {
@@ -1714,6 +1802,37 @@ public final class RunEngine implements AutoCloseable {
         return builtIn.isPresent() ? builtIn : sandboxProfiles.apply(profileId);
     }
 
+    /** Puts the saved snapshot back into a fresh workspace of a released run. */
+    private boolean restoreSnapshot(Run run, Sandbox sandbox) {
+        try {
+            if (io.github.loopforge4j.core.runtime.WorkspaceSnapshot.hasContent(sandbox.workspace())) {
+                return true;
+            }
+            Optional<io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Summary> summary = snapshots.read(
+                    run.workspaceOwnerId(),
+                    in -> io.github.loopforge4j.core.runtime.WorkspaceSnapshot.restore(
+                            in, sandbox.workspace(), snapshotLimits));
+            summary.ifPresent(s -> emit(
+                    run.id(),
+                    null,
+                    Telemetry.of(
+                            "sandbox", "workspace.snapshot.restored", "start", "已从快照恢复工作区（" + s.files() + " 个条目）")));
+            return summary.isPresent();
+        } catch (IOException | RuntimeException e) {
+            log.warn("run {}: workspace snapshot restore failed: {}", run.id(), e.toString());
+            emit(
+                    run.id(),
+                    null,
+                    Telemetry.of(
+                                    "sandbox",
+                                    "workspace.snapshot.restore_failed",
+                                    "start",
+                                    "工作区快照恢复失败，使用新的工作区：" + e.getMessage())
+                            .withLevel("warn"));
+            return false;
+        }
+    }
+
     /** Sandbox of the run's workspace; records the workspace root on first use. */
     Sandbox sandbox(Run run) throws IOException, NodeFailure {
         SandboxProvider provider = sandboxProvider(run.workflow().sandboxProfileId())
@@ -1722,10 +1841,16 @@ public final class RunEngine implements AutoCloseable {
                         "sandbox profile '" + run.workflow().sandboxProfileId() + "' is not available"));
         Sandbox sandbox = provider.acquire(run.workspaceOwnerId());
         if (run.workspaceRoot() == null || run.workspaceReleased() || run.workspaceHost() == null) {
+            boolean restored = run.workspaceReleased() && restoreSnapshot(run, sandbox);
+            boolean reprepare = run.workspaceReleased() && !restored;
             mutateQuietly(run.id(), c -> {
                 c.run().workspaceRoot(sandbox.workspace().toString());
                 c.run().workspaceReleased(false);
                 c.run().workspaceHost(settings.workspaceHost());
+                if (reprepare) {
+                    // the checkouts went with the released workspace
+                    c.run().repositoriesPrepared(false);
+                }
                 return true;
             });
             emit(
@@ -2209,6 +2334,23 @@ public final class RunEngine implements AutoCloseable {
 
         private io.github.loopforge4j.core.preview.PreviewArchive.Limits previewLimits =
                 io.github.loopforge4j.core.preview.PreviewArchive.Limits.DEFAULT;
+
+        private io.github.loopforge4j.core.store.WorkspaceSnapshotStore snapshots =
+                io.github.loopforge4j.core.store.WorkspaceSnapshotStore.NONE;
+
+        private io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits snapshotLimits =
+                io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits.DEFAULT;
+
+        /** Where finished workspaces are snapshotted before they are released (none by default). */
+        public Builder snapshots(io.github.loopforge4j.core.store.WorkspaceSnapshotStore value) {
+            this.snapshots = value;
+            return this;
+        }
+
+        public Builder snapshotLimits(io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits value) {
+            this.snapshotLimits = value;
+            return this;
+        }
 
         public Builder previewLimits(io.github.loopforge4j.core.preview.PreviewArchive.Limits value) {
             this.previewLimits = value;

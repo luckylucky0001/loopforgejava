@@ -145,6 +145,8 @@ loopforge:
 
 运行页的「工作区」打开这次运行的工作区（子 SOP 显示父运行的工作区）：未提交的变更、文件树、文件内容（可看 HEAD 或某个提交时的版本）、与 HEAD 的差异、最近 50 个提交及其改动的文件、全文搜索。开发者及以上可以直接编辑文本文件（1 MB 以内），保存时带上读取时的 SHA-256，文件在此期间被 Agent 或他人改过就会被拒绝；每次修改都记入运行事件。`.git`、`.loopforge`、SSH / GPG 密钥、`.netrc`、`.npmrc` 与 `.env` 不会显示，`node_modules` 等依赖目录不进文件树。
 
+成功或取消的运行释放工作区之前先保存一份快照（`loopforge.engine.snapshots`，默认开启；压缩后上限 `snapshot-max-size`，默认 100 MB）：不跟随符号链接读取，保留可执行位与符号链接，不含控制目录 `.loopforge` 与 `node_modules`、`.cache`、`__pycache__`。快照保存失败时工作区保留不删除。之后从某个节点重跑时，新的工作区先从快照恢复（没有快照则重新检出仓库）；工作区页面显示快照信息并可下载（不含敏感文件）。快照随运行删除；执行机器上的运行不保存快照。
+
 工作区可能由隔离沙箱里的 Agent 写入，所以仓库的 Git 配置里有会启动程序或指向工作区外的项（fsmonitor、hooks、filter、textconv、diff 驱动、pager、include、worktree 等）时，服务器不在该仓库运行 Git，只提供普通文件浏览。已回收、在执行机器或其他实例上的工作区会说明原因。
 
 ### 需求多泳道
@@ -364,6 +366,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/POST/DELETE` | `/api/v1/mcp-market[/install]`、`/api/v1/projects/{id}/mcp-servers[/{sid}]`、`/api/v1/me/mcp-servers[/{sid}]` | MCP 市场与安装到项目、项目 MCP、个人 MCP |
 | `GET/PUT` | `/api/v1/business-domains`、`/api/v1/projects/{id}/business-domain[/history]` | 业务域（`createOnly`、乐观并发）、项目归属与历史 |
 | `GET` | `/api/v1/business-domain-report?businessDomainId=&from=&to=&grain=&timeZone=` | 业务域报表：运行汇总与趋势、按业务域 / 项目、交付指标与趋势 |
+| `GET` | `/api/v1/runs/{id}/workspace/snapshot` | 下载已释放工作区的快照（zip，不含敏感文件） |
 | `GET/PUT` | `/api/v1/runs/{id}/workspace[/tree\|/file\|/diff\|/log\|/commit\|/search]` | 运行工作区：变更、文件树、文件（可带 `ref`）、差异、提交、搜索；`PUT /file` 带 `expectedSha256` 写入 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run\|/executions]]` | 定时任务（`kind`：`sop` / `assistant` / `dispatch`）与执行记录（结果、启动的运行、AI 回复与对话） |
 | `GET/POST/PUT/DELETE` | `/api/v1/notifications[/{id}]` | Webhook 通知 |

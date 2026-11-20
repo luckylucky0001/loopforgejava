@@ -70,6 +70,8 @@ SOP 的前端预览约定（`WorkflowDefinition.preview`，随运行快照冻结
 
 `executionScope=repositories` 的脚本和命令门禁在每个仓库目录各执行一次并注入 `LOOPFORGE_REPOSITORY_*`、`LOOPFORGE_WORK_BRANCH` 等变量。`mode=mr` 门禁对每个推送了新提交的可写仓库调用 `DeliveryProvider`，要求存在从工作分支到基线、覆盖最新推送提交的 PR；平台不可查询时转人工确认。找到的 PR 记录在运行的 `deliveries` 中，成功的运行由定时任务刷新合并状态。
 
+工作区快照：`releaseWorkspaceIfIdle` 在删除成功或取消运行的工作区之前用 `WorkspaceSnapshot.create` 打包（`SecureDirectoryStream` 不跟随链接遍历，排除 `.loopforge` 与依赖缓存，压缩后与展开后都有上限），存入 `WorkspaceSnapshotStore`（服务端为 `run_workspace_snapshots`，流式读写）；保存失败则不释放。已释放的运行再次获取沙箱时，`sandbox(run)` 先把快照恢复进新的工作区（拒绝越界、控制目录和经过链接的条目），没有快照时把仓库标记为待检出。
+
 ## 多实例
 
 每个 RUNNING 运行最多有一个调度器：`ensureScheduler` 在一次存储更新里检查租约（`ownerInstanceId`、`leaseUntil`）、递增 generation 并写入自己的租约，乐观并发保证两个实例不会同时声明成功。`LeaseKeeper` 每 TTL/3 心跳实例注册表并续约本实例的所有运行；续约时发现 owner 或 generation 已变（被接管），本地调度器放弃运行并终止节点进程——generation 栅栏本来就拒绝它的迟到写入，这一步避免两个实例在同一工作区里各跑一个 CLI。
