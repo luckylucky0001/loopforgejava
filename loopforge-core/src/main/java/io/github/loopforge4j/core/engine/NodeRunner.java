@@ -609,9 +609,8 @@ final class NodeRunner {
                     sandbox.workspace(), run, node, engine.runs().artifacts(runId));
             String gatePath = GateResults.path(node.id(), attempt);
             EventSink sink = sessionRecordingSink(engine.sink(runId, node.id()), runId, generation, attempt, node.id());
-            if (agent.platformMcp() || agent.knowledgeBase()) {
-                assets = bindPlatformMcp(run, node, agent, assets, sink);
-            }
+            // the platform also serves the agent browser, whatever the role asks for
+            assets = bindPlatformMcp(run, node, agent, assets, sink);
             AgentCall call = new AgentCall(
                     runId,
                     generation,

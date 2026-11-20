@@ -20,6 +20,10 @@ final class RemoteServices {
     /** Platform and knowledge MCP servers, addressed at the server URL the machine uses. */
     static PlatformMcp platformMcp(RunnerClient client) {
         return invocation -> {
+            // the agent browser runs on the server, beside its own agents only: nothing else to ask for
+            if (!invocation.platform() && !invocation.knowledge()) {
+                return PlatformMcp.Binding.EMPTY;
+            }
             try {
                 JsonNode reply = client.post(
                         "/runs/" + RemoteRunStore.encode(invocation.runId()) + "/platform-mcp",

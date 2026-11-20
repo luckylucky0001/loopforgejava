@@ -18,6 +18,8 @@ public interface PlatformMcp {
 
     /** Read-only, project-scoped team knowledge base. */
     String KNOWLEDGE_ID = "loopforge-knowledge";
+    /** The agent browser the server runs beside its own agents. */
+    String BROWSER_ID = "loopforge-browser";
 
     /** Bindings without a provider: nothing is injected and the run says why. */
     PlatformMcp NONE = invocation -> {
@@ -32,7 +34,10 @@ public interface PlatformMcp {
     };
 
     static boolean reserved(String id) {
-        return PLATFORM_ID.equals(id) || KNOWLEDGE_ID.equals(id) || GateMcpServer.SERVER_ID.equals(id);
+        return PLATFORM_ID.equals(id)
+                || KNOWLEDGE_ID.equals(id)
+                || BROWSER_ID.equals(id)
+                || GateMcpServer.SERVER_ID.equals(id);
     }
 
     /**

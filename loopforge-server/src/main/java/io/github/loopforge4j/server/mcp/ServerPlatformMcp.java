@@ -21,6 +21,7 @@ import org.springframework.stereotype.Component;
 public class ServerPlatformMcp implements PlatformMcp {
 
     private final RunTokens tokens;
+    private final io.github.loopforge4j.server.browser.AgentBrowsers browsers;
     private final KnowledgeService knowledge;
     private final InternalApi api;
     private final boolean platformEnabled;
@@ -30,8 +31,13 @@ public class ServerPlatformMcp implements PlatformMcp {
     private final java.util.Set<String> hostNetworkProfiles;
 
     public ServerPlatformMcp(
-            RunTokens tokens, KnowledgeService knowledge, InternalApi api, LoopForgeProperties properties) {
+            RunTokens tokens,
+            KnowledgeService knowledge,
+            InternalApi api,
+            LoopForgeProperties properties,
+            io.github.loopforge4j.server.browser.AgentBrowsers browsers) {
         this.tokens = tokens;
+        this.browsers = browsers;
         this.knowledge = knowledge;
         this.api = api;
         this.platformEnabled = properties.mcp().platformEnabled();
@@ -46,7 +52,37 @@ public class ServerPlatformMcp implements PlatformMcp {
 
     @Override
     public Binding bind(Invocation invocation) {
-        return bindAt(invocation, baseFor(invocation.sandboxProfileId()));
+        Binding binding = bindAt(invocation, baseFor(invocation.sandboxProfileId()));
+        // the browser runs on this server: only for agents here that share its network
+        if (invocation.runId() == null || !browserFor(invocation.sandboxProfileId())) {
+            return binding;
+        }
+        List<McpServerDefinition> servers = new ArrayList<>(binding.servers());
+        List<RuleDefinition> rules = new ArrayList<>(binding.rules());
+        servers.add(browserServer(
+                baseFor(invocation.sandboxProfileId()),
+                tokens.issue(
+                        RunTokens.Kind.BROWSER,
+                        invocation.runId(),
+                        invocation.projectId(),
+                        invocation.nodeId(),
+                        invocation.agentId(),
+                        ttl)));
+        rules.add(io.github.loopforge4j.server.browser.BrowserMcpController.usageRule());
+        return new Binding(servers, rules, binding.warnings());
+    }
+
+    private boolean browserFor(String profile) {
+        return browsers.offered() && hostNetworkProfiles.contains(profile) && baseFor(profile) != null;
+    }
+
+    private McpServerDefinition browserServer(String base, String token) {
+        return server(
+                io.github.loopforge4j.server.browser.BrowserMcpController.SERVER_ID,
+                "Agent 浏览器",
+                "真实的 Chromium：打开网页与本机开发服务器，读取快照、点击、输入、截图",
+                base + io.github.loopforge4j.server.browser.BrowserMcpController.PATH,
+                token);
     }
 
     /**
@@ -134,7 +170,17 @@ public class ServerPlatformMcp implements PlatformMcp {
                     tokens.issue(RunTokens.Kind.KNOWLEDGE, run, projectId, turnId, "main-bot", ttl)));
             rules.add(KnowledgeService.usageRule());
         }
+        if (browserFor(sandboxProfileId)) {
+            servers.add(browserServer(
+                    base, tokens.issue(RunTokens.Kind.BROWSER, run, projectId, turnId, "main-bot", userId, ttl)));
+            rules.add(io.github.loopforge4j.server.browser.BrowserMcpController.usageRule());
+        }
         return new Binding(servers, rules, warnings);
+    }
+
+    /** Processes of {@code profile} share this server's network (and so may use its browser). */
+    public boolean sharesHostNetwork(String profile) {
+        return hostNetworkProfiles.contains(profile);
     }
 
     /** The configured sandbox-facing URL, else loopback for agents that share the host network. */

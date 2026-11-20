@@ -122,6 +122,20 @@ loopforge:
 
 配置了单独的预览源时，服务器需要能访问 `loopforge.preview.public-url`。Docker 镜像不带浏览器，需要截图时在镜像里自行安装。
 
+### Agent 浏览器
+
+运行和对话各有一个服务器上的 Chromium，Agent 用浏览器 MCP（`loopforge-browser`）操作它：`browser_navigate` 打开网页、localhost 上的开发服务器或工作区里的 HTML 文件，`browser_snapshot` 读取可见文本与带 ref（如 `e12`）的可交互元素，`browser_click` / `browser_type` / `browser_press` 操作，`browser_screenshot` 截图，`browser_tabs` 管理标签页。浏览器在第一次使用时启动，闲置 15 分钟关闭。
+
+运行页和对话页的「Agent 浏览器」面板显示实时画面，能输入网址、前进后退、切换标签页；在画面上点击、滚动、输入或粘贴就直接接管。运行的浏览器由能操作运行的人使用，对话的由对话参与者使用。
+
+浏览器跑在服务器上，所以只提供给共享主机网络的沙箱（`local`、共享网络的 `bwrap`）和这类沙箱里的对话；隔离沙箱和执行机器上的 Agent 不注入。云厂商元数据地址一律拦截，`file://` 只能打开本工作区里的文件。浏览器令牌只对本运行（结束即失效）或本轮对话有效，不能调用其他 API。
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `loopforge.browser.agents` | `true` | 是否给 Agent 与对话提供浏览器 |
+| `loopforge.browser.max-sessions` | `4` | 单实例同时打开的浏览器数 |
+| `loopforge.browser.idle-timeout` | `15m` | 闲置多久关闭 |
+
 ### MCP 市场与项目 / 个人 MCP
 
 「规则 / Skills / MCP → MCP 服务器」的「MCP 市场」列出可添加的远程 MCP（目前是 GitHub 官方 MCP）。项目维护者把条目添加到项目后，角色的 MCP 列表写市场 id（如 `github`）即可：每个运行用自己项目的那一份，没有安装的项目里自动略过。GitHub MCP 使用运行负责人在「设置」里配置的 GitHub Token（没有时用平台的），只发送给官方 HTTPS 端点；对话只使用发言人自己的 Token。
@@ -394,6 +408,8 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/sandboxes[/{id}]`、`/environments[/{id}]`、`/dockerfiles[/{id}]` | 沙箱配置（含是否可用、是否隔离）、环境与 Dockerfile（写入需要管理员） |
 | `GET/POST` | `/api/v1/skillhub/skills[/{slug}[/versions\|/files\|/file]]`、`/categories`、`/install`、`/update`、`/installed` | SkillHub 技能市场：搜索、详情、文件预览、安装与更新（管理员） |
 | `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
+| `POST/DELETE` | `/api/v1/runs/{id}/browser`、`/api/v1/assistant/sessions/{id}/browser` | Agent 浏览器：状态、打开网址、前进后退、快照、截图、按 ref 点击 / 输入 / 按键、标签页、控制台输入事件；关闭 |
+| `POST` | `/api/v1/browser/mcp` | 浏览器 MCP（Agent 的浏览器令牌） |
 | `GET/POST/PUT/DELETE` | `/api/v1/runs/{id}/preview[/session[/{sid}]\|/backend\|/download\|/screenshot]`、`/preview/{令牌}/**` | 前端预览：状态、会话链接（可带后端地址、可撤销）、默认后端地址、zip 下载、截图（PNG，`POST` 重新截图）、删除；免登录的隔离访问 |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |

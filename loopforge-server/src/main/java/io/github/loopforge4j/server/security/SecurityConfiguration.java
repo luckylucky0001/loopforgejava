@@ -77,6 +77,11 @@ class SecurityConfiguration {
                                     org.springframework.http.HttpMethod.POST,
                                     io.github.loopforge4j.server.knowledge.KnowledgeProxyController.PATH)
                             .permitAll();
+                    // the agent browser's MCP verifies its own browser tokens likewise
+                    auth.requestMatchers(
+                                    org.springframework.http.HttpMethod.POST,
+                                    io.github.loopforge4j.server.browser.BrowserMcpController.PATH)
+                            .permitAll();
                     // preview links carry their own signed, expiring grant (a browser tab has no bearer token)
                     auth.requestMatchers(
                                     org.springframework.http.HttpMethod.GET,

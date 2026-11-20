@@ -575,6 +575,12 @@ public class AssistantService {
         return new AssistantMessage(0, id, "error", "LoopForge 助手", text, null, 0, 0, snapshot(activity), null);
     }
 
+    /** A conversation the caller (a person, not an agent) takes part in. */
+    public AssistantSession participant(String id, Principal principal) {
+        human(principal);
+        return readable(id, principal);
+    }
+
     private AssistantSession readable(String id, Principal principal) {
         AssistantSession session = store.find(id).orElseThrow(() -> new RunNotFoundException("conversation not found"));
         CurrentUser user = human(principal);

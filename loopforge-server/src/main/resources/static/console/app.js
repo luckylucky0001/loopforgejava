@@ -596,6 +596,7 @@ async function runPage(runId) {
         artifacts.map((a) => h('tr', {}, h('td', {}, `${a.nodeId}#${a.attempt}`), h('td', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); showArtifact(runId, a); } }, a.name)),
           h('td', { class: 'mono' }, a.path), h('td', {}, a.size))))) : null,
       run.workflowSnapshot?.preview?.enabled || (run.workflowSnapshot?.nodes || []).some((n) => n.type === 'preview') ? previewPanel(run) : null,
+      browserPanel(`/runs/${encodeURIComponent(runId)}/browser`),
       active ? null : evalPanel(runId),
       h('h2', {}, '事件'), log,
     ]);
@@ -1788,6 +1789,7 @@ async function chatPage(id) {
       current.requirementId && current.projectId ? h('a', { class: 'chip', href: `#/projects/${encodeURIComponent(current.projectId)}`, title: '对话里开的 PR 会登记到这个需求' }, '已关联需求') : null,
       h('button', { class: 'danger', onclick: remove }, '删除')),
     feed, live, queueBox,
+    browserPanel(`/assistant/sessions/${encodeURIComponent(current.id)}/browser`),
     h('div', { class: 'panel mt' }, input, h('div', { class: 'row mt' },
       h('label', { class: 'muted', title: '回复进行中时发送：打断当前回复并先处理这条（否则排队等待）' }, steer, ' 发送时打断当前回复'),
       h('span', { class: 'spacer' }), stopButton, sendButton))))]);
@@ -1867,6 +1869,87 @@ function previewShot(base, p, reload) {
     })
     .catch(() => box.replaceChildren(h('span', { class: 'muted' }, '截图暂不可用'), retake));
   return box;
+}
+
+/**
+ * The agent browser of a run or conversation (upstream task-panel browser): the frame the agent
+ * sees, refreshed while open, taken over with the mouse and keyboard.
+ */
+function browserPanel(base) {
+  const page = location.hash;
+  const frame = h('img', { class: 'browser-frame', alt: '浏览器画面', draggable: false, tabindex: 0, title: '点击、滚动或聚焦后直接输入，即可接管浏览器' });
+  const address = h('input', { class: 'mono grow', placeholder: '网址或关键词（localhost:端口 打开开发服务器）' });
+  const tabs = h('select', { title: '标签页' });
+  const note = h('div', { class: 'muted' });
+  const nav = (label, title, operation) => h('button', { title, onclick: () => refresh({ operation }) }, label);
+  const back = nav('←', '后退', 'back');
+  const forward = nav('→', '前进', 'forward');
+  const reload = nav('⟳', '刷新', 'reload');
+  const start = h('button', { class: 'primary', onclick: () => refresh({ operation: 'status', ensure: true }) }, '启动浏览器');
+  const close = h('button', { class: 'danger', onclick: () => attempt(() => api(base, { method: 'DELETE' }), show) }, '关闭浏览器');
+  const toolbar = h('div', { class: 'row' }, back, forward, reload, address, tabs,
+    h('button', { title: '新标签页', onclick: () => refresh({ operation: 'newTab' }) }, '＋'), close);
+  const stage = h('div', { class: 'browser-stage' }, frame);
+  const body = h('div', {}, note);
+  const panel = h('details', { class: 'panel' }, h('summary', {}, 'Agent 浏览器'), body);
+  let state = null;
+  let busy = false;
+  let timer = null;
+  const show = (s) => {
+    state = s;
+    if (!s?.available) {
+      body.replaceChildren(h('p', { class: 'muted' }, s?.reason || 'Agent 浏览器未启动'), /尚未启动|已关闭/.test(s?.reason || '') ? start : '');
+      return;
+    }
+    if (!body.contains(stage)) body.replaceChildren(toolbar, stage, note);
+    if (s.frame) frame.src = `data:image/jpeg;base64,${s.frame}`;
+    if (document.activeElement !== address) address.value = s.url || '';
+    back.disabled = !s.canGoBack;
+    forward.disabled = !s.canGoForward;
+    tabs.replaceChildren(...(s.tabs || []).map((t) => h('option', { value: t.id, selected: t.active }, (t.title || t.url || '新标签页').slice(0, 40))));
+    note.textContent = [s.error ? `操作失败：${s.error}` : '', (s.blocked || []).length ? `已拦截：${s.blocked.slice(-3).join('、')}` : ''].filter(Boolean).join(' · ');
+  };
+  const refresh = async (request = { operation: 'status' }) => {
+    busy = true;
+    try { show(await api(base, { method: 'POST', body: { withFrame: true, ...request } })); } catch (error) { note.textContent = error.message; } finally { busy = false; }
+  };
+  const loop = () => {
+    clearTimeout(timer);
+    if (location.hash !== page || !panel.isConnected) return;
+    if (panel.open && document.visibilityState === 'visible' && state?.available && !busy) refresh();
+    timer = setTimeout(loop, 1000);
+  };
+  panel.addEventListener('toggle', () => { if (panel.open) { refresh(); loop(); } });
+  address.addEventListener('keydown', (e) => { if (e.key === 'Enter' && address.value.trim()) { refresh({ operation: 'navigate', url: address.value.trim() }); frame.focus(); } });
+  tabs.addEventListener('change', () => refresh({ operation: 'activate', targetId: tabs.value }));
+  const point = (e) => ({ x: e.offsetX / Math.max(1, frame.clientWidth), y: e.offsetY / Math.max(1, frame.clientHeight) });
+  const input = (events) => refresh({ operation: 'input', events });
+  frame.addEventListener('click', (e) => {
+    frame.focus();
+    const p = point(e);
+    input([{ type: 'mouse', action: 'move', ...p }, { type: 'mouse', action: 'down', ...p, button: 'left', buttons: 1, clickCount: 1 },
+      { type: 'mouse', action: 'up', ...p, button: 'left', clickCount: 1 }]);
+  });
+  let wheel = null;
+  frame.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const p = point(e);
+    if (wheel) { wheel.deltaX += e.deltaX; wheel.deltaY += e.deltaY; return; }
+    wheel = { type: 'wheel', ...p, deltaX: e.deltaX, deltaY: e.deltaY };
+    setTimeout(() => { const ev = wheel; wheel = null; input([ev]); }, 120);
+  }, { passive: false });
+  // keys typed on the focused frame go to the page in small batches
+  let keys = [];
+  frame.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey) return;
+    e.preventDefault();
+    const text = e.key === 'Enter' ? '\r' : e.key.length === 1 ? e.key : undefined;
+    const key = { type: 'key', key: e.key, code: e.code, keyCode: e.keyCode, modifiers: (e.altKey ? 1 : 0) | (e.shiftKey ? 8 : 0) };
+    keys.push({ ...key, action: 'down', text }, { ...key, action: 'up' });
+    if (keys.length === 2) setTimeout(() => { const batch = keys; keys = []; input(batch); }, 60);
+  });
+  frame.addEventListener('paste', (e) => { const text = e.clipboardData?.getData('text'); if (text) input([{ type: 'text', text }]); });
+  return panel;
 }
 
 async function downloadBinary(path, filename) {

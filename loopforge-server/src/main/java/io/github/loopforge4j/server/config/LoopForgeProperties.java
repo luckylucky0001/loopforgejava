@@ -3,6 +3,7 @@ package io.github.loopforge4j.server.config;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -52,12 +53,18 @@ public record LoopForgeProperties(
      * @param binary the browser; found on the usual paths (and {@code CHROME_BIN}) when empty
      * @param noSandbox start it without its own sandbox; by default only when the server runs as root
      * @param timeout limit for starting the browser and for each step
+     * @param agents give agents and conversations their own browser (upstream agent browser)
+     * @param maxSessions agent browsers open at once on this instance
+     * @param idleTimeout an agent browser nobody used for this long is closed
      */
     public record Browser(
             @DefaultValue("true") boolean enabled,
             Path binary,
             Boolean noSandbox,
-            @NotNull @DefaultValue("30s") Duration timeout) {
+            @NotNull @DefaultValue("30s") Duration timeout,
+            @DefaultValue("true") boolean agents,
+            @Positive @DefaultValue("4") int maxSessions,
+            @NotNull @DefaultValue("15m") Duration idleTimeout) {
 
         /** The browser to use, if any. */
         public java.util.Optional<io.github.loopforge4j.core.runtime.browser.CdpBrowser.Options> options() {

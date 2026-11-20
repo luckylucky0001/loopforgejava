@@ -36,7 +36,9 @@ public class RunTokens {
         PLATFORM,
         KNOWLEDGE,
         /** The conversation assistant acting for the person speaking (never with administrator rights). */
-        CONVERSATION
+        CONVERSATION,
+        /** The agent browser of the run or conversation; never authenticates API calls. */
+        BROWSER
     }
 
     /** Conversation tokens name {@code conv:<session id>} instead of a run. */
@@ -114,7 +116,9 @@ public class RunTokens {
         }
         if (claims.runId().startsWith(CONVERSATION_PREFIX)) {
             // a conversation token lives as long as the turn it was issued for
-            return (claims.kind() == Kind.CONVERSATION || claims.kind() == Kind.KNOWLEDGE)
+            return (claims.kind() == Kind.CONVERSATION
+                                    || claims.kind() == Kind.KNOWLEDGE
+                                    || claims.kind() == Kind.BROWSER)
                             && generating(claims.runId().substring(CONVERSATION_PREFIX.length()), claims.nodeId())
                     ? Optional.of(claims)
                     : Optional.empty();

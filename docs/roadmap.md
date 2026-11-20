@@ -214,7 +214,14 @@
 - [x] 内置 Chrome DevTools 协议客户端（`core.runtime.browser`）：启动本机 Chromium / Chrome（自动查找或 `loopforge.browser.binary`）、页面导航、脚本求值、截图；所有请求先经允许列表，其余直接拦截
 - [x] 预览设置 `screenshot`（约定为 `captureScreenshot`）：站点归档后服务器用自己的一次性预览会话打开入口页并截图（1280×800），只允许访问该会话的站点；截图存数据库，运行页显示，可重新截图
 
+## 迭代 33 — Agent 浏览器（已完成）
+
+- [x] 每个运行 / 对话工作区一个服务器上的 Chromium（`AgentBrowser`）：页面快照（可见文本 + 带 ref 的可交互元素）、按 ref 点击与输入、按键、截图、前进后退、多标签页（页面打开的新窗口自动切换过去）；闲置 15 分钟关闭，单实例最多 `max-sessions` 个
+- [x] 浏览器 MCP（`loopforge-browser`，`/api/v1/browser/mcp`）：`browser_navigate / snapshot / click / type / press / screenshot / tabs`，用只对本运行或本轮对话有效的浏览器令牌；注入共享主机网络的 Agent 与对话（隔离沙箱与执行机器上的 Agent 不注入）
+- [x] 请求策略：网页与 localhost 开发服务器可访问，云厂商元数据地址拦截，`file://` 只能打开本工作区里的文件（不跟随链接出工作区）
+- [x] 控制台「Agent 浏览器」面板（运行页与对话页）：实时画面、地址栏、前进后退、标签页，点击 / 滚动 / 键盘 / 粘贴直接接管
+
 ## 后续
 
-- 对话的浏览器工具；云端执行池的自动扩缩容
+- 云端执行池的自动扩缩容
 - 企业微信智能机器人（卡片内审批）

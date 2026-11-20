@@ -317,6 +317,12 @@ public final class CdpBrowser implements AutoCloseable {
         return timeout;
     }
 
+    /** The process runs and its DevTools connection is open. */
+    public boolean alive() {
+        WebSocket ws = socket;
+        return process.isAlive() && ws != null && !ws.isInputClosed() && !ws.isOutputClosed();
+    }
+
     private final class Listener implements WebSocket.Listener {
         private final StringBuilder partial = new StringBuilder();
 
