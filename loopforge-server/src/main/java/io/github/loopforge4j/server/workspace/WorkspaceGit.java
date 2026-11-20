@@ -1,61 +1,60 @@
 package io.github.loopforge4j.server.workspace;
 
-import java.io.ByteArrayOutputStream;
+import io.github.loopforge4j.core.engine.RunEngine;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Read-only Git views of a workspace repository (upstream status, diff, log and commit views).
  *
- * <p>The workspace belongs to agents that may run in an isolated sandbox, so the server never runs
- * Git in a repository whose configuration can start a program (fsmonitor, hooks, filters, textconv
- * and diff drivers, pagers, editors, credential helpers, includes) or point outside it (worktree,
- * common dir, alternates).
+ * <p>The repository was written by agents, so Git runs inside the run's own sandbox: whatever its
+ * configuration, attributes or submodules ask for stays within that sandbox. Signatures, hooks,
+ * fsmonitor, external diff, text conversion and submodules are switched off besides, and paths are
+ * literal (no pathspec magic).
  */
 final class WorkspaceGit {
 
     static final int LOG_LIMIT = 50;
-    static final Duration TIMEOUT = Duration.ofSeconds(5);
+    static final Duration TIMEOUT = Duration.ofSeconds(8);
+    static final int MAX_OUTPUT = WorkspaceFiles.FILE_LIMIT + 1;
 
-    private static final List<String> RISKY = List.of(
-            "fsmonitor",
-            "hookspath",
-            "[filter",
-            "textconv",
-            "external",
-            "command",
-            "askpass",
-            "helper",
-            "editor",
-            "pager",
-            "[include",
-            "sshcommand",
-            "gitproxy",
-            "[diff ",
-            "[merge ",
-            "worktree",
-            "attributesfile",
-            "excludesfile",
-            "[url ",
-            "insteadof");
+    private static final List<String> BASE = List.of(
+            "git",
+            "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.pager=cat",
+            "-c",
+            "diff.external=",
+            "-c",
+            "log.showSignature=false",
+            "-c",
+            "gpg.program=false",
+            "-c",
+            "gpg.ssh.program=false",
+            "-c",
+            "gpg.x509.program=false",
+            "-c",
+            "safe.directory=*");
+
+    private static final Map<String, String> ENV = Map.of(
+            "GIT_CONFIG_NOSYSTEM", "1",
+            "GIT_CONFIG_GLOBAL", "/dev/null",
+            "GIT_TERMINAL_PROMPT", "0",
+            "GIT_OPTIONAL_LOCKS", "0",
+            "GIT_LITERAL_PATHSPECS", "1");
 
     /** A Git result; {@code ok} is false when Git failed. */
-    record Output(boolean ok, byte[] stdout) {
-        String text() {
-            return new String(stdout, StandardCharsets.UTF_8);
-        }
-    }
+    record Output(boolean ok, String text) {}
 
     record Change(String path, String repository, String index, String worktree) {}
 
@@ -63,107 +62,61 @@ final class WorkspaceGit {
 
     record CommitFile(String path, String status) {}
 
-    private WorkspaceGit() {}
+    private final RunEngine engine;
+    private final String runId;
+    private final Path root;
 
-    /** Why Git is not run in this repository, or empty when it is safe to. */
-    static Optional<String> unsafe(Path repo) {
-        Path git = repo.resolve(".git");
-        if (!Files.isDirectory(git, LinkOption.NOFOLLOW_LINKS)) {
-            return Optional.of("不是 Git 仓库");
-        }
-        if (Files.exists(git.resolve("commondir"), LinkOption.NOFOLLOW_LINKS)
-                || Files.exists(git.resolve("objects/info/alternates"), LinkOption.NOFOLLOW_LINKS)) {
-            return Optional.of("Git 仓库引用了工作区外的数据，已跳过");
-        }
-        Path config = git.resolve("config");
-        if (Files.isSymbolicLink(config)) {
-            return Optional.of("Git 配置是链接，已跳过");
+    WorkspaceGit(RunEngine engine, String runId, Path root) {
+        this.engine = engine;
+        this.runId = runId;
+        this.root = root;
+    }
+
+    /** Why this directory is not shown as a repository (not one, or reached through a link). */
+    Optional<String> unsafe(String label) {
+        try {
+            WorkspaceFiles.requireDirectory(root, label);
+        } catch (WorkspaceFiles.WorkspaceException e) {
+            return Optional.of("仓库目录不可用：" + e.getMessage());
         }
         try {
-            if (Files.exists(config, LinkOption.NOFOLLOW_LINKS)) {
-                String text = Files.readString(config, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
-                for (String key : RISKY) {
-                    if (text.contains(key)) {
-                        return Optional.of(
-                                "Git 配置包含会执行程序或指向工作区外的项（" + key.replace("[", "").strip() + "），已跳过");
-                    }
-                }
-            }
-        } catch (IOException e) {
-            return Optional.of("Git 配置无法读取");
+            gitDirectory(label);
+        } catch (WorkspaceFiles.WorkspaceException e) {
+            return Optional.of(e.missing ? "不是 Git 仓库" : "Git 目录不可用：" + e.getMessage());
         }
         return Optional.empty();
     }
 
-    static Output run(Path repo, String... args) {
-        List<String> command = new ArrayList<>(List.of(
-                "git",
-                "--no-optional-locks",
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "core.hooksPath=/dev/null",
-                "-c",
-                "core.pager=cat",
-                "-c",
-                "diff.external=",
-                "-c",
-                "safe.directory=" + repo,
-                "-C",
-                repo.toString()));
-        command.addAll(List.of(args));
-        ProcessBuilder pb = new ProcessBuilder(command).redirectErrorStream(false);
-        Map<String, String> env = pb.environment();
-        env.keySet().removeIf(k -> k.startsWith("GIT_"));
-        env.put("GIT_CONFIG_NOSYSTEM", "1");
-        env.put("GIT_CONFIG_GLOBAL", "/dev/null");
-        env.put("GIT_TERMINAL_PROMPT", "0");
-        env.put("GIT_OPTIONAL_LOCKS", "0");
-        env.put("HOME", repo.toString());
-        Process process;
+    /** {@code .git} must be a real directory of the repository (no link, no gitdir file). */
+    private void gitDirectory(String label) {
+        String git = label.isEmpty() ? ".git" : label + "/.git";
+        WorkspaceFiles.io(() -> {
+            try (var base = io.github.loopforge4j.core.runtime.SafeFiles.openRoot(root)) {
+                var dir = io.github.loopforge4j.core.runtime.SafeFiles.openDirectory(base, List.of(git.split("/")));
+                io.github.loopforge4j.core.runtime.SafeFiles.closeQuietly(dir);
+            }
+            return null;
+        });
+    }
+
+    Output run(String label, String... args) {
+        List<String> argv = new ArrayList<>(BASE);
+        argv.addAll(List.of(args));
         try {
-            process = pb.redirectError(ProcessBuilder.Redirect.DISCARD).start();
-        } catch (IOException e) {
-            return new Output(false, new byte[0]);
-        }
-        try (InputStream out = process.getInputStream()) {
-            process.getOutputStream().close();
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            byte[] chunk = new byte[16 * 1024];
-            long deadline = System.nanoTime() + TIMEOUT.toNanos();
-            for (int n; (n = out.read(chunk)) > 0; ) {
-                if (buffer.size() < WorkspaceFiles.FILE_LIMIT + 1) {
-                    buffer.write(chunk, 0, Math.min(n, WorkspaceFiles.FILE_LIMIT + 1 - buffer.size()));
-                }
-                if (System.nanoTime() > deadline) {
-                    process.destroyForcibly();
-                    return new Output(false, new byte[0]);
-                }
-            }
-            boolean done =
-                    process.waitFor(Math.max(1, (deadline - System.nanoTime()) / 1_000_000), TimeUnit.MILLISECONDS);
-            if (!done) {
-                process.destroyForcibly();
-                return new Output(false, new byte[0]);
-            }
-            return new Output(process.exitValue() == 0, buffer.toByteArray());
-        } catch (IOException e) {
-            process.destroyForcibly();
-            return new Output(false, new byte[0]);
-        } catch (InterruptedException e) {
-            process.destroyForcibly();
-            Thread.currentThread().interrupt();
-            return new Output(false, new byte[0]);
+            RunEngine.CommandOutput out = engine.workspaceCommand(runId, argv, label, ENV, TIMEOUT, MAX_OUTPUT);
+            return new Output(out.ok() && !out.truncated(), out.stdout());
+        } catch (IOException | IllegalStateException e) {
+            return new Output(false, "");
         }
     }
 
-    static List<Change> changes(Path repo, String label) {
-        Output out = run(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all");
+    List<Change> changes(String label) {
+        Output out = run(label, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all");
         List<Change> changes = new ArrayList<>();
         if (!out.ok()) {
             return changes;
         }
-        String[] items = out.text().split("\0");
+        String[] items = out.text().replace("\n", "").split("\0");
         for (int i = 0; i < items.length; i++) {
             String item = items[i];
             if (item.length() < 4) {
@@ -184,31 +137,96 @@ final class WorkspaceGit {
         return changes;
     }
 
-    static Output diff(Path repo, String relative) {
-        return relative.isEmpty()
-                ? run(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--")
-                : run(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--", relative);
+    /** The diff against HEAD, without the sections of sensitive files. */
+    String diff(String label, String relative) {
+        Output out = relative.isEmpty()
+                ? run(
+                        label,
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--no-color",
+                        "--ignore-submodules=all",
+                        "HEAD",
+                        "--")
+                : run(
+                        label,
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--no-color",
+                        "--ignore-submodules=all",
+                        "HEAD",
+                        "--",
+                        relative);
+        return out.ok() ? withoutSensitive(out.text(), label) : "";
+    }
+
+    static String withoutSensitive(String diff, String label) {
+        StringBuilder kept = new StringBuilder();
+        boolean keep = true;
+        for (String line : diff.split("\n", -1)) {
+            if (line.startsWith("diff --git ")) {
+                int b = line.lastIndexOf(" b/");
+                String path = b < 0 ? "" : line.substring(b + 3);
+                String a = line.substring("diff --git ".length(), b < 0 ? line.length() : b);
+                a = a.startsWith("a/") ? a.substring(2) : a;
+                String prefix = label.isEmpty() ? "" : label + "/";
+                keep = !WorkspaceFiles.sensitive(prefix + path) && !WorkspaceFiles.sensitive(prefix + a);
+            }
+            if (keep) {
+                kept.append(line).append('\n');
+            }
+        }
+        return kept.length() > 0 ? kept.substring(0, kept.length() - 1) : "";
     }
 
     /** The file at {@code ref} (HEAD or a commit id), or empty when it does not exist there. */
-    static Optional<byte[]> blob(Path repo, String ref, String relative) {
-        if (!run(repo, "cat-file", "-e", ref + ":" + relative).ok()) {
+    Optional<String> blob(String label, String ref, String relative) {
+        Output size = run(label, "cat-file", "-s", ref + ":" + relative);
+        if (!size.ok()) {
             return Optional.empty();
         }
-        Output out = run(repo, "cat-file", "blob", ref + ":" + relative);
-        return out.ok() ? Optional.of(out.stdout()) : Optional.empty();
+        long bytes;
+        try {
+            bytes = Long.parseLong(size.text().strip());
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+        if (bytes > WorkspaceFiles.FILE_LIMIT) {
+            throw new WorkspaceFiles.WorkspaceException("file exceeds the 1 MiB preview limit", false);
+        }
+        Output out = run(label, "cat-file", "blob", ref + ":" + relative);
+        if (!out.ok()) {
+            return Optional.empty();
+        }
+        if (out.text().indexOf('\0') >= 0) {
+            throw new WorkspaceFiles.WorkspaceException("binary files cannot be previewed", false);
+        }
+        // output arrives as lines: restore whether the file ended with a newline from its size
+        String text = out.text();
+        if (text.endsWith("\n") && text.getBytes(StandardCharsets.UTF_8).length == bytes + 1) {
+            text = text.substring(0, text.length() - 1);
+        }
+        return Optional.of(text);
     }
 
-    static String branch(Path repo) {
-        return run(repo, "rev-parse", "--abbrev-ref", "HEAD").text().strip();
+    String branch(String label) {
+        return run(label, "rev-parse", "--abbrev-ref", "HEAD").text().strip();
     }
 
-    static String head(Path repo) {
-        return run(repo, "rev-parse", "HEAD").text().strip();
+    String head(String label) {
+        return run(label, "rev-parse", "HEAD").text().strip();
     }
 
-    static List<Commit> log(Path repo) {
-        Output out = run(repo, "log", "-n", Integer.toString(LOG_LIMIT), "--format=%H%x1f%P%x1f%s%x1f%an%x1f%at");
+    List<Commit> log(String label) {
+        Output out = run(
+                label,
+                "log",
+                "--no-show-signature",
+                "-n",
+                Integer.toString(LOG_LIMIT),
+                "--format=%H%x1f%P%x1f%s%x1f%an%x1f%at");
         List<Commit> commits = new ArrayList<>();
         if (!out.ok()) {
             return commits;
@@ -231,13 +249,22 @@ final class WorkspaceGit {
         return commits;
     }
 
-    static List<CommitFile> commitFiles(Path repo, String id) {
-        Output out = run(repo, "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-z", id);
+    List<CommitFile> commitFiles(String label, String id) {
+        Output out = run(
+                label,
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "--name-status",
+                "-r",
+                "-z",
+                "--ignore-submodules=all",
+                id);
         List<CommitFile> files = new ArrayList<>();
         if (!out.ok()) {
             return files;
         }
-        String[] items = out.text().split("\0");
+        String[] items = out.text().replace("\n", "").split("\0");
         for (int i = 0; i + 1 < items.length; i += 2) {
             String status = items[i];
             String path = items[i + 1];
@@ -245,7 +272,10 @@ final class WorkspaceGit {
                 path = i + 2 < items.length ? items[i + 2] : path;
                 i++;
             }
-            files.add(new CommitFile(path, status.isEmpty() ? "M" : status.substring(0, 1)));
+            String full = path;
+            if (!WorkspaceFiles.sensitive(full)) {
+                files.add(new CommitFile(path, status.isEmpty() ? "M" : status.substring(0, 1)));
+            }
         }
         return files;
     }

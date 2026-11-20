@@ -173,7 +173,13 @@ public class PreviewController {
     @Operation(summary = "Revoke a preview link")
     @DeleteMapping("/api/v1/runs/{runId}/preview/session/{sessionId}")
     ResponseEntity<Void> revoke(@PathVariable String runId, @PathVariable String sessionId, Principal principal) {
-        readable(runId, principal);
+        Run run = readable(runId, principal);
+        String creator = service.creator(runId, sessionId)
+                .orElseThrow(() -> new PreviewService.PreviewException(404, "preview session not found"));
+        // people revoke their own links; developers anyone's
+        if (!creator.equals(access.current(principal).username()) && !access.canOperateRun(principal, run)) {
+            throw new PreviewService.PreviewException(403, "只能撤销自己打开的预览链接");
+        }
         if (!service.revoke(runId, sessionId)) {
             throw new PreviewService.PreviewException(404, "preview session not found");
         }

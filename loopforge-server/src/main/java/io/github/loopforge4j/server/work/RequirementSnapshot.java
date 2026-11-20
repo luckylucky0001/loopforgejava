@@ -32,6 +32,9 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
 
     static final int MAX_DEPTH = 6;
 
+    /** Stage nodes a snapshot expands at most (SOPs nested in each other would otherwise explode). */
+    static final int MAX_STAGES = 2_000;
+
     /** A node of a lane's SOP, with the child SOP's nodes for an SOP node. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record NodeStage(
@@ -122,6 +125,7 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
             Source source,
             Function<String, Optional<Run>> child,
             Instant now) {
+        int[] budget = {MAX_STAGES};
         Map<String, Acc> byWorkflow = new LinkedHashMap<>();
         for (Run run : runs) {
             Acc acc = byWorkflow.computeIfAbsent(run.workflowId(), id -> {
@@ -151,7 +155,7 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
             bound.add(binding.workflowId());
             Acc acc = byWorkflow.get(binding.workflowId());
             Optional<WorkflowDefinition> workflow = source.workflow(binding.workflowId());
-            out.add(lane(binding, acc, workflow, source, child, now, false));
+            out.add(lane(binding, acc, workflow, source, child, now, false, budget));
         }
         // a single binding with one started SOP is one slot, even when the SOP differs (upstream)
         if (bindings.size() == 1) {
@@ -166,13 +170,14 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
                         source,
                         child,
                         now,
-                        false));
+                        false,
+                        budget));
             }
         }
         byWorkflow.values().stream()
                 .filter(a -> a.started && !bound.contains(a.workflowId))
                 .sorted(Comparator.comparing(a -> a.workflowName == null ? a.workflowId : a.workflowName))
-                .forEach(a -> out.add(lane(null, a, source.workflow(a.workflowId), source, child, now, true)));
+                .forEach(a -> out.add(lane(null, a, source.workflow(a.workflowId), source, child, now, true, budget)));
         return out;
     }
 
@@ -183,7 +188,8 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
             Source source,
             Function<String, Optional<Run>> child,
             Instant now,
-            boolean orphan) {
+            boolean orphan,
+            int[] budget) {
         String workflowId = acc != null ? acc.workflowId : binding.workflowId();
         WorkflowDefinition definition =
                 acc != null && acc.latest != null ? acc.latest.workflow() : catalog.orElse(null);
@@ -196,14 +202,14 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
         String status;
         List<NodeStage> stages;
         if (acc != null && acc.latest != null) {
-            stages = runStages(acc.latest, source, child, now, 0);
+            stages = runStages(acc.latest, source, child, now, 0, budget);
             status = laneStatus(acc.latest);
             if (status.equals("active") && waitsForHuman(stages)) {
                 status = "waiting";
             }
         } else {
             status = "not_started";
-            stages = catalog.map(w -> plannedStages(w, source, 0)).orElse(List.of());
+            stages = catalog.map(w -> plannedStages(w, source, 0, budget)).orElse(List.of());
         }
         return new Lane(
                 binding == null ? null : binding.id(),
@@ -291,27 +297,34 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
         return out;
     }
 
-    static List<NodeStage> plannedStages(WorkflowDefinition workflow, Source source, int depth) {
+    static List<NodeStage> plannedStages(WorkflowDefinition workflow, Source source, int depth, int[] budget) {
         List<NodeStage> out = new ArrayList<>();
         for (WorkflowNode node : ordered(workflow)) {
-            out.add(new NodeStage(node.id(), name(node), "pending", null, null, plannedChildren(node, source, depth)));
+            if (budget[0]-- <= 0) {
+                break;
+            }
+            out.add(new NodeStage(
+                    node.id(), name(node), "pending", null, null, plannedChildren(node, source, depth, budget)));
         }
         return out;
     }
 
-    private static List<NodeStage> plannedChildren(WorkflowNode node, Source source, int depth) {
-        if (node.type() != NodeType.SOP || node.sopWorkflowId() == null || depth >= MAX_DEPTH) {
+    private static List<NodeStage> plannedChildren(WorkflowNode node, Source source, int depth, int[] budget) {
+        if (node.type() != NodeType.SOP || node.sopWorkflowId() == null || depth >= MAX_DEPTH || budget[0] <= 0) {
             return null;
         }
         return source.workflow(node.sopWorkflowId())
-                .map(w -> plannedStages(w, source, depth + 1))
+                .map(w -> plannedStages(w, source, depth + 1, budget))
                 .orElse(null);
     }
 
     static List<NodeStage> runStages(
-            Run run, Source source, Function<String, Optional<Run>> child, Instant now, int depth) {
+            Run run, Source source, Function<String, Optional<Run>> child, Instant now, int depth, int[] budget) {
         List<NodeStage> out = new ArrayList<>();
         for (WorkflowNode node : ordered(run.workflow())) {
+            if (budget[0]-- <= 0) {
+                break;
+            }
             NodeRun nr = run.node(node.id()).orElse(null);
             String status = nr == null ? "pending" : nr.status().wire();
             Long duration = null;
@@ -328,11 +341,11 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
                 Optional<Run> childRun = child.apply(nr.childRunId());
                 if (childRun.isPresent()) {
                     childRunId = childRun.get().id();
-                    children = runStages(childRun.get(), source, child, now, depth + 1);
+                    children = runStages(childRun.get(), source, child, now, depth + 1, budget);
                 }
             }
             if (children == null) {
-                children = plannedChildren(node, source, depth);
+                children = plannedChildren(node, source, depth, budget);
             }
             out.add(new NodeStage(node.id(), name(node), status, duration, childRunId, children));
         }

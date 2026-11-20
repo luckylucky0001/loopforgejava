@@ -36,9 +36,14 @@ final class RemotePreviewStore implements PreviewStore {
         try {
             try (OutputStream out = Files.newOutputStream(zip);
                     ZipOutputStream zos = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
+                long total = 0;
                 for (String file : site.files()) {
                     zos.putNextEntry(new ZipEntry(file));
-                    Files.copy(site.root().resolve(file), zos);
+                    total += io.github.loopforge4j.core.runtime.SafeFiles.copy(
+                            site.root(), file, zos, site.limits().maxFileBytes());
+                    if (total > site.limits().maxTotalBytes()) {
+                        throw new IOException("preview grew beyond its size limit");
+                    }
                     zos.closeEntry();
                 }
             }

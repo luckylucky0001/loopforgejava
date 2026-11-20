@@ -124,7 +124,8 @@ class BusinessDomainIntegrationTest {
                 admin,
                 "PUT",
                 "/api/v1/business-domains",
-                domain("trade", "交易", List.of(mgr.id()), List.of(vic.id()), true),
+                // grants by username, as people type them
+                domain("trade", "交易", List.of("mgr"), List.of(" vic "), true),
                 200);
         call(admin, "PUT", "/api/v1/business-domains", domain("infra", "基础设施", List.of(), List.of(), true), 200);
         call(

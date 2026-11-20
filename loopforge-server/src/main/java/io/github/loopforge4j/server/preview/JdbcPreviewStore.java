@@ -6,7 +6,6 @@ import io.github.loopforge4j.core.store.PreviewStore;
 import io.github.loopforge4j.server.persistence.SqlTime;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.file.Files;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -100,12 +99,19 @@ public class JdbcPreviewStore implements PreviewStore {
                     backend,
                     now.plus(retention),
                     now);
+            long total = 0;
             for (String file : site.files()) {
                 byte[] content;
                 try {
-                    content = Files.readAllBytes(site.root().resolve(file));
+                    // never through a link swapped in after the site was collected, never beyond the limits
+                    content = io.github.loopforge4j.core.runtime.SafeFiles.read(
+                            site.root(), file, site.limits().maxFileBytes());
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
+                }
+                total += content.length;
+                if (total > site.limits().maxTotalBytes()) {
+                    throw new UncheckedIOException(new IOException("preview grew beyond its size limit"));
                 }
                 jdbc.sql("INSERT INTO run_preview_files (run_id, path, content) VALUES (:run, :path, :content)")
                         .param("run", runId)
@@ -341,6 +347,15 @@ public class JdbcPreviewStore implements PreviewStore {
                 .param("run", session.runId())
                 .param("now", SqlTime.of(now))
                 .update();
+    }
+
+    Optional<String> sessionCreator(String runId, String sessionId) {
+        return jdbc.sql("SELECT created_by FROM preview_sessions WHERE id = :id AND run_id = :run")
+                .param("id", sessionId)
+                .param("run", runId)
+                .query((rs, n) -> Optional.ofNullable(rs.getString("created_by")))
+                .optional()
+                .map(o -> o.orElse(""));
     }
 
     boolean revoke(String runId, String sessionId, Instant now) {

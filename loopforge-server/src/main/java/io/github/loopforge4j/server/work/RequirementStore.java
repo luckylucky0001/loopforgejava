@@ -236,6 +236,33 @@ public class RequirementStore {
         }
     }
 
+    /** The latest reservation of a lane, if it was ever started. */
+    public Optional<LaneStart> latestLaneStart(String requirementId, String workflowId) {
+        return jdbc.sql("SELECT generation, run_id, created_at FROM requirement_lane_starts"
+                        + " WHERE requirement_id = :req AND workflow_id = :wf ORDER BY generation DESC LIMIT 1")
+                .param("req", requirementId)
+                .param("wf", workflowId)
+                .query((rs, i) -> new LaneStart(
+                        rs.getInt("generation"),
+                        rs.getString("run_id"),
+                        io.github.loopforge4j.server.persistence.SqlTime.read(rs, "created_at")))
+                .optional();
+    }
+
+    /** Records the run a reservation started. */
+    public void attachLane(String requirementId, String workflowId, int generation, String runId) {
+        jdbc.sql("UPDATE requirement_lane_starts SET run_id = :run WHERE requirement_id = :req"
+                        + " AND workflow_id = :wf AND generation = :gen")
+                .param("run", runId)
+                .param("req", requirementId)
+                .param("wf", workflowId)
+                .param("gen", generation)
+                .update();
+    }
+
+    /** One start of a lane: its generation, the run it started (null while creating) and when. */
+    public record LaneStart(int generation, String runId, Instant createdAt) {}
+
     /** Frees a reservation whose run could not be started. */
     public void releaseLane(String requirementId, String workflowId, int generation) {
         jdbc.sql("DELETE FROM requirement_lane_starts WHERE requirement_id = :req AND workflow_id = :wf"

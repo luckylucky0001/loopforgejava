@@ -25,6 +25,9 @@ public class PreviewService {
     private static final SecureRandom RANDOM = new SecureRandom();
     static final String PREFIX = "/preview/";
 
+    /** A link stops working this long after it was opened, however much it is used. */
+    static final Duration MAX_LIFETIME = Duration.ofHours(12);
+
     /** A created session and the link that opens it (the token is never stored). */
     public record Opened(JdbcPreviewStore.Session session, String url) {}
 
@@ -89,7 +92,7 @@ public class PreviewService {
         }
         Instant now = clock.instant();
         return store.sessionByHash(hash(token))
-                .filter(s -> s.live(now))
+                .filter(s -> s.live(now) && s.createdAt().plus(MAX_LIFETIME).isAfter(now))
                 .flatMap(s -> store.find(s.runId())
                         .filter(JdbcPreviewStore.Preview::serveable)
                         .map(p -> new Grant(s, p, token)));
@@ -100,12 +103,19 @@ public class PreviewService {
         Instant now = clock.instant();
         // write at most once a minute per session
         if (session.lastAccessedAt() == null || session.lastAccessedAt().isBefore(now.minusSeconds(60))) {
-            store.touch(session, now.plus(config.sessionTtl()), now);
+            Instant slid = now.plus(config.sessionTtl());
+            Instant cap = session.createdAt().plus(MAX_LIFETIME);
+            store.touch(session, slid.isAfter(cap) ? cap : slid, now);
         }
     }
 
     public boolean revoke(String runId, String sessionId) {
         return store.revoke(runId, sessionId, clock.instant());
+    }
+
+    /** Who opened a session of the run, if it exists. */
+    public Optional<String> creator(String runId, String sessionId) {
+        return store.sessionCreator(runId, sessionId);
     }
 
     public JdbcPreviewStore.Preview setBackend(String runId, String backendUrl) {

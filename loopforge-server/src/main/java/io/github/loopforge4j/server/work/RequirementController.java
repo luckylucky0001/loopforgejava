@@ -130,11 +130,9 @@ class RequirementController {
             @Valid @RequestBody(required = false) StartRequest body,
             Principal principal) {
         access.requireProject(principal, projectId, ProjectRole.DEVELOPER);
+        // the SOP that will actually run: an explicit one or the first step of the chain
         access.requireIsolatedSandbox(
-                principal,
-                body != null && body.workflowId() != null && !body.workflowId().isBlank()
-                        ? body.workflowId()
-                        : requirements.require(projectId, number).workflowId());
+                principal, requirements.laneWorkflow(projectId, number, body == null ? null : body.workflowId()));
         Run run = requirements.start(
                 projectId,
                 number,

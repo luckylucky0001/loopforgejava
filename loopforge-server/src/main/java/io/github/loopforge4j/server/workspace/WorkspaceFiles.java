@@ -1,18 +1,12 @@
 package io.github.loopforge4j.server.workspace;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -112,125 +106,153 @@ final class WorkspaceFiles {
         return rel;
     }
 
-    /** Resolves a path inside the root without following links anywhere on the way. */
-    static Path resolve(Path root, String raw, boolean directory) {
-        String rel = relative(raw);
-        Path base;
+    /** Workspace IO runs on a few dedicated threads with a deadline: a FIFO can block an open forever. */
+    private static final java.util.concurrent.ExecutorService IO = java.util.concurrent.Executors.newFixedThreadPool(
+            4, Thread.ofPlatform().daemon().name("workspace-io-", 0).factory());
+
+    static <T> T io(java.util.concurrent.Callable<T> work) {
+        var future = IO.submit(work);
         try {
-            base = root.toRealPath();
-        } catch (IOException e) {
-            throw new WorkspaceException("workspace is not available", true);
-        }
-        Path target = base;
-        for (String part : rel.isEmpty() ? new String[0] : rel.split("/")) {
-            target = target.resolve(part);
-            if (Files.isSymbolicLink(target)) {
-                throw new WorkspaceException("symbolic links are not accessible", false);
+            return future.get(15, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            future.cancel(true);
+            throw new WorkspaceException("工作区读取超时，请稍后再试", false);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new WorkspaceException("interrupted", false);
+        } catch (java.util.concurrent.ExecutionException e) {
+            if (e.getCause() instanceof WorkspaceException w) {
+                throw w;
             }
+            if (e.getCause() instanceof io.github.loopforge4j.core.runtime.SafeFiles.Refused r) {
+                throw new WorkspaceException(r.getMessage(), r.missing());
+            }
+            throw new WorkspaceException("workspace error: " + e.getCause().getMessage(), false);
         }
-        if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-            throw new WorkspaceException("no such path: " + rel, true);
-        }
-        if (directory && !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
-            throw new WorkspaceException("workspace path is not a directory", false);
-        }
-        if (!directory && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
-            throw new WorkspaceException("workspace path is not a regular file", false);
-        }
-        return target;
+    }
+
+    private static List<String> split(String rel) {
+        return rel.isEmpty() ? new ArrayList<>() : new ArrayList<>(List.of(rel.split("/")));
+    }
+
+    /** Checks that a directory (e.g. a repository) is a real directory of the workspace, reached without links. */
+    static void requireDirectory(Path root, String raw) {
+        String rel = relative(raw);
+        io(() -> {
+            try (var base = io.github.loopforge4j.core.runtime.SafeFiles.openRoot(root)) {
+                var dir = io.github.loopforge4j.core.runtime.SafeFiles.openDirectory(base, split(rel));
+                io.github.loopforge4j.core.runtime.SafeFiles.closeQuietly(dir);
+            }
+            return null;
+        });
     }
 
     static Tree tree(Path root, String raw) {
-        Path start = resolve(root, raw, true);
-        Path base;
-        try {
-            base = root.toRealPath();
-        } catch (IOException e) {
-            throw new WorkspaceException("workspace is not available", true);
-        }
-        List<Entry> entries = new ArrayList<>();
-        boolean[] truncated = {false};
-        try {
-            Files.walkFileTree(start, new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                    if (dir.equals(start)) {
-                        return FileVisitResult.CONTINUE;
+        String start = relative(raw);
+        return io(() -> {
+            List<Entry> entries = new ArrayList<>();
+            boolean[] truncated = {false};
+            try (var base = io.github.loopforge4j.core.runtime.SafeFiles.openRoot(root)) {
+                var dir = start.isEmpty()
+                        ? base
+                        : io.github.loopforge4j.core.runtime.SafeFiles.openDirectory(base, split(start));
+                try {
+                    walk(dir, start, entries, truncated, 0);
+                } finally {
+                    if (dir != base) {
+                        io.github.loopforge4j.core.runtime.SafeFiles.closeQuietly(dir);
                     }
-                    String rel = base.relativize(dir).toString().replace('\\', '/');
-                    if (sensitive(rel) || skippedDirectory(dir.getFileName().toString())) {
-                        return FileVisitResult.SKIP_SUBTREE;
-                    }
-                    return add(rel, dir, attrs, "directory");
-                }
-
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                    String rel = base.relativize(file).toString().replace('\\', '/');
-                    if (sensitive(rel) || attrs.isSymbolicLink() || !attrs.isRegularFile()) {
-                        return FileVisitResult.CONTINUE;
-                    }
-                    return add(rel, file, attrs, "file");
-                }
-
-                @Override
-                public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                    return FileVisitResult.CONTINUE;
-                }
-
-                private FileVisitResult add(String rel, Path path, BasicFileAttributes attrs, String type) {
-                    if (entries.size() >= TREE_LIMIT) {
-                        truncated[0] = true;
-                        return FileVisitResult.TERMINATE;
-                    }
-                    entries.add(new Entry(
-                            rel,
-                            path.getFileName().toString(),
-                            type,
-                            type.equals("file") ? attrs.size() : 0,
-                            attrs.lastModifiedTime().toInstant()));
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException e) {
-            throw new WorkspaceException("cannot read the workspace: " + e.getMessage(), false);
-        }
-        // directories without a visible file below them are noise
-        Set<String> parents = new HashSet<>();
-        for (Entry e : entries) {
-            if (e.type().equals("file")) {
-                for (int i = e.path().lastIndexOf('/'); i > 0; i = e.path().lastIndexOf('/', i - 1)) {
-                    parents.add(e.path().substring(0, i));
                 }
             }
+            // directories without a visible file below them are noise
+            Set<String> parents = new HashSet<>();
+            for (Entry e : entries) {
+                if (e.type().equals("file")) {
+                    for (int i = e.path().lastIndexOf('/'); i > 0; i = e.path().lastIndexOf('/', i - 1)) {
+                        parents.add(e.path().substring(0, i));
+                    }
+                }
+            }
+            List<Entry> visible = new ArrayList<>(entries.stream()
+                    .filter(e -> e.type().equals("file") || parents.contains(e.path()))
+                    .toList());
+            visible.sort(java.util.Comparator.comparing(Entry::path));
+            return new Tree(visible, truncated[0]);
+        });
+    }
+
+    private static void walk(
+            java.nio.file.SecureDirectoryStream<Path> dir,
+            String prefix,
+            List<Entry> entries,
+            boolean[] truncated,
+            int depth)
+            throws IOException {
+        if (depth > 32) {
+            return;
         }
-        List<Entry> visible = new ArrayList<>(entries.stream()
-                .filter(e -> e.type().equals("file") || parents.contains(e.path()))
-                .toList());
-        visible.sort(java.util.Comparator.comparing(Entry::path));
-        return new Tree(visible, truncated[0]);
+        for (var child : io.github.loopforge4j.core.runtime.SafeFiles.list(dir)) {
+            if (entries.size() >= TREE_LIMIT) {
+                truncated[0] = true;
+                return;
+            }
+            String rel = prefix.isEmpty() ? child.name() : prefix + "/" + child.name();
+            var attrs = child.attributes();
+            if (sensitive(rel) || attrs.isSymbolicLink()) {
+                continue;
+            }
+            if (attrs.isDirectory()) {
+                if (skippedDirectory(child.name())) {
+                    continue;
+                }
+                entries.add(new Entry(
+                        rel,
+                        child.name(),
+                        "directory",
+                        0,
+                        attrs.lastModifiedTime().toInstant()));
+                java.nio.file.SecureDirectoryStream<Path> sub;
+                try {
+                    sub = dir.newDirectoryStream(Path.of(child.name()), LinkOption.NOFOLLOW_LINKS);
+                } catch (IOException e) {
+                    continue; // swapped meanwhile
+                }
+                try {
+                    walk(sub, rel, entries, truncated, depth + 1);
+                } finally {
+                    io.github.loopforge4j.core.runtime.SafeFiles.closeQuietly(sub);
+                }
+            } else if (attrs.isRegularFile()) {
+                entries.add(new Entry(
+                        rel,
+                        child.name(),
+                        "file",
+                        attrs.size(),
+                        attrs.lastModifiedTime().toInstant()));
+            }
+            if (truncated[0]) {
+                return;
+            }
+        }
     }
 
     static Content read(Path root, String raw) {
-        Path file = resolve(root, raw, false);
-        long size;
-        byte[] body;
-        try (InputStream in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
-            size = Files.size(file);
-            if (size > FILE_LIMIT) {
-                throw new WorkspaceException("file exceeds the 1 MiB preview limit", false);
+        String rel = relative(raw);
+        if (rel.isEmpty()) {
+            throw new WorkspaceException("path is required", false);
+        }
+        byte[] body = io(() -> {
+            try {
+                return io.github.loopforge4j.core.runtime.SafeFiles.read(root, rel, FILE_LIMIT);
+            } catch (io.github.loopforge4j.core.runtime.SafeFiles.Refused e) {
+                if (e.getMessage() != null && e.getMessage().contains("larger than")) {
+                    throw new WorkspaceException("file exceeds the 1 MiB preview limit", false);
+                }
+                throw e;
             }
-            body = in.readNBytes(FILE_LIMIT + 1);
-        } catch (NoSuchFileException e) {
-            throw new WorkspaceException("no such path: " + raw, true);
-        } catch (IOException e) {
-            throw new WorkspaceException("cannot read " + relative(raw) + ": " + e.getMessage(), false);
-        }
-        if (body.length > FILE_LIMIT) {
-            throw new WorkspaceException("file exceeds the 1 MiB preview limit", false);
-        }
+        });
         String text = text(body);
-        return new Content(relative(raw), text, size, sha256(text));
+        return new Content(rel, text, body.length, sha256(text));
     }
 
     /** UTF-8 text without NUL bytes, or a refusal. */
@@ -263,7 +285,7 @@ final class WorkspaceFiles {
 
     /**
      * Writes text when the file still has the content the editor read ({@code expected} is its
-     * sha256, or {@code missing} to create a new file), atomically.
+     * sha256, or {@code missing} to create a new file), atomically, never through a link.
      */
     static String write(Path root, String raw, String content, String expected) {
         if (content == null || content.length() > FILE_LIMIT || content.indexOf('\0') >= 0) {
@@ -273,60 +295,94 @@ final class WorkspaceFiles {
         if (rel.isEmpty()) {
             throw new WorkspaceException("path is required", false);
         }
-        Path base;
-        try {
-            base = root.toRealPath();
-        } catch (IOException e) {
-            throw new WorkspaceException("workspace is not available", true);
-        }
-        Path target = base;
-        String[] parts = rel.split("/");
-        for (int i = 0; i < parts.length; i++) {
-            target = target.resolve(parts[i]);
-            if (Files.isSymbolicLink(target)) {
-                throw new WorkspaceException("symbolic links are not accessible", false);
-            }
-            if (i < parts.length - 1
-                    && Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                    && !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
-                throw new WorkspaceException("workspace path is not a directory", false);
-            }
-        }
-        boolean exists = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
-        try {
-            if (!exists) {
-                if (!"missing".equals(expected)) {
-                    throw new WorkspaceException("文件不存在；新建文件时 expectedSha256 传 missing", true);
-                }
-                Files.createDirectories(target.getParent());
-            } else {
-                if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || Files.size(target) > FILE_LIMIT) {
-                    throw new WorkspaceException("不是可编辑文本文件", false);
-                }
-                String previous = text(Files.readAllBytes(target));
-                if (expected == null || !expected.equals(sha256(previous))) {
-                    throw new WorkspaceException("文件内容已变化，请重新读取后再保存", false);
-                }
-            }
-            Path temp = Files.createTempFile(target.getParent(), ".lf-edit-", ".tmp");
-            try {
-                Files.writeString(temp, content, StandardCharsets.UTF_8);
-                if (exists) {
-                    try {
-                        Files.setPosixFilePermissions(
-                                temp, Files.getPosixFilePermissions(target, LinkOption.NOFOLLOW_LINKS));
-                    } catch (UnsupportedOperationException e) {
-                        // not a POSIX file system
+        List<String> parts = split(rel);
+        String name = parts.removeLast();
+        return io(() -> {
+            try (var base = io.github.loopforge4j.core.runtime.SafeFiles.openRoot(root)) {
+                var dir = base;
+                List<java.nio.file.SecureDirectoryStream<Path>> opened = new ArrayList<>();
+                try {
+                    for (String part : parts) {
+                        var attrs = io.github.loopforge4j.core.runtime.SafeFiles.attributes(dir, part);
+                        if (attrs == null) {
+                            if (!"missing".equals(expected)) {
+                                throw new WorkspaceException("文件不存在；新建文件时 expectedSha256 传 missing", true);
+                            }
+                            // created by name, then opened without links: a swapped parent fails the open
+                            Path logical = root.toRealPath()
+                                    .resolve(String.join("/", parts.subList(0, parts.indexOf(part) + 1)));
+                            try {
+                                Files.createDirectory(logical);
+                            } catch (java.nio.file.FileAlreadyExistsException e) {
+                                // created concurrently
+                            }
+                        } else if (attrs.isSymbolicLink() || !attrs.isDirectory()) {
+                            throw new WorkspaceException("workspace path is not a directory", false);
+                        }
+                        dir = dir.newDirectoryStream(Path.of(part), LinkOption.NOFOLLOW_LINKS);
+                        opened.add(dir);
                     }
+                    var attrs = io.github.loopforge4j.core.runtime.SafeFiles.attributes(dir, name);
+                    if (attrs == null) {
+                        if (!"missing".equals(expected)) {
+                            throw new WorkspaceException("文件不存在；新建文件时 expectedSha256 传 missing", true);
+                        }
+                    } else {
+                        if (attrs.isSymbolicLink() || !attrs.isRegularFile() || attrs.size() > FILE_LIMIT) {
+                            throw new WorkspaceException("不是可编辑文本文件", false);
+                        }
+                        byte[] previous;
+                        try (var channel = dir.newByteChannel(
+                                Path.of(name),
+                                Set.of(java.nio.file.StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))) {
+                            previous = readAll(channel);
+                        }
+                        if (expected == null || !expected.equals(sha256(text(previous)))) {
+                            throw new WorkspaceException("文件内容已变化，请重新读取后再保存", false);
+                        }
+                    }
+                    String temp = ".lf-edit-" + java.util.UUID.randomUUID() + ".tmp";
+                    try (var channel = dir.newByteChannel(
+                            Path.of(temp),
+                            Set.of(
+                                    java.nio.file.StandardOpenOption.CREATE_NEW,
+                                    java.nio.file.StandardOpenOption.WRITE,
+                                    LinkOption.NOFOLLOW_LINKS))) {
+                        var buffer = java.nio.ByteBuffer.wrap(content.getBytes(StandardCharsets.UTF_8));
+                        while (buffer.hasRemaining()) {
+                            channel.write(buffer);
+                        }
+                    }
+                    try {
+                        dir.move(Path.of(temp), dir, Path.of(name));
+                    } catch (IOException e) {
+                        try {
+                            dir.deleteFile(Path.of(temp));
+                        } catch (IOException ignored) {
+                            // best effort
+                        }
+                        throw e;
+                    }
+                } finally {
+                    opened.forEach(io.github.loopforge4j.core.runtime.SafeFiles::closeQuietly);
                 }
-                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } finally {
-                Files.deleteIfExists(temp);
             }
-        } catch (IOException e) {
-            throw new WorkspaceException("写入失败：" + e.getMessage(), false);
+            return sha256(content);
+        });
+    }
+
+    private static byte[] readAll(java.nio.channels.SeekableByteChannel channel) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        var buffer = java.nio.ByteBuffer.allocate(64 * 1024);
+        while (channel.read(buffer) > 0) {
+            buffer.flip();
+            out.write(buffer.array(), 0, buffer.limit());
+            buffer.clear();
+            if (out.size() > FILE_LIMIT) {
+                throw new WorkspaceException("不是可编辑文本文件", false);
+            }
         }
-        return sha256(content);
+        return out.toByteArray();
     }
 
     /** Case-insensitive line search over small text files (upstream limits). */

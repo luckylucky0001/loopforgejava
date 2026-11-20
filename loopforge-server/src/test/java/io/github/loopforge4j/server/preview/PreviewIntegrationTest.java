@@ -240,7 +240,11 @@ class PreviewIntegrationTest {
                         .statusCode())
                 .isNotEqualTo(303);
 
-        // revoked, unknown and malformed links open nothing
+        // revoked, unknown and malformed links open nothing; viewers revoke only their own
+        Map<String, Object> adminLink =
+                call(admin, "POST", "/api/v1/runs/" + runId + "/preview/session", Map.of(), 200);
+        call(vic, "DELETE", "/api/v1/runs/" + runId + "/preview/session/" + adminLink.get("id"), null, 403);
+        call(admin, "DELETE", "/api/v1/runs/" + runId + "/preview/session/" + adminLink.get("id"), null, 204);
         call(vic, "DELETE", "/api/v1/runs/" + runId + "/preview/session/" + session.get("id"), null, 204);
         assertThat(open(url).statusCode()).isEqualTo(403);
         assertThat(open("/preview/" + "0".repeat(32) + "/").statusCode()).isEqualTo(403);

@@ -217,24 +217,58 @@ class RunWorkspaceIntegrationTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void gitConfigThatRunsProgramsIsNeverUsed() throws Exception {
+    void agentWrittenGitConfigNeverRunsAProgram() throws Exception {
         RestClient admin = client(TOKEN);
         call(admin, "PUT", "/api/v1/projects/p1", Map.of("name", "P1"), 200);
-        Path marker = data.resolve("pwned");
-        String script = "git init -q . && echo a > a.txt && git -c user.email=a@b -c user.name=t add a.txt"
-                + " && git -c user.email=a@b -c user.name=t commit -qm one && echo b > a.txt"
-                + " && git config core.fsmonitor 'touch " + marker + "'";
+        Path fsmonitor = data.resolve("pwned-fsmonitor");
+        Path gpg = data.resolve("pwned-gpg");
+        Path filter = data.resolve("pwned-filter");
+        String script = "set -e; git init -q . && git config user.email a@b && git config user.name t"
+                + " && echo a > a.txt && printf 'registry=x\\n' > .npmrc && git add a.txt .npmrc && git commit -qm one"
+                // a submodule whose own config runs a filter on status
+                + " && mkdir sub && cd sub && git init -q . && git config user.email a@b && git config user.name t"
+                + " && echo s > s.txt && git add s.txt && git commit -qm s"
+                + " && git config filter.x.clean 'touch " + filter + "; cat' && echo '* filter=x' > .gitattributes"
+                + " && echo changed > s.txt && cd .. && git add sub && git commit -qm sub"
+                // a signed commit that log would verify with an agent-chosen program
+                + " && T=$(git write-tree) && P=$(git rev-parse HEAD)"
+                + " && printf 'tree %s\\nparent %s\\nauthor t <a@b> 1700000000 +0000\\ncommitter t <a@b> 1700000000 +0000\\n"
+                + "gpgsig -----BEGIN PGP SIGNATURE-----\\n x\\n -----END PGP SIGNATURE-----\\n\\nsigned\\n' $T $P > /tmp/lf-c-$$"
+                + " && C=$(git hash-object -t commit -w /tmp/lf-c-$$) && git update-ref HEAD $C && rm /tmp/lf-c-$$"
+                + " && git config core.fsmonitor 'touch " + fsmonitor + "'"
+                + " && git config gpg.program 'touch " + gpg + "' && git config log.showSignature true"
+                + " && echo b > a.txt && printf 'token=SECRET\\n' > .npmrc && ln -s /etc etcdir";
         String runId = waitingRun(admin, "evil", script);
         String base = "/api/v1/runs/" + runId + "/workspace";
+
         Map<String, Object> summary = call(admin, "GET", base, null, 200);
-        assertThat((String) summary.get("warning")).contains("fsmonitor");
-        assertThat((List<Object>) summary.get("changes")).isEmpty();
-        call(admin, "GET", base + "/log", null, 400);
-        call(admin, "GET", base + "/diff?path=a.txt", null, 400);
-        // plain files are still readable
-        assertThat((Map<String, Object>) call(admin, "GET", base + "/file?path=a.txt", null, 200))
-                .containsEntry("content", "b\n");
-        assertThat(marker).doesNotExist();
+        assertThat((List<Map<String, Object>>) summary.get("changes"))
+                .extracting(c -> (String) c.get("path"))
+                .contains("a.txt")
+                .doesNotContain(".npmrc");
+        Map<String, Object> log = call(admin, "GET", base + "/log", null, 200);
+        assertThat((List<Map<String, Object>>) log.get("commits"))
+                .extracting(c -> c.get("message"))
+                .contains("signed", "one");
+        assertThat((String) ((Map<String, Object>) call(admin, "GET", base + "/diff", null, 200)).get("diff"))
+                .contains("a.txt")
+                .doesNotContain("SECRET")
+                .doesNotContain(".npmrc");
+        // pathspec magic is taken literally
+        Map<String, Object> magic = call(admin, "GET", base + "/diff?path=:(glob)**/.npm*", null, 200);
+        assertThat((String) magic.get("diff")).doesNotContain("SECRET");
+        // links on the way are refused for reading and writing
+        call(admin, "GET", base + "/file?path=etcdir/hostname", null, 400);
+        call(admin, "GET", base + "/tree?path=etcdir", null, 400);
+        call(
+                admin,
+                "PUT",
+                base + "/file",
+                Map.of("path", "etcdir/x", "content", "x", "expectedSha256", "missing"),
+                400);
+        assertThat(fsmonitor).doesNotExist();
+        assertThat(gpg).doesNotExist();
+        assertThat(filter).doesNotExist();
 
         // a settled run's released workspace is reported, not served
         call(admin, "POST", "/api/v1/runs/" + runId + "/nodes/review/approve", Map.of(), 200);

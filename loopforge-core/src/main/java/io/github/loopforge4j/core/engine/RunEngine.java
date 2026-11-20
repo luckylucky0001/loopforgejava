@@ -1186,6 +1186,71 @@ public final class RunEngine implements AutoCloseable {
         return new WorkspaceLocation(root, null, shared);
     }
 
+    /** Standard output of a command run in a workspace (at most the requested characters). */
+    public record CommandOutput(int exitCode, String stdout, boolean timedOut, boolean truncated) {
+        public boolean ok() {
+            return exitCode == 0 && !timedOut;
+        }
+    }
+
+    /**
+     * Runs a command in the run's own sandbox, in a directory of its workspace. What the workspace
+     * contains (it was written by agents) can only act within that sandbox, never on this host
+     * unless the run's profile is the host itself.
+     *
+     * @throws IllegalStateException when the workspace is not available here
+     */
+    public CommandOutput workspaceCommand(
+            String runId,
+            List<String> argv,
+            String relativeDirectory,
+            Map<String, String> environment,
+            Duration timeout,
+            int maxChars)
+            throws IOException {
+        WorkspaceLocation location = workspace(runId);
+        if (!location.available()) {
+            throw new IllegalStateException(location.unavailable());
+        }
+        Run run = require(runId);
+        Run owner = run.workspaceOwnerId().equals(run.id()) ? run : require(run.workspaceOwnerId());
+        Sandbox sandbox;
+        try {
+            sandbox = sandbox(owner);
+        } catch (NodeFailure e) {
+            throw new IOException(e.getMessage(), e);
+        }
+        java.nio.file.Path base = sandbox.workspace().toAbsolutePath().normalize();
+        java.nio.file.Path dir =
+                base.resolve(relativeDirectory == null ? "" : relativeDirectory).normalize();
+        if (!dir.startsWith(base)) {
+            throw new IOException("directory is outside the workspace");
+        }
+        StringBuilder out = new StringBuilder();
+        boolean[] truncated = {false};
+        io.github.loopforge4j.core.runtime.sandbox.LineListener collect = line -> {
+            synchronized (out) {
+                if (out.length() + line.length() + 1 > maxChars) {
+                    truncated[0] = true;
+                    return;
+                }
+                out.append(line).append('\n');
+            }
+        };
+        try {
+            io.github.loopforge4j.core.runtime.sandbox.ExecResult result = sandbox.exec(
+                    new io.github.loopforge4j.core.runtime.sandbox.CommandSpec(
+                            argv, dir.toString(), environment, null, timeout, "workspace-view"),
+                    collect,
+                    io.github.loopforge4j.core.runtime.Cancellation.create());
+            synchronized (out) {
+                return new CommandOutput(result.exitCode(), out.toString(), result.timedOut(), truncated[0]);
+            }
+        } catch (io.github.loopforge4j.core.runtime.CancelledException e) {
+            return new CommandOutput(-1, "", true, false);
+        }
+    }
+
     /** Records a lifecycle event of the run (e.g. a person changed its workspace). */
     public void note(String runId, String type, String message) {
         mutateQuietly(runId, c -> {

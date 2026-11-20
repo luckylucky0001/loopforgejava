@@ -22,8 +22,12 @@ public final class PreviewArchive {
         public static final Limits DEFAULT = new Limits(20_000, 100L << 20, 500L << 20);
     }
 
-    /** The files of a site, by path relative to its root, in path order. */
-    public record Site(Path root, List<String> files, long bytes, String index) {}
+    /**
+     * The files of a site, by path relative to its root, in path order. Stores read them with
+     * {@link io.github.loopforge4j.core.runtime.SafeFiles} under the same limits: the workspace can
+     * change between collecting and reading.
+     */
+    public record Site(Path root, List<String> files, long bytes, String index, Limits limits) {}
 
     /** Why a site cannot be archived; {@code missingIndex} lets a non-frontend workspace skip instead. */
     public static final class Failure extends Exception {
@@ -108,7 +112,7 @@ public final class PreviewArchive {
         if (!files.contains(index)) {
             throw new Failure("preview entry '" + index + "' is missing in '" + source + "'", true);
         }
-        return new Site(site, List.copyOf(files), total[0], index);
+        return new Site(site, List.copyOf(files), total[0], index, limits);
     }
 
     /** A clean relative path without {@code ..}, backslashes or encoded traversal; null otherwise. */

@@ -42,6 +42,9 @@ public class BusinessDomainService {
 
     static final Pattern ID = Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}");
 
+    /** Requirements read per project and report. */
+    static final int MAX_REQUIREMENTS = 500;
+
     private final BusinessDomainStore store;
     private final ProjectStore projects;
     private final UserStore users;
@@ -132,8 +135,7 @@ public class BusinessDomainService {
         if (store.nameTaken(name, id)) {
             throw new ApiException(HttpStatus.CONFLICT, "业务域名称已存在");
         }
-        BusinessDomain clean =
-                new BusinessDomain(id, name, description, body.active(), body.managers(), body.viewers(), null, null);
+        BusinessDomain clean = new BusinessDomain(id, name, description, body.active(), managers, viewers, null, null);
         if (existing.isEmpty()) {
             return store.insert(clean);
         }
@@ -413,7 +415,15 @@ public class BusinessDomainService {
     private List<Work> work(String projectId, Instant from, Instant to) {
         List<Work> out = new ArrayList<>();
         Instant now = clock.instant();
+        int loaded = 0;
         for (Requirement r : requirements.list(projectId, null)) {
+            // nothing completes, merges or runs in the window without touching the requirement
+            if (r.updatedAt() != null && r.updatedAt().isBefore(from)) {
+                continue;
+            }
+            if (++loaded > MAX_REQUIREMENTS) {
+                break;
+            }
             List<Run> runs = requirementService.runs(r);
             boolean ran = runs.stream()
                     .anyMatch(run ->

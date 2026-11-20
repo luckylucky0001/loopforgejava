@@ -127,8 +127,9 @@ public class RunWorkspaceController {
         List<WorkspaceGit.Change> changes = new ArrayList<>();
         List<String> names = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
+        WorkspaceGit git = new WorkspaceGit(engine, runId, location.root());
         for (Repo repo : repositories(location.root(), run)) {
-            Optional<String> unsafe = WorkspaceGit.unsafe(repo.path());
+            Optional<String> unsafe = git.unsafe(repo.label());
             String name = repo.label().isEmpty() ? "workspace" : repo.label();
             if (unsafe.isPresent()) {
                 if (!unsafe.get().equals("不是 Git 仓库")) {
@@ -137,7 +138,7 @@ public class RunWorkspaceController {
                 continue;
             }
             names.add(name);
-            changes.addAll(WorkspaceGit.changes(repo.path(), repo.label()));
+            changes.addAll(git.changes(repo.label()));
         }
         changes.sort(java.util.Comparator.comparing(WorkspaceGit.Change::path));
         body.put("changes", changes);
@@ -190,13 +191,19 @@ public class RunWorkspaceController {
             throw new WorkspaceFiles.WorkspaceException("ref must be HEAD or a commit id", false);
         }
         String rel = WorkspaceFiles.relative(path);
-        Repo repo = repoOf(root, run, rel);
-        byte[] blob = WorkspaceGit.blob(repo.path(), ref.strip(), inRepo(repo, rel))
+        WorkspaceGit git = new WorkspaceGit(engine, runId, root);
+        Repo repo = repoOf(git, root, run, rel);
+        String text = git.blob(repo.label(), ref.strip(), inRepo(repo, rel))
                 .orElseThrow(() -> new WorkspaceFiles.WorkspaceException("no such file at " + ref, true));
-        if (blob.length > WorkspaceFiles.FILE_LIMIT) {
-            throw new WorkspaceFiles.WorkspaceException("file exceeds the 1 MiB preview limit", false);
-        }
-        return Map.of("path", rel, "content", WorkspaceFiles.text(blob), "size", blob.length, "ref", ref.strip());
+        return Map.of(
+                "path",
+                rel,
+                "content",
+                text,
+                "size",
+                text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+                "ref",
+                ref.strip());
     }
 
     @Operation(summary = "Changes against HEAD: the whole diff, or one file's diff with its original and current text")
@@ -208,10 +215,11 @@ public class RunWorkspaceController {
         String rel = WorkspaceFiles.relative(path);
         StringBuilder combined = new StringBuilder();
         boolean truncated = false;
+        WorkspaceGit git = new WorkspaceGit(engine, runId, root);
         if (rel.isEmpty()) {
             for (Repo repo : repositories(root, run)) {
-                if (WorkspaceGit.unsafe(repo.path()).isEmpty()) {
-                    combined.append(WorkspaceGit.diff(repo.path(), "").text());
+                if (git.unsafe(repo.label()).isEmpty()) {
+                    combined.append(git.diff(repo.label(), ""));
                 }
                 if (combined.length() > WorkspaceFiles.FILE_LIMIT) {
                     combined.setLength(WorkspaceFiles.FILE_LIMIT);
@@ -221,16 +229,14 @@ public class RunWorkspaceController {
             }
             return Map.of("diff", combined.toString(), "truncated", truncated);
         }
-        Repo repo = repoOf(root, run, rel);
+        Repo repo = repoOf(git, root, run, rel);
         String inRepo = inRepo(repo, rel);
-        String diff = WorkspaceGit.diff(repo.path(), inRepo).text();
+        String diff = git.diff(repo.label(), inRepo);
         if (diff.length() > WorkspaceFiles.FILE_LIMIT) {
             diff = diff.substring(0, WorkspaceFiles.FILE_LIMIT);
             truncated = true;
         }
-        String original = WorkspaceGit.blob(repo.path(), "HEAD", inRepo)
-                .map(b -> b.length > WorkspaceFiles.FILE_LIMIT ? "" : WorkspaceFiles.text(b))
-                .orElse("");
+        String original = git.blob(repo.label(), "HEAD", inRepo).orElse("");
         String modified;
         try {
             modified = WorkspaceFiles.read(root, rel).content();
@@ -253,12 +259,14 @@ public class RunWorkspaceController {
     Map<String, Object> log(
             @PathVariable String runId, @RequestParam(defaultValue = "") String repository, Principal principal) {
         Run run = readable(runId, principal);
-        Repo repo = named(root(runId), run, repository);
+        Path root = root(runId);
+        WorkspaceGit git = new WorkspaceGit(engine, runId, root);
+        Repo repo = named(git, root, run, repository);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("repository", repo.label());
-        out.put("branch", WorkspaceGit.branch(repo.path()));
-        out.put("head", WorkspaceGit.head(repo.path()));
-        out.put("commits", WorkspaceGit.log(repo.path()));
+        out.put("branch", git.branch(repo.label()));
+        out.put("head", git.head(repo.label()));
+        out.put("commits", git.log(repo.label()));
         return out;
     }
 
@@ -273,8 +281,10 @@ public class RunWorkspaceController {
         if (!WorkspaceGit.safeRef(id.strip()) || id.strip().equals("HEAD")) {
             throw new WorkspaceFiles.WorkspaceException("id must be a commit id", false);
         }
-        Repo repo = named(root(runId), run, repository);
-        return Map.of("id", id.strip(), "files", WorkspaceGit.commitFiles(repo.path(), id.strip()));
+        Path root = root(runId);
+        WorkspaceGit git = new WorkspaceGit(engine, runId, root);
+        Repo repo = named(git, root, run, repository);
+        return Map.of("id", id.strip(), "files", git.commitFiles(repo.label(), id.strip()));
     }
 
     @Operation(summary = "Search text files of the workspace (case-insensitive, at least 2 characters)")
@@ -313,7 +323,7 @@ public class RunWorkspaceController {
         return Map.of("sha256", sha);
     }
 
-    private static Repo named(Path root, Run run, String name) {
+    private static Repo named(WorkspaceGit git, Path root, Run run, String name) {
         String wanted = name == null || name.isBlank() || name.equals("workspace") ? "" : name.strip();
         List<Repo> repos = repositories(root, run);
         Repo repo = repos.stream()
@@ -323,12 +333,12 @@ public class RunWorkspaceController {
         if (repo == null) {
             throw new WorkspaceFiles.WorkspaceException("repository not found", true);
         }
-        guard(repo);
+        guard(git, repo);
         return repo;
     }
 
     /** The repository holding a workspace path. */
-    private static Repo repoOf(Path root, Run run, String rel) {
+    private static Repo repoOf(WorkspaceGit git, Path root, Run run, String rel) {
         Repo best = null;
         for (Repo repo : repositories(root, run)) {
             if (repo.label().isEmpty() || rel.equals(repo.label()) || rel.startsWith(repo.label() + "/")) {
@@ -340,12 +350,12 @@ public class RunWorkspaceController {
         if (best == null) {
             throw new WorkspaceFiles.WorkspaceException("the path is in no repository of the workspace", true);
         }
-        guard(best);
+        guard(git, best);
         return best;
     }
 
-    private static void guard(Repo repo) {
-        WorkspaceGit.unsafe(repo.path()).ifPresent(reason -> {
+    private static void guard(WorkspaceGit git, Repo repo) {
+        git.unsafe(repo.label()).ifPresent(reason -> {
             throw new WorkspaceFiles.WorkspaceException(reason, false);
         });
     }

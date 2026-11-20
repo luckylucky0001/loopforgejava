@@ -12,10 +12,12 @@ import io.github.loopforge4j.core.engine.RunNotFoundException;
 import io.github.loopforge4j.core.engine.RunStateException;
 import io.github.loopforge4j.core.engine.WorkflowValidationException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +31,8 @@ public class RequirementService implements RunListener {
     private static final DateTimeFormatter BRANCH_TIME = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm");
     /** States a person set deliberately; a run outcome does not override them. */
     private static final Set<String> MANUAL = Set.of("closed", "cancelled");
+    /** A reservation this old without a run belongs to a start that died midway. */
+    private static final Duration ABANDONED_START = Duration.ofMinutes(10);
 
     private final RequirementStore store;
     /** The engine also notifies this listener, so it is looked up lazily (RunEngine is final, no proxy). */
@@ -123,7 +127,11 @@ public class RequirementService implements RunListener {
                                 body.status(),
                                 body.priority(),
                                 body.assignee(),
-                                body.workflowId(),
+                                // with an explicit chain the default SOP is its first step
+                                current.sopBindings() != null
+                                                && !current.sopBindings().isEmpty()
+                                        ? current.sopBindings().getFirst().workflowId()
+                                        : body.workflowId(),
                                 body.repositoryIds(),
                                 body.baseBranch(),
                                 current.runIds(),
@@ -159,14 +167,13 @@ public class RequirementService implements RunListener {
         if (MANUAL.contains(requirement.status()) || "done".equals(requirement.status())) {
             throw new RunStateException("requirement #" + number + " is " + requirement.status());
         }
-        String workflow = workflowId != null && !workflowId.isBlank() ? workflowId.strip() : null;
-        if (workflow == null) {
-            List<SopBinding> chain = requirement.effectiveBindings();
-            workflow = chain.isEmpty() ? null : chain.getFirst().workflowId();
-        }
-        if (workflow == null) {
-            throw new WorkflowValidationException(
-                    List.of("workflowId is required (on the requirement or the request)"));
+        String workflow = laneWorkflow(requirement, workflowId);
+        // read the reservation before the runs: a start still being created has no run linked yet
+        Optional<RequirementStore.LaneStart> latest = store.latestLaneStart(requirement.id(), workflow);
+        if (latest.isPresent()
+                && latest.get().runId() == null
+                && latest.get().createdAt().isAfter(clock.instant().minus(ABANDONED_START))) {
+            throw new RunStateException("该需求的这条 SOP 正在创建或已经启动，请刷新后再试");
         }
         List<Run> lane = laneRuns(requirement, workflow);
         if (lane.stream().anyMatch(r -> !r.status().terminal())) {
@@ -195,7 +202,8 @@ public class RequirementService implements RunListener {
             input.append("\n## 补充说明\n\n").append(extraInput.strip()).append('\n');
         }
         input.append(handoff(requirement, workflow));
-        int generation = lane.size();
+        // reservations outlive deleted runs: count from them, not from the runs that remain
+        int generation = latest.map(l -> l.generation() + 1).orElse(0);
         if (!store.reserveLane(requirement.id(), workflow, generation)) {
             throw new RunStateException("该需求的这条 SOP 正在创建或已经启动，请刷新后再试");
         }
@@ -212,6 +220,7 @@ public class RequirementService implements RunListener {
             throw e;
         }
         store.linkRun(requirement.id(), run.id(), workflow);
+        store.attachLane(requirement.id(), workflow, generation, run.id());
         store.update(requirement.id(), current -> {
             List<String> runs = new ArrayList<>(current.runIds());
             runs.add(run.id());
@@ -224,6 +233,24 @@ public class RequirementService implements RunListener {
             // deleted meanwhile
         }
         return run;
+    }
+
+    /** The SOP a start without an explicit one runs: the first step of the chain. */
+    public String laneWorkflow(String projectId, int number, String workflowId) {
+        return laneWorkflow(require(projectId, number), workflowId);
+    }
+
+    static String laneWorkflow(Requirement requirement, String workflowId) {
+        String workflow = workflowId != null && !workflowId.isBlank() ? workflowId.strip() : null;
+        if (workflow == null) {
+            List<SopBinding> chain = requirement.effectiveBindings();
+            workflow = chain.isEmpty() ? null : chain.getFirst().workflowId();
+        }
+        if (workflow == null) {
+            throw new WorkflowValidationException(
+                    List.of("workflowId is required (on the requirement or the request)"));
+        }
+        return workflow;
     }
 
     /** The requirement's runs of one SOP lane. */
@@ -426,7 +453,13 @@ public class RequirementService implements RunListener {
                             current,
                             (a, b) -> b.createdAt().isBefore(a.createdAt()) ? a : b);
                 }
-                String status = aggregateStatus(latest.values());
+                String aggregated = aggregateStatus(latest.values());
+                boolean unstarted =
+                        requirement.effectiveBindings().stream().anyMatch(b -> !latest.containsKey(b.workflowId()));
+                // the chain is not finished while some of its lanes never ran
+                String status = unstarted && (aggregated.equals("in_review") || aggregated.equals("done"))
+                        ? "in_progress"
+                        : aggregated;
                 java.util.Map<String, PullRequest> byUrl = new java.util.LinkedHashMap<>();
                 latest.values().forEach(r -> r.deliveries().forEach(p -> byUrl.putIfAbsent(p.url(), p)));
                 List<PullRequest> deliveries = byUrl.isEmpty() ? requirement.deliveries() : List.copyOf(byUrl.values());

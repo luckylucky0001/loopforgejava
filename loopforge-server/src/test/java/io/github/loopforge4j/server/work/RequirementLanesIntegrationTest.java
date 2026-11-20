@@ -236,6 +236,10 @@ class RequirementLanesIntegrationTest {
                 ((List<String>) ((Map<String, Object>) call(vic, "GET", base, null, 200)).get("runIds")).getFirst());
         await().atMost(Duration.ofSeconds(30))
                 .until(() -> runStatus(dev, product.get("id")).equals("succeeded"));
+        // lanes of the chain that never ran keep the requirement in progress
+        await().atMost(Duration.ofSeconds(10))
+                .until(() ->
+                        "in_progress".equals(((Map<String, Object>) call(vic, "GET", base, null, 200)).get("status")));
         call(dev, "POST", base + "/runs", Map.of("workflowId", "product"), 409);
         call(dev, "POST", base + "/runs", Map.of("workflowId", "backend", "rerun", true), 422);
         Map<String, Object> backend = call(dev, "POST", base + "/runs", Map.of("workflowId", "backend"), 201);
@@ -279,6 +283,30 @@ class RequirementLanesIntegrationTest {
                 .until(() -> runStatus(dev, other.get("id")).equals("succeeded"));
         assertThat(lane(call(vic, "GET", base + "/snapshot", null, 200), "other"))
                 .containsEntry("orphan", true);
+        // a lane whose runs were deleted starts again
+        call(admin, "DELETE", "/api/v1/runs/" + other.get("id"), null, 204);
+        Map<String, Object> again = call(dev, "POST", base + "/runs", Map.of("workflowId", "other"), 201);
+        await().atMost(Duration.ofSeconds(30))
+                .until(() -> runStatus(dev, again.get("id")).equals("succeeded"));
+
+        // SOPs that nest each other do not explode the snapshot
+        List<Map<String, Object>> toB = new java.util.ArrayList<>();
+        List<Map<String, Object>> toA = new java.util.ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            toB.add(Map.of("id", "b" + i, "type", "sop", "sopWorkflowId", "loop-b"));
+            toA.add(Map.of("id", "a" + i, "type", "sop", "sopWorkflowId", "loop-a"));
+        }
+        call(admin, "PUT", "/api/v1/workflows/loop-a", workflow("甲", null, toB, null), 200);
+        call(admin, "PUT", "/api/v1/workflows/loop-b", workflow("乙", null, toA, null), 200);
+        Map<String, Object> looped = call(
+                dev,
+                "POST",
+                "/api/v1/projects/p1/requirements",
+                Map.of("title", "嵌套", "sopBindings", List.of(Map.of("workflowId", "loop-a"))),
+                201);
+        long started = System.nanoTime();
+        call(vic, "GET", "/api/v1/projects/p1/requirements/" + looped.get("number") + "/snapshot", null, 200);
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(5));
 
         // switching the playbook replaces the chain; viewers cannot change it
         call(vic, "PUT", base + "/sops", Map.of("playbookId", "pb-仅后端"), 403);
