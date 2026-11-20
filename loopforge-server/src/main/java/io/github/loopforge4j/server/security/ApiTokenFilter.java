@@ -63,7 +63,8 @@ class ApiTokenFilter extends OncePerRequestFilter {
                                                 .substring(
                                                         io.github.loopforge4j.server.mcp.RunTokens.CONVERSATION_PREFIX
                                                                 .length()),
-                                        c.projectId())));
+                                        c.projectId(),
+                                        c.nodeId())));
             }
         } else if (tokens.authenticate(token).isPresent()) {
             principal = Optional.of(io.github.loopforge4j.server.account.CurrentUser.SERVICE);

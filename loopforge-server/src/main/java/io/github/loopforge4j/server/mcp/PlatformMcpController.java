@@ -49,12 +49,24 @@ public class PlatformMcpController {
 
     private final InternalApi api;
     private final AccessPolicy access;
+    private final io.github.loopforge4j.server.assistant.AssistantDrafts drafts;
+    private final io.github.loopforge4j.server.assistant.AssistantStreams streams;
+    private final io.github.loopforge4j.server.assistant.AssistantStore assistants;
     private final boolean enabled;
     private final String version;
 
-    public PlatformMcpController(InternalApi api, AccessPolicy access, LoopForgeProperties properties) {
+    public PlatformMcpController(
+            InternalApi api,
+            AccessPolicy access,
+            LoopForgeProperties properties,
+            io.github.loopforge4j.server.assistant.AssistantDrafts drafts,
+            io.github.loopforge4j.server.assistant.AssistantStreams streams,
+            io.github.loopforge4j.server.assistant.AssistantStore assistants) {
         this.api = api;
+        this.assistants = assistants;
         this.access = access;
+        this.drafts = drafts;
+        this.streams = streams;
         this.enabled = properties.mcp().platformEnabled();
         String v = PlatformMcpController.class.getPackage().getImplementationVersion();
         this.version = v == null ? "dev" : v;
@@ -208,6 +220,31 @@ public class PlatformMcpController {
             JsonNode b = arguments == null ? null : arguments.get("body");
             body = b == null || b.isNull() ? "{}" : Json.write(b);
         }
+        CurrentUser.AgentGrant grant = user.agent();
+        if (!op.readOnly()
+                && grant != null
+                && grant.delegated()
+                && grant.runId().startsWith(RunTokens.CONVERSATION_PREFIX)
+                && !unattended(grant.runId().substring(RunTokens.CONVERSATION_PREFIX.length()))
+                && io.github.loopforge4j.server.assistant.AssistantDrafts.needsApproval(
+                        drafts.mode(user.id()), op.name(), op.method())) {
+            // the speaker decides: the write waits as a draft on their conversation
+            String sessionId = grant.runId().substring(RunTokens.CONVERSATION_PREFIX.length());
+            io.github.loopforge4j.server.assistant.AssistantDrafts.Draft draft =
+                    drafts.propose(sessionId, grant.nodeId(), user.id(), op.name(), op.method(), target, body);
+            streams.publish(sessionId, "drafts", Map.of("id", draft.id(), "status", draft.status()));
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("draftId", draft.id());
+            data.put("status", "pending_approval");
+            return McpRpc.result(
+                    id,
+                    McpRpc.toolResult(
+                            "已提交待确认草稿 " + draft.id() + "（" + op.method() + " " + target
+                                    + "）：用户在对话里确认后才会执行，现在还没有生效。请在回复里说明这项操作、提醒用户确认，"
+                                    + "不要重复提交，也不要声称已经完成。",
+                            false,
+                            data));
+        }
         try {
             InternalApi.Response response = api.call(op.method(), target, body, authorization);
             return McpRpc.result(id, toolResult(response));
@@ -218,6 +255,14 @@ public class PlatformMcpController {
             Thread.currentThread().interrupt();
             return McpRpc.result(id, failure("interrupted", 0));
         }
+    }
+
+    /** A scheduled AI task's turn: nobody is there to confirm, it does what its saver set it up to do. */
+    private boolean unattended(String sessionId) {
+        return assistants
+                .find(sessionId)
+                .map(s -> io.github.loopforge4j.server.assistant.AssistantSession.SCHEDULED.equals(s.source()))
+                .orElse(false);
     }
 
     /** The operation's path with encoded path and query parameters. */

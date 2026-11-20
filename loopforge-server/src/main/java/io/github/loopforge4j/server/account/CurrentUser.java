@@ -56,11 +56,16 @@ public record CurrentUser(String id, String username, Role role, boolean service
      * roles (only the session's project for a project conversation), never administrator rights.
      */
     public static CurrentUser assistantFor(User user, String sessionId, String projectId) {
+        return assistantFor(user, sessionId, projectId, null);
+    }
+
+    /** As above, for the turn {@code turnId} (its proposed writes attach to that turn). */
+    public static CurrentUser assistantFor(User user, String sessionId, String projectId, String turnId) {
         return new CurrentUser(
                 user.id(),
                 user.username(),
                 Role.MEMBER,
                 false,
-                new AgentGrant("conv:" + sessionId, projectId, null, "main-bot", true));
+                new AgentGrant("conv:" + sessionId, projectId, turnId, "main-bot", true));
     }
 }

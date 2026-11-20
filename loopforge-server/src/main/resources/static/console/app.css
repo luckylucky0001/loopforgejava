@@ -202,3 +202,8 @@ meter { width: 160px; }
 .row .grow { flex: 1; min-width: 160px; }
 .term-host { margin-top: 8px; background: #000; border-radius: 6px; padding: 6px; min-height: 40px; }
 .term-host:empty { display: none; }
+.chat-drafts .draft { border: 1px solid var(--border, #ddd); border-left: 3px solid #f59e0b; border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
+.chat-drafts .draft-applied { border-left-color: #10b981; }
+.chat-drafts .draft-failed { border-left-color: #ef4444; }
+.chat-drafts .draft-discarded { border-left-color: #9ca3af; opacity: .75; }
+.chat-drafts pre { max-height: 240px; overflow: auto; }

@@ -122,6 +122,16 @@ loopforge:
 
 配置了单独的预览源时，服务器需要能访问 `loopforge.preview.public-url`。Docker 镜像不带浏览器，需要截图时在镜像里自行安装。
 
+### 对话写入审批
+
+助手以发言人的身份操作平台。读取直接执行；写入（建需求、保存 SOP、启动运行等）按发言人在对话页选择的方式处理：
+
+- **写入前请我确认**（默认）：写入成为草稿卡片，显示操作、地址和请求内容，发言人点「确认执行」后才用本人的凭据执行（因此只有本人的权限），也可以放弃；
+- **只确认危险操作**：删除、发布、派发、启动、取消、重试等需要确认，其余直接执行；
+- **直接执行**：不出草稿。
+
+只有提出草稿的人能确认或放弃它，项目里的其他人只能看到；执行结果（成功或失败与状态码）留在卡片上。定时 AI 任务无人值守，按保存者设定的任务直接执行。
+
 ### 托管 Agent CLI
 
 开启 `loopforge.managed-cli.enabled` 后，平台从 npm 官方仓库把 Claude Code、Codex、CodeBuddy 安装到 `loopforge.managed-cli.root` 下按版本区分的目录（需要 Node.js 22+ 与 npm）。每天 04:00–04:10（北京时间）检查一次：只选 `latest` 以内发布满 24 小时的稳定版，不降级，核对 SHA-512 完整性，并确认新版本报告的版本号和执行器要用的参数都在，才切换过去；安装时不带任何密钥，`--ignore-scripts` 安装、校验之后再构建依赖。
@@ -426,6 +436,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
 | `POST/DELETE` | `/api/v1/runs/{id}/browser`、`/api/v1/assistant/sessions/{id}/browser` | Agent 浏览器：状态、打开网址、前进后退、快照、截图、按 ref 点击 / 输入 / 按键、标签页、控制台输入事件；关闭 |
 | `POST` | `/api/v1/runs/{id}/workspace/terminal`、`/api/v1/assistant/sessions/{id}/terminal` | 工作区终端：`open` / `read`（Base64 输出）/ `input` / `close` |
+| `GET/POST` | `/api/v1/assistant/sessions/{id}/drafts[/{draftId}/confirm\|/discard]`、`/api/v1/assistant/sessions/preferences` | 对话写入草稿：列表、确认（以本人凭据执行）、放弃；审批方式 `approvalMode` |
 | `GET/POST` | `/api/v1/admin/managed-clis[/update\|/{cli}/rollback]` | 托管 Agent CLI：版本与最近报告、立即更新（后台）、回滚（管理员） |
 | `POST` | `/api/v1/browser/mcp` | 浏览器 MCP（Agent 的浏览器令牌） |
 | `GET/POST/PUT/DELETE` | `/api/v1/runs/{id}/preview[/session[/{sid}]\|/backend\|/download\|/screenshot]`、`/preview/{令牌}/**` | 前端预览：状态、会话链接（可带后端地址、可撤销）、默认后端地址、zip 下载、截图（PNG，`POST` 重新截图）、删除；免登录的隔离访问 |

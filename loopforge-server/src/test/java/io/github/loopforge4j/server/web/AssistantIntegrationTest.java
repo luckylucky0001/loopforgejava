@@ -163,6 +163,10 @@ class AssistantIntegrationTest {
         ok(erin, "GET", "/api/v1/assistant/sessions/" + id, null, 200);
         ok(erin, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "我也说一句"), 403);
 
+        // writes run directly in this test (approval drafts are covered by AssistantApprovalIntegrationTest)
+        assertThat(ok(carol, "GET", "/api/v1/assistant/sessions/preferences", null, 200))
+                .containsEntry("approvalMode", "confirm");
+        ok(carol, "PUT", "/api/v1/assistant/sessions/preferences", Map.of("approvalMode", "auto"), 200);
         ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "帮我建一个需求：登录页报错"), 202);
         // a message sent while the assistant answers waits; its author can take it back
         Map<String, Object> waiting =

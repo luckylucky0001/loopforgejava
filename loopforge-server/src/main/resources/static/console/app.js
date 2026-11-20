@@ -1801,6 +1801,26 @@ async function chatPage(id) {
   const showQueue = (items) => queueBox.replaceChildren(...(items || []).map((q) => h('div', { class: 'queued' },
     h('span', { class: 'chip' }, q.priority > 0 ? '插队' : '排队中'), h('span', {}, q.content.length > 120 ? `${q.content.slice(0, 120)}…` : q.content),
     q.speakerId === me?.user?.id ? h('button', { onclick: () => attempt(() => api(`/assistant/sessions/${current.id}/queue/${q.id}`, { method: 'DELETE' })) }, '撤回') : null)));
+  // the assistant's platform writes wait here for the speaker (approval mode confirm / assisted)
+  const draftsBox = h('div', { class: 'chat-drafts' });
+  const DRAFT_STATUS = { pending: '待确认', applied: '已执行', failed: '执行失败', discarded: '已放弃', deciding: '处理中' };
+  const showDrafts = (items) => draftsBox.replaceChildren(...(items || []).filter((d) => d.status === 'pending' || Date.now() - new Date(d.decidedAt || 0) < 600000).map((d) => {
+    let body = d.body || '';
+    try { body = JSON.stringify(JSON.parse(body), null, 2); } catch { /* as sent */ }
+    const decide = (action) => attempt(() => api(`/assistant/sessions/${current.id}/drafts/${d.id}/${action}`, { method: 'POST' }), loadDrafts);
+    return h('div', { class: `draft draft-${d.status}` },
+      h('div', { class: 'row' }, badge(d.status === 'applied' ? 'succeeded' : d.status === 'failed' ? 'failed' : d.status === 'pending' ? 'waiting' : 'cancelled', DRAFT_STATUS[d.status] || d.status),
+        h('strong', { class: 'mono' }, d.tool), h('span', { class: 'muted mono' }, `${d.method} ${d.target}`), h('span', { class: 'spacer' }),
+        d.status === 'pending' && d.mine ? h('button', { onclick: () => decide('discard') }, '放弃') : null,
+        d.status === 'pending' && d.mine ? h('button', { class: 'primary', onclick: () => decide('confirm') }, '确认执行') : null,
+        d.status === 'pending' && !d.mine ? h('span', { class: 'muted' }, '等待提出人确认') : null),
+      body ? h('details', {}, h('summary', { class: 'muted' }, '请求内容'), h('pre', { class: 'mono' }, body)) : null,
+      d.resultText && d.status !== 'applied' ? h('div', { class: 'error' }, d.resultText.slice(0, 300)) : null);
+  }));
+  const loadDrafts = () => api(`/assistant/sessions/${current.id}/drafts`).then(showDrafts).catch(() => {});
+  const approval = h('select', { title: '助手写入平台（建需求、改 SOP、启动运行等）时的审批方式' },
+    [['confirm', '写入前请我确认'], ['assisted', '只确认危险操作'], ['auto', '直接执行']].map(([v, label]) => h('option', { value: v, selected: (prefs.approvalMode || 'confirm') === v }, label)));
+  approval.addEventListener('change', () => attempt(() => api('/assistant/sessions/preferences', { method: 'PUT', body: { approvalMode: approval.value } })));
   const steer = h('input', { type: 'checkbox', checked: !!prefs.steerOnSend });
   steer.addEventListener('change', () => attempt(() => api('/assistant/sessions/preferences', { method: 'PUT', body: { steerOnSend: steer.checked } })));
   const send = () => {
@@ -1823,21 +1843,24 @@ async function chatPage(id) {
       h('span', { class: 'muted' }, `${current.projectId ? `项目 ${current.projectId}` : '个人对话'} · 沙箱 ${current.sandboxProfileId} · ${num(current.totalTokens)} Token · ${usd(current.costUsd)}`),
       current.requirementId && current.projectId ? h('a', { class: 'chip', href: `#/projects/${encodeURIComponent(current.projectId)}`, title: '对话里开的 PR 会登记到这个需求' }, '已关联需求') : null,
       h('button', { class: 'danger', onclick: remove }, '删除')),
-    feed, live, queueBox,
+    feed, live, draftsBox, queueBox,
     browserPanel(`/assistant/sessions/${encodeURIComponent(current.id)}/browser`),
     h('details', { class: 'panel' }, h('summary', {}, '工作区终端'), terminalPanel(`/assistant/sessions/${encodeURIComponent(current.id)}/terminal`, '助手回复时不能打开')),
     h('div', { class: 'panel mt' }, input, h('div', { class: 'row mt' },
       h('label', { class: 'muted', title: '回复进行中时发送：打断当前回复并先处理这条（否则排队等待）' }, steer, ' 发送时打断当前回复'),
+      h('label', { class: 'muted' }, '平台写入：', approval),
       h('span', { class: 'spacer' }), stopButton, sendButton))))]);
   steer.addEventListener('change', sync);
   sync();
   api(`/assistant/sessions/${current.id}/queue`).then(showQueue).catch(() => {});
+  loadDrafts();
   feed.scrollTop = feed.scrollHeight;
   stream = new EventSource(`/api/v1/assistant/sessions/${current.id}/stream?access_token=${encodeURIComponent(token())}`);
   stream.addEventListener('activity', (e) => { live.append(h('div', {}, String(sseData(e)))); live.scrollTop = live.scrollHeight; });
   stream.addEventListener('message', (e) => { feed.append(chatMessage(sseData(e))); feed.scrollTop = feed.scrollHeight; });
   stream.addEventListener('status', (e) => { generating = sseData(e).status !== 'idle'; if (!generating) live.replaceChildren(); sync(); });
   stream.addEventListener('queue', (e) => showQueue(sseData(e)));
+  stream.addEventListener('drafts', () => loadDrafts());
 }
 
 // ------------------------------------------------------------------ run evaluation

@@ -322,6 +322,12 @@ class PersonalCredentialsIntegrationTest {
                 .param("u", erinId)
                 .param("now", OffsetDateTime.now())
                 .update();
+        // erin lets the assistant write directly: what is tested here is what it may do at all
+        jdbc.sql("INSERT INTO assistant_preferences (user_id, steer_on_send, approval_mode, updated_at)"
+                        + " VALUES (:u, FALSE, 'auto', :now)")
+                .param("u", erinId)
+                .param("now", OffsetDateTime.now())
+                .update();
         String token = runTokens.issue(
                 RunTokens.Kind.CONVERSATION,
                 RunTokens.CONVERSATION_PREFIX + "chat_x",

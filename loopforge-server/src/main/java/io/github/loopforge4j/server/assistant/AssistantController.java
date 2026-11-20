@@ -22,10 +22,12 @@ public class AssistantController {
 
     private final AssistantService assistant;
     private final AssistantStreams streams;
+    private final AssistantApprovals approvals;
 
-    public AssistantController(AssistantService assistant, AssistantStreams streams) {
+    public AssistantController(AssistantService assistant, AssistantStreams streams, AssistantApprovals approvals) {
         this.assistant = assistant;
         this.streams = streams;
+        this.approvals = approvals;
     }
 
     @GetMapping
@@ -92,17 +94,50 @@ public class AssistantController {
         return java.util.Map.of("sessionIds", assistant.unread(principal));
     }
 
-    record Preferences(boolean steerOnSend) {}
+    /**
+     * @param approvalMode how the assistant's platform writes are approved: {@code confirm}, {@code
+     *     assisted} or {@code auto}
+     */
+    record Preferences(Boolean steerOnSend, String approvalMode) {}
 
     @GetMapping("/preferences")
     Preferences preferences(Principal principal) {
-        return new Preferences(assistant.steerOnSend(principal));
+        return new Preferences(assistant.steerOnSend(principal), approvals.mode(principal));
     }
 
     @org.springframework.web.bind.annotation.PutMapping("/preferences")
     Preferences savePreferences(@RequestBody Preferences body, Principal principal) {
-        assistant.steerOnSend(principal, body.steerOnSend());
-        return new Preferences(assistant.steerOnSend(principal));
+        if (body.steerOnSend() != null) {
+            assistant.steerOnSend(principal, body.steerOnSend());
+        }
+        if (body.approvalMode() != null) {
+            approvals.mode(principal, body.approvalMode());
+        }
+        return preferences(principal);
+    }
+
+    @io.swagger.v3.oas.annotations.Operation(
+            summary = "Writes the assistant proposed in this conversation, pending or decided")
+    @GetMapping("/{id}/drafts")
+    List<java.util.Map<String, Object>> drafts(@PathVariable String id, Principal principal) {
+        return approvals.list(id, principal);
+    }
+
+    @io.swagger.v3.oas.annotations.Operation(
+            summary = "Confirm a proposed write: it runs with your own credentials and rights")
+    @PostMapping("/{id}/drafts/{draftId}/confirm")
+    java.util.Map<String, Object> confirm(
+            @PathVariable String id,
+            @PathVariable String draftId,
+            @org.springframework.web.bind.annotation.RequestHeader("Authorization") String authorization,
+            Principal principal) {
+        return approvals.decide(id, draftId, true, principal, authorization);
+    }
+
+    @io.swagger.v3.oas.annotations.Operation(summary = "Discard a proposed write")
+    @PostMapping("/{id}/drafts/{draftId}/discard")
+    java.util.Map<String, Object> discard(@PathVariable String id, @PathVariable String draftId, Principal principal) {
+        return approvals.decide(id, draftId, false, principal, null);
     }
 
     @PostMapping("/{id}/cancel")
