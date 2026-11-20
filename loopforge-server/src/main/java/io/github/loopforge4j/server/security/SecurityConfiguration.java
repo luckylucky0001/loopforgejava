@@ -33,6 +33,20 @@ class SecurityConfiguration {
                 .logout(AbstractHttpConfigurer::disable)
                 .requestCache(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // the console renders untrusted run output: no inline script or style, same-origin only
+                .headers(headers -> headers.addHeaderWriter(
+                        new org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter(
+                                request -> {
+                                    String path = request.getRequestURI();
+                                    return path.equals("/")
+                                            || path.equals("/index.html")
+                                            || path.startsWith("/console/");
+                                },
+                                new org.springframework.security.web.header.writers.StaticHeadersWriter(
+                                        "Content-Security-Policy",
+                                        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+                                                + " connect-src 'self'; object-src 'none'; base-uri 'none';"
+                                                + " frame-ancestors 'none'; form-action 'self'"))))
                 .authorizeHttpRequests(auth -> {
                     // The original REQUEST dispatch was authorized; SSE completion re-enters as ASYNC.
                     auth.dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR)

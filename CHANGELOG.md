@@ -18,6 +18,8 @@
 
 - 迭代 4 — 多实例与运维：运行租约（存储内原子声明、心跳续约、结算与停机释放）、实例注册表与接管循环、同机已退出进程立即接管、失去租约即停止本地执行；工作区主机绑定与"主机下线且有仓库检出"时失败；遥测批量写入；保留策略（`loopforge.retention.telemetry/runs`）；Micrometer 指标（`loopforge.runs.*`、`loopforge.nodes.*`、`loopforge.node.duration`、`loopforge.gate.*`、`loopforge.tokens`、`loopforge.cost.usd`）。
 
+- 迭代 5 — 协作：账户（首个为管理员、bcrypt、登录锁定、会话/个人 Token）、项目与四级成员角色、全 API 授权与运行可见性过滤；需求（编号、`feature/requirement-N` 工作分支、状态随运行/PR 推进）；cron 定时任务（多实例单次触发）；Webhook 通知（签名、重试）；Web 控制台（`/`，严格 CSP、无第三方依赖）。
+
 ### Fixed (并发审查)
 - 暂停后继续父运行会重复启动子 SOP 并遗留旧子运行。
 - 自动打回会清除待处理的取消/暂停；取消待处理时其他人工操作也会清除它。

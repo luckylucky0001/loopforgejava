@@ -29,6 +29,11 @@
 | `internal/runtime/sandbox_docker.go` | `core.runtime.sandbox.DockerSandbox*` | 每运行一个容器；镜像构建与环境定义未移植 |
 | `internal/engine/run_recovery.go`（租约、接管、工作区主机绑定）、`internal/repo/run_admission.go`（租约 SQL） | `core.engine.LeaseKeeper`、`RunEngine.claimOrphanedRuns`、`server.persistence.JdbcInstanceRegistry` | 已移植（排队准入/桶限流未移植） |
 | `internal/observability`（遥测批量）、分析统计 | `core.engine.TelemetryBuffer`、`server.ops.RunMetrics` | 指标以 Micrometer 暴露 |
+| `internal/domain/user.go`、`project.go`、`internal/httpapi` 账户/项目部分 | `server.account` | 密码账户 + Token；未移植 OAuth/企业身份、个人凭据库 |
+| `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*` | 平台需求；未移植工蜂/TAPD 同步、多泳道 |
+| `internal/domain/shared_schedule.go`、`schedule_execution.go` | `server.work.Schedule*` | cron 定时运行 |
+| `internal/domain/notification*.go` | `server.work.Notifier`、`NotificationChannel` | Webhook；未移植企业微信/Bot 模板 |
+| `web/`（React 控制台） | `static/console`（原生 ES 模块） | 重写，不含上游前端代码与素材 |
 | `internal/domain/assets.go`（rules/skills/mcp） | `core.domain.RuleDefinition`、`SkillDefinition`、`McpServerDefinition` | 文本文件（二进制 skill 文件、市场来源未移植） |
 
 ## 有意的差异
@@ -58,4 +63,4 @@
 
 ## 尚未移植
 
-Web UI 与 Chat/Main Bot、会话工作区、GitLab/工蜂 MR 交付、执行机器（runner）与云端池、平台 MCP 与知识库 MCP、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、账户/项目/需求/Issue、定时任务、通知与 Bot、成本定价表与分析看板、预览构建、运行排队准入与限流桶。排期见 [roadmap.md](roadmap.md)。
+Chat/Main Bot 与会话工作区、GitLab/工蜂 MR 交付与 Issue 同步、执行机器（runner）与云端池、平台 MCP 与知识库 MCP、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、OAuth/企业身份、企业微信等 Bot 通知、成本定价表与分析看板、预览构建、运行排队准入与限流桶、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。

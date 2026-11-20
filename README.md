@@ -4,7 +4,7 @@
 
 > 本项目为独立的社区移植，**与腾讯无隶属、赞助或背书关系**。上游以 MIT 许可发布，本仓库同样采用 MIT，并完整保留上游版权与许可声明，详见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-当前版本 0.1.0-SNAPSHOT：已完成引擎核心与 REST/SSE 服务（迭代 1）、Git 仓库交付（迭代 2）、MCP / Skills / Hooks / 全部 10 种 CLI / Docker 沙箱（迭代 3）、多实例租约与运维（迭代 4）；后续迭代见 [路线图](docs/roadmap.md)。
+当前版本 0.1.0-SNAPSHOT：已完成引擎核心与 REST/SSE 服务（迭代 1）、Git 仓库交付（迭代 2）、MCP / Skills / Hooks / 全部 10 种 CLI / Docker 沙箱（迭代 3）、多实例租约与运维（迭代 4）、账户/项目/需求/定时任务/通知/Web 控制台（迭代 5）；尚未移植的部分见 [移植对照](docs/porting.md)。
 
 ## 已实现
 
@@ -20,6 +20,7 @@
 | 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止；Docker 沙箱：每个运行一个容器、资源限制、只读根文件系统、变量不上命令行 |
 | 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话；多实例部署：运行租约、心跳与过期接管、工作区主机绑定 |
 | 运维 | 遥测批量写入；保留策略（执行器遥测、终态运行）；Prometheus 指标：运行与节点结果、节点耗时、返工、门禁决策、token 与成本 |
+| 协作 | 账户与 Token、项目与成员角色、需求（自动工作分支与状态推进）、定时任务、Webhook 通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理） |
 | 服务 | Spring Boot 4.1 / Java 21 虚拟线程；REST + SSE（支持 `Last-Event-ID` 续传）；RFC 9457 错误；Bearer Token；Flyway；H2（开发）/ PostgreSQL（生产）；OpenAPI；Actuator 健康探针与 Prometheus 指标 |
 
 ## 快速开始
@@ -31,7 +32,9 @@
 java -jar loopforge-server/target/loopforge-server-0.1.0-SNAPSHOT.jar
 ```
 
-服务默认监听 `8090`，数据写在 `./data`（H2 数据库、运行工作区、API Token）。未配置 Token 时会生成一个随机 Token 写入 `./data/api-token`（仅属主可读，不会打印到日志）：
+服务默认监听 `8090`，数据写在 `./data`（H2 数据库、运行工作区、API Token）。浏览器打开 <http://localhost:8090/>：首次访问创建管理员账户，之后用账户登录控制台。
+
+脚本与自动化可以使用个人 Token（控制台「设置」中创建），或服务 Token：未配置时会生成一个随机 Token 写入 `./data/api-token`（仅属主可读，不会打印到日志），它拥有管理员权限：
 
 ```bash
 export TOKEN=$(cat data/api-token)
@@ -144,6 +147,12 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` | `/api/v1/executors` | 执行器及本机是否已安装 |
 | `GET/PUT/DELETE` | `/api/v1/repositories/{id}` | 代码仓库 |
 | `GET/PUT/DELETE` | `/api/v1/rules/{id}`、`/skills/{id}`、`/mcp-servers/{id}` | 角色可绑定的规则、Skills、MCP 服务器 |
+| `GET` / `POST` | `/api/v1/auth/status`、`/auth/setup`、`/auth/login`、`/auth/logout` | 初始化与登录（公开） |
+| `GET/POST/DELETE` | `/api/v1/me`、`/me/tokens`、`/me/password`；`/api/v1/users` | 当前账户与个人 Token；账户管理（管理员） |
+| `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
+| `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs]]` | 需求与启动需求运行 |
+| `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run]]` | 定时任务 |
+| `GET/POST/PUT/DELETE` | `/api/v1/notifications[/{id}]` | Webhook 通知 |
 | `GET` / `POST` | `/api/v1/runs/{id}/deliveries` / `/deliveries/refresh` | 运行交付的 PR 与合并状态 |
 | `POST` / `GET` | `/api/v1/runs` | 启动运行 / 列表（按状态、SOP、父运行过滤） |
 | `GET` | `/api/v1/runs/{id}`、`/events`、`/artifacts`、`/artifacts/{aid}` | 运行详情、事件、产物 |

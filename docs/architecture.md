@@ -93,6 +93,12 @@
 
 每个运行（含子 SOP 共享的工作区）一个长驻容器：`docker run -d --init --security-opt no-new-privileges -v <ws>:<ws> --user <uid:gid> … sleep infinity`。命令通过 `docker exec` 执行：变量值放在 docker 客户端自己的环境里并以 `-e NAME` 传入（命令行只有变量名）；每次 exec 带唯一的 `LOOPFORGE_EXEC_ID`，命令结束后由容器内包装器结束同标记的后台进程（否则它们会让 `docker exec` 一直不返回），取消和超时时再从外部按标记终止。引擎崩溃后恢复时删除旧容器、在同一工作区上重建。
 
+## 账户与授权
+
+请求先由 `ApiTokenFilter` 认证：`lfu_` 前缀的账户 Token（会话或个人）在 `user_tokens` 中按 SHA-256 查找（账户未停用、未过期），配置的 API Token 认证为服务身份（管理员）。授权集中在 `AccessPolicy`：管理员与服务身份可做一切；项目资源需要足够的成员角色（viewer 读、developer 启动与操作运行、maintainer 管理项目 SOP/仓库/定时任务/通知、owner 管理成员）；不属于项目的运行只对启动者可见；全局目录（角色、规则、Skills、MCP）由管理员维护。运行表冗余 `project_id`、`triggered_by` 列，列表查询在数据库中按可见性过滤。
+
+需求、定时任务和通知都监听已提交的运行变化（`RunListener`）：需求跟随最近一次运行与其 PR；通知只在本实例观察到的状态转换上发送一次；定时任务由所有实例轮询，`next_run_at` 上的比较并交换保证每个时间槽只触发一次。
+
 ## 安全
 
 - API：无状态 Bearer Token（仅保存 SHA-256 摘要、常量时间比较），未配置时生成随机 Token 写入仅属主可读的文件。CSRF 关闭（无 Cookie/会话）。SSE 端点额外接受 `access_token` 查询参数（浏览器 EventSource 无法设置请求头），其他端点不接受。
@@ -102,6 +108,7 @@
 - 输入边界：ID 限定 `[A-Za-z0-9][A-Za-z0-9._:-]{0,199}`（会进入 URL、文件名和 `VARCHAR(200)` 列），名称 ≤ 500，单个工作流 ≤ 200 个节点；请求体默认 ≤ 8 MB（`loopforge.security.max-request-size`），超出直接 413。
 - 错误响应不包含 SQL、驱动或内部 Java 类型信息；存储故障统一为 503，数据冲突为 409。
 - SSE 每个运行最多 32 个订阅、全局 1000 个；停机时先关闭所有流，再进入 Web 服务器的优雅停机，保证引擎有时间挂起运行。
+- 控制台是静态页面，响应带严格 CSP（禁止内联脚本与样式、只连同源）；所有数据以 `textContent` 渲染，运行输出中的标记不会被解释。
 - 只有 `/actuator/health/**` 公开；`/actuator/info`、`/actuator/prometheus` 需要 Token。
 
 - Git：凭据只来自服务端配置。HTTPS token 放在运行进程的环境变量里，由控制目录中的 credential helper 按主机读取（`GIT_CONFIG_COUNT` 注入 `credential.helper`，先清空用户/系统级 helper），因此不会出现在克隆 URL、`.git/config`、运行数据或日志中；SSH 私钥写入控制目录且仅属主可读，`known_hosts` 采用 `accept-new`。`GIT_TERMINAL_PROMPT=0` 防止 CLI 卡在交互式询问。克隆 URL 内嵌凭据、`file:`/本地路径和 `http://` 默认拒绝。
