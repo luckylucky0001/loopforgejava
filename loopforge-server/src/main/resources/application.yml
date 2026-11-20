@@ -1,0 +1,111 @@
+spring:
+  application:
+    name: loopforge4j
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    # Embedded H2 for evaluation; use the "postgres" profile (or SPRING_DATASOURCE_*) in production.
+    url: jdbc:h2:file:${LOOPFORGE_DATA_DIR:./data}/loopforge;AUTO_SERVER=FALSE;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    hikari:
+      maximum-pool-size: 10
+  flyway:
+    locations: classpath:db/migration
+  jackson:
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: false
+      fail-on-null-for-primitives: false
+  mvc:
+    problemdetails:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
+
+server:
+  port: ${PORT:8090}
+  shutdown: graceful
+  error:
+    include-stacktrace: never
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  info:
+    env:
+      enabled: false
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+loopforge:
+  workspace-root: ${LOOPFORGE_DATA_DIR:./data}/workspaces
+  demo-catalog: true
+  engine:
+    default-executor: claude
+    node-timeout: 2h
+    scheduler-tick: 500ms
+    release-workspace-on-finish: true
+    recover-on-startup: true
+  sandbox:
+    private-home: true
+  security:
+    token-file: ${LOOPFORGE_DATA_DIR:./data}/api-token
+    public-docs: true
+  # Executor credentials are injected only into the CLI process of that executor kind.
+  # credentials:
+  #   claude-code:
+  #     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+  #   codex:
+  #     OPENAI_API_KEY: ${OPENAI_API_KEY}
+  #   codebuddy:
+  #     CODEBUDDY_API_KEY: ${CODEBUDDY_API_KEY}
+
+logging:
+  level:
+    io.github.loopforge4j: INFO
+
+---
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/loopforge}
+    username: ${SPRING_DATASOURCE_USERNAME:loopforge}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+management:
+  endpoint:
+    health:
+      show-details: never
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+loopforge:
+  demo-catalog: false
+  security:
+    public-docs: false

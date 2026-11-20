@@ -1,0 +1,120 @@
+package io.github.loopforge4j.server.config;
+
+import io.github.loopforge4j.core.domain.ExecutorDefinition;
+import io.github.loopforge4j.core.engine.EngineSettings;
+import io.github.loopforge4j.core.engine.RunEngine;
+import io.github.loopforge4j.core.engine.RunListener;
+import io.github.loopforge4j.core.runtime.executor.CredentialProvider;
+import io.github.loopforge4j.core.runtime.executor.ExecutorRegistry;
+import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxOptions;
+import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxProvider;
+import io.github.loopforge4j.core.store.CatalogStore;
+import io.github.loopforge4j.core.store.RunStore;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.time.Clock;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/** Wires the framework-independent engine from {@code loopforge-core} into the Spring context. */
+@Configuration(proxyBeanMethods = false)
+class EngineConfiguration {
+
+    private static final Logger log = LoggerFactory.getLogger(EngineConfiguration.class);
+
+    @Bean
+    Clock clock() {
+        return Clock.systemUTC();
+    }
+
+    /** Credentials come from configuration (typically environment variables), never from run data. */
+    @Bean
+    CredentialProvider credentialProvider(LoopForgeProperties properties) {
+        Map<String, Map<String, String>> credentials = properties.credentials();
+        return kind -> credentials.getOrDefault(kind, Map.of());
+    }
+
+    @Bean
+    ExecutorRegistry executorRegistry(LoopForgeProperties properties, CredentialProvider credentials) {
+        ExecutorRegistry registry = ExecutorRegistry.withBuiltIns(credentials);
+        properties.executors().forEach((id, override) -> {
+            ExecutorDefinition base = registry.definition(id)
+                    .orElseThrow(() -> new IllegalStateException("loopforge.executors." + id + ": unknown executor"));
+            registry.define(new ExecutorDefinition(
+                    base.id(),
+                    base.name(),
+                    base.kind(),
+                    override.binary() == null ? base.binary() : override.binary(),
+                    override.args() == null ? base.args() : override.args(),
+                    base.protocol(),
+                    override.model() == null ? base.model() : override.model(),
+                    override.effort() == null ? base.effort() : override.effort()));
+        });
+        return registry;
+    }
+
+    @Bean
+    LocalSandboxProvider localSandboxProvider(LoopForgeProperties properties) {
+        LoopForgeProperties.Sandbox sandbox = properties.sandbox();
+        return new LocalSandboxProvider(new LocalSandboxOptions(
+                properties.workspaceRoot(),
+                sandbox.passthroughEnv(),
+                sandbox.privateHome(),
+                properties.engine().nodeTimeout()));
+    }
+
+    @Bean(destroyMethod = "close")
+    RunEngine runEngine(
+            RunStore runStore,
+            CatalogStore catalogStore,
+            ExecutorRegistry executors,
+            LocalSandboxProvider sandbox,
+            LoopForgeProperties properties,
+            Clock clock,
+            List<RunListener> listeners) {
+        LoopForgeProperties.Engine engine = properties.engine();
+        EngineSettings settings = new EngineSettings(
+                instanceId(properties),
+                engine.defaultExecutor(),
+                engine.nodeTimeout(),
+                engine.schedulerTick(),
+                engine.releaseWorkspaceOnFinish());
+        RunEngine runEngine = RunEngine.builder()
+                .runStore(runStore)
+                .catalogStore(catalogStore)
+                .executors(executors)
+                .sandbox(sandbox)
+                .settings(settings)
+                .clock(clock)
+                .build();
+        listeners.forEach(runEngine::addListener);
+        warnOnNonUtf8Locale();
+        return runEngine;
+    }
+
+    private static String instanceId(LoopForgeProperties properties) {
+        if (properties.instanceId() != null && !properties.instanceId().isBlank()) {
+            return properties.instanceId();
+        }
+        try {
+            return InetAddress.getLocalHost().getHostName() + "-"
+                    + ProcessHandle.current().pid();
+        } catch (UnknownHostException e) {
+            return "loopforge-" + ProcessHandle.current().pid();
+        }
+    }
+
+    private static void warnOnNonUtf8Locale() {
+        String jnu = System.getProperty("sun.jnu.encoding", "");
+        if (!jnu.toUpperCase(java.util.Locale.ROOT).contains("UTF")) {
+            log.warn(
+                    "JVM native encoding is {}; file names with non-ASCII characters may be mangled."
+                            + " Start the server with LANG=C.UTF-8.",
+                    jnu);
+        }
+    }
+}

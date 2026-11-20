@@ -1,0 +1,36 @@
+{
+  "agents": [],
+  "workflows": [
+    {
+      "id": "welcome-workflow",
+      "name": "平台验收 · 脚本与审批",
+      "version": 1,
+      "status": "published",
+      "tags": ["demo", "no-api-key"],
+      "description": "无需模型密钥。真实运行脚本、查看产物，在人工审批后继续执行。（移植自上游 LoopForge 公共目录，MIT）",
+      "sandboxProfileId": "local",
+      "nodes": [
+        {
+          "id": "prepare", "name": "生成验收报告", "type": "script", "scriptLanguage": "shell",
+          "script": "mkdir -p reports\nprintf '# LoopForge4J 本地验收\\n\\n已验证：真实脚本节点、持久化产物、人工审批与恢复。\\n' > reports/welcome.md",
+          "maxAttempts": 1, "position": {"x": 100, "y": 150},
+          "artifactOutputs": [{"name": "welcome", "path": "reports/welcome.md", "mediaType": "text/markdown", "required": true}]
+        },
+        {
+          "id": "approve", "name": "请确认验收报告", "type": "approval", "maxAttempts": 1, "rejectTo": "prepare",
+          "taskPrompt": "打开 welcome 产物，确认报告内容正确", "position": {"x": 370, "y": 150}
+        },
+        {
+          "id": "finish", "name": "完成验收", "type": "script", "scriptLanguage": "shell",
+          "script": "printf '# 验收完成\\n\\n审批已通过，执行成功恢复。\\n' > completed.md",
+          "maxAttempts": 1, "position": {"x": 640, "y": 150},
+          "artifactOutputs": [{"name": "completed", "path": "completed.md", "mediaType": "text/markdown", "required": true}]
+        }
+      ],
+      "edges": [
+        {"id": "e-1", "source": "prepare", "target": "approve", "when": "success"},
+        {"id": "e-2", "source": "approve", "target": "finish", "when": "success"}
+      ]
+    }
+  ]
+}

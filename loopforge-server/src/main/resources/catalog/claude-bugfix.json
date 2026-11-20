@@ -1,0 +1,48 @@
+{
+  "agents": [
+    {
+      "id": "bugfix-analyst", "name": "缺陷分析", "executorId": "claude",
+      "description": "复现问题并定位根因，产出修复方案。",
+      "prompt": "阅读工作区代码与运行输入，复现问题并定位根因。在 fix-plan.md 中写清：复现步骤、根因、修改范围、验证方式。只分析，不修改业务代码。",
+      "rules": ["不得泄露凭据", "不得伪造复现或测试证据"]
+    },
+    {
+      "id": "bugfix-developer", "name": "修复实现", "executorId": "claude",
+      "description": "按方案修复并补充回归测试。",
+      "prompt": "按照上游 fix-plan.md 修复缺陷，补充能覆盖该缺陷的回归测试，运行项目已有的测试命令。在 fix-report.md 中记录改动文件、测试命令与真实结果。",
+      "rules": ["只修改任务所需文件", "使用项目现有的构建与测试命令"],
+      "loop": {"enabled": true, "maxIterations": 2, "onExhausted": "human"}
+    },
+    {
+      "id": "bugfix-reviewer", "name": "独立评审", "executorId": "claude",
+      "description": "独立检查修复是否正确、测试是否真实有效。",
+      "prompt": "独立评审修复：核对根因与改动是否一致、回归测试是否真的覆盖缺陷、是否引入新风险。结论写入 review.md。发现必须由实现节点修复的问题时选择 rework。",
+      "rules": ["评审不修改代码", "结论必须引用具体文件与证据"]
+    }
+  ],
+  "workflows": [
+    {
+      "id": "claude-bugfix",
+      "name": "缺陷修复 · Claude Code",
+      "version": 1,
+      "status": "published",
+      "tags": ["template"],
+      "description": "分析→修复→独立评审→人工验收。需要安装 Claude Code 并配置 loopforge.credentials.claude-code。",
+      "sandboxProfileId": "local",
+      "nodes": [
+        {"id": "analyze", "name": "缺陷分析", "type": "agent", "agentId": "bugfix-analyst", "maxAttempts": 2,
+         "artifactOutputs": [{"name": "fix-plan", "path": "fix-plan.md", "mediaType": "text/markdown", "required": true}]},
+        {"id": "fix", "name": "修复实现", "type": "agent", "agentId": "bugfix-developer", "maxAttempts": 2,
+         "artifactOutputs": [{"name": "fix-report", "path": "fix-report.md", "mediaType": "text/markdown", "required": true}]},
+        {"id": "review", "name": "独立评审", "type": "agent", "agentId": "bugfix-reviewer", "rejectTo": "fix", "maxReworks": 2,
+         "artifactOutputs": [{"name": "review", "path": "review.md", "mediaType": "text/markdown", "required": true}]},
+        {"id": "accept", "name": "人工验收", "type": "approval", "rejectTo": "fix", "taskPrompt": "确认修复与回归测试证据"}
+      ],
+      "edges": [
+        {"source": "analyze", "target": "fix"},
+        {"source": "fix", "target": "review"},
+        {"source": "review", "target": "accept"}
+      ]
+    }
+  ]
+}

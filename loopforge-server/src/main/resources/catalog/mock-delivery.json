@@ -1,0 +1,47 @@
+{
+  "agents": [
+    {
+      "id": "demo-planner", "name": "需求定型（模拟）", "executorId": "mock",
+      "description": "演示用角色：不调用模型，按约定写出需求文档。",
+      "prompt": "把输入整理成可验收的需求说明，写清范围、验收标准与不做的事项。"
+    },
+    {
+      "id": "demo-developer", "name": "开发实现（模拟）", "executorId": "mock",
+      "description": "演示用角色：写出实现说明。",
+      "prompt": "根据需求说明完成实现，并记录改动与自测结果。",
+      "verification": [
+        {"id": "impl-present", "name": "实现说明非空", "mode": "command", "commands": ["test -s implementation.md"], "required": true}
+      ]
+    },
+    {
+      "id": "demo-reviewer", "name": "独立评审（模拟）", "executorId": "mock",
+      "description": "演示用角色：第一次评审要求返工，第二次通过，用于展示打回闭环。",
+      "prompt": "独立评审实现说明是否满足需求。[[mock:gate=rework,pass]] [[mock:reason=缺少异常路径的测试证据]] [[mock:finding=high|缺少异常路径测试|implementation.md 未提及失败场景]]"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "demo-delivery",
+      "name": "演示 · 定型→实现→评审→验收（无需密钥）",
+      "version": 1,
+      "status": "published",
+      "tags": ["demo", "no-api-key"],
+      "description": "使用确定性模拟执行器演示 Agent 节点、产物契约、命令门禁、评审打回与人工验收。",
+      "sandboxProfileId": "local",
+      "nodes": [
+        {"id": "clarify", "name": "需求定型", "type": "agent", "agentId": "demo-planner", "maxAttempts": 1,
+         "artifactOutputs": [{"name": "requirement", "path": "requirement.md", "mediaType": "text/markdown", "required": true}]},
+        {"id": "implement", "name": "开发实现", "type": "agent", "agentId": "demo-developer", "maxAttempts": 2,
+         "artifactOutputs": [{"name": "implementation", "path": "implementation.md", "mediaType": "text/markdown", "required": true}]},
+        {"id": "review", "name": "独立评审", "type": "agent", "agentId": "demo-reviewer", "rejectTo": "implement", "maxReworks": 2, "maxAttempts": 1,
+         "artifactOutputs": [{"name": "review", "path": "review.md", "mediaType": "text/markdown", "required": true}]},
+        {"id": "accept", "name": "人工验收", "type": "approval", "rejectTo": "implement", "taskPrompt": "检查评审结论与实现说明"}
+      ],
+      "edges": [
+        {"source": "clarify", "target": "implement"},
+        {"source": "implement", "target": "review"},
+        {"source": "review", "target": "accept"}
+      ]
+    }
+  ]
+}

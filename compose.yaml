@@ -1,0 +1,40 @@
+# Production-like stack: LoopForge4J + PostgreSQL.
+#   LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -hex 16) docker compose up -d
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: loopforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: loopforge
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loopforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  loopforge:
+    build: .
+    image: loopforge4j:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres,prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loopforge
+      SPRING_DATASOURCE_USERNAME: loopforge
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      LOOPFORGE_SECURITY_APITOKENS: ${LOOPFORGE_API_TOKEN:?set LOOPFORGE_API_TOKEN (32+ chars)}
+      LOOPFORGE_DEMOCATALOG: "true"
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - loopforge-data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  loopforge-data:
