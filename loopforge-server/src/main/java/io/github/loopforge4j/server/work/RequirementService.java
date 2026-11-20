@@ -234,7 +234,7 @@ public class RequirementService implements RunListener {
     }
 
     /** The requirement's top-level runs that still exist, oldest first. */
-    List<Run> runs(Requirement requirement) {
+    public List<Run> runs(Requirement requirement) {
         java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>(requirement.runIds());
         store.linkedRuns(requirement.id()).forEach(l -> ids.add(l.runId()));
         RunEngine engine = engines.getObject();

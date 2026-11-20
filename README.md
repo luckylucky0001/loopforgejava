@@ -119,6 +119,12 @@ loopforge:
 
 已结束的运行页面有「质量评测」：AI 根据这次运行的事实（每个节点的尝试、返工、耗时、Token、重复失败的工具、反复出现的错误、A→B→A 打回）按控制流、耗时、工具、Token、错误恢复、交付六个加权维度打分（准入线 70），列出发现，并给出受限的改进建议：调整节点的尝试 / 返工 / 失败策略 / 超时，给角色加或删门禁，给角色提示词追加一段话。建议只应用到当前的 SOP 或角色（不改这次运行），改 SOP 需要项目维护者、改角色需要管理员，每次修改都留有历史版本。评测使用发起人的凭据。
 
+### 业务域
+
+「业务域」把项目按业务归组，用来看交付情况（上游 business domains）。管理员创建业务域、指定管理员与查看者（填用户名或 id）并可停用；业务域管理员可以改名称、说明和查看者。项目 Owner 可以给自己的项目设置首次归属，迁移或清除归属需要管理员，每次调整都留有原因和历史。
+
+业务域报表按项目当前的归属统计：运行汇总与趋势（与「分析」同口径），按业务域和项目的运行、Token、费用、涉及需求与完成数，以及交付指标——完成的需求数（以最后一次成功运行为完成时间，没有运行的按需求更新时间估算）、合并的 PR、完成到合并的时长、交付周期 P50 / P95、执行时长、每个需求的 Token，并按天 / 周 / 月给出交付趋势。管理员看全部；业务域的管理员与查看者看该业务域；项目 Owner 看自己尚未归属的项目。
+
 ### 运行工作区
 
 运行页的「工作区」打开这次运行的工作区（子 SOP 显示父运行的工作区）：未提交的变更、文件树、文件内容（可看 HEAD 或某个提交时的版本）、与 HEAD 的差异、最近 50 个提交及其改动的文件、全文搜索。开发者及以上可以直接编辑文本文件（1 MB 以内），保存时带上读取时的 SHA-256，文件在此期间被 Agent 或他人改过就会被拒绝；每次修改都记入运行事件。`.git`、`.loopforge`、SSH / GPG 密钥、`.netrc`、`.npmrc` 与 `.env` 不会显示，`node_modules` 等依赖目录不进文件树。
@@ -332,6 +338,8 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs\|/snapshot\|/sops]]` | 需求、启动泳道（`workflowId`、`rerun`）、泳道快照、SOP 链与套餐 |
 | `GET/PUT` | `/api/v1/projects/{id}/playbooks` | 项目的流程套餐（写入需要维护者） |
+| `GET/PUT` | `/api/v1/business-domains`、`/api/v1/projects/{id}/business-domain[/history]` | 业务域（`createOnly`、乐观并发）、项目归属与历史 |
+| `GET` | `/api/v1/business-domain-report?businessDomainId=&from=&to=&grain=&timeZone=` | 业务域报表：运行汇总与趋势、按业务域 / 项目、交付指标与趋势 |
 | `GET/PUT` | `/api/v1/runs/{id}/workspace[/tree\|/file\|/diff\|/log\|/commit\|/search]` | 运行工作区：变更、文件树、文件（可带 `ref`）、差异、提交、搜索；`PUT /file` 带 `expectedSha256` 写入 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run\|/executions]]` | 定时任务（`kind`：`sop` / `assistant` / `dispatch`）与执行记录（结果、启动的运行、AI 回复与对话） |
 | `GET/POST/PUT/DELETE` | `/api/v1/notifications[/{id}]` | Webhook 通知 |

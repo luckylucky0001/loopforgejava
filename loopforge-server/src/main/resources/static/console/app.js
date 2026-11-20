@@ -195,7 +195,7 @@ function dag(workflow, statuses = {}, onSelect) {
 const NAV = [
   ['#/chat', '助手'], ['#/runs', '运行'], ['#/approvals', '待处理'], ['#/workflows', 'SOP'], ['#/agents', '角色'],
   ['#/assets/rules', '规则 / Skills / MCP'], ['#/environments/sandboxes', '沙箱环境'], ['#/repositories', '代码仓库'], ['#/projects', '项目'],
-  ['#/analytics', '分析'], ['#/knowledge', '知识库'], ['#/runners', '执行机器'], ['#/executors', '执行器'], ['#/settings', '设置'],
+  ['#/analytics', '分析'], ['#/business', '业务域'], ['#/knowledge', '知识库'], ['#/runners', '执行机器'], ['#/executors', '执行器'], ['#/settings', '设置'],
 ];
 
 function shell(content) {
@@ -233,7 +233,7 @@ const ROUTES = [
   [/^#\/repositories$/, () => listPage('repositories', '代码仓库', ['id', 'name', 'provider', 'cloneUrl', 'projectId'])],
   [/^#\/projects\/([^/]+)\/requirements\/(\d+)\/clarify$/, clarifyPage], [/^#\/projects\/([^/]+)\/requirements\/(\d+)$/, requirementPage], [/^#\/projects\/([^/]+)$/, projectPage], [/^#\/projects$/, projectsPage],
   [/^#\/executors$/, executorsPage], [/^#\/settings$/, settingsPage], [/^#\/users$/, usersPage],
-  [/^#\/analytics$/, analyticsPage], [/^#\/knowledge$/, knowledgePage], [/^#\/runners$/, runnersPage],
+  [/^#\/analytics$/, analyticsPage], [/^#\/business$/, businessPage], [/^#\/knowledge$/, knowledgePage], [/^#\/runners$/, runnersPage],
   [/^#\/chat\/([^/]+)$/, chatPage], [/^#\/chat$/, () => chatPage(null)],
 ];
 
@@ -1012,6 +1012,7 @@ async function projectPage(projectId) {
 
   shell([
     h('h1', {}, project.name), h('p', { class: 'muted' }, project.description || ''),
+    businessDomainRow(project, refresh),
     h('div', { class: 'row' }, h('h2', {}, '需求'), h('span', { class: 'spacer' }), h('button', { class: 'primary', onclick: newRequirement }, '新需求')),
     h('table', {}, h('tr', {}, ['#', '标题', '状态', '优先级', 'SOP', '最近运行', '操作'].map((t) => h('th', {}, t))),
       requirements.map((r) => h('tr', {}, h('td', {}, r.number), h('td', {}, h('a', { href: `#/projects/${encodeURIComponent(projectId)}/requirements/${r.number}` }, r.title),
@@ -1269,6 +1270,72 @@ async function analyticsPage() {
         report.failures.map((f) => h('tr', {}, h('td', {}, f.message), h('td', {}, f.runs),
           h('td', {}, h('a', { href: `#/runs/${f.sampleRunId}`, class: 'mono' }, `${f.sampleRunId.slice(0, 14)}${f.nodeId ? ` / ${f.nodeId}` : ''}`))))),
     h('h2', {}, '运行时段'), heatmap(report.heatmap),
+  ]);
+}
+
+// ------------------------------------------------------------------ business domains
+
+const businessState = { domain: 'all', days: '30', grain: 'week' };
+
+async function businessPage() {
+  const s = businessState;
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const domains = await api('/business-domains');
+  const query = new URLSearchParams({ businessDomainId: s.domain, grain: s.grain, timeZone: zone,
+    from: new Date(Date.now() - Number(s.days) * 86400000).toISOString() });
+  let report = null;
+  let reportError = null;
+  try { report = await api(`/business-domain-report?${query}`); } catch (error) { reportError = error; }
+  const pick = (key, options) => h('select', { onchange: (e) => { s[key] = e.target.value; route(); } },
+    options.map(([v, label]) => h('option', { value: v, selected: s[key] === v }, label)));
+  const edit = (item) => {
+    const d = item?.domain || { id: '', name: '', description: '', active: true, managers: [], viewers: [] };
+    const fields = [
+      { name: 'id', label: '标识（字母、数字、_ -）', value: d.id },
+      { name: 'name', label: '名称', value: d.name },
+      { name: 'description', label: '说明', type: 'textarea', rows: 3, value: d.description || '' },
+      { name: 'viewers', label: '查看者（用户名或 id，逗号分隔）', value: d.viewers.join(',') }];
+    if (domains.canAdmin) {
+      fields.push({ name: 'managers', label: '管理员（用户名或 id，逗号分隔）', value: d.managers.join(',') },
+        { name: 'active', label: '状态', type: 'select', options: ['true', 'false'], value: String(d.active) });
+    }
+    const split = (v) => (v || '').split(',').map((x) => x.trim()).filter(Boolean);
+    prompted(item ? `编辑业务域 · ${d.name}` : '新业务域', fields, (v) => api(`/business-domains${item ? '' : '?createOnly=true'}`, { method: 'PUT', body: {
+      id: v.id, name: v.name, description: v.description, viewers: split(v.viewers),
+      managers: domains.canAdmin ? split(v.managers) : d.managers, active: domains.canAdmin ? v.active === 'true' : d.active, updatedAt: d.updatedAt } }).then(() => route()));
+  };
+  const m = report?.deliveryMetrics;
+  const deliveryTiles = m ? h('div', { class: 'tiles' },
+    statTile('完成需求', num(m.completedIssues), m.estimatedCompletionIssues ? `${m.estimatedCompletionIssues} 个完成时间为估算` : `最近 ${time(m.latestCompletedAt)}`),
+    statTile('合并 PR / MR', num(m.mergedMrs), m.mergedMrsMissingTime ? `${m.mergedMrsMissingTime} 个缺少合并时间` : `${m.completionToMergeMissingIssues} 个需求尚未合并`),
+    statTile('完成 → 合并', ms(m.averageCompletionToMergeMs), `${m.completionToMergeSamples} 个样本 · 先合并后完成 ${m.mergedBeforeCompletionMrs}`),
+    statTile('交付周期 P50 / P95', `${ms(m.p50CycleDurationMs)} / ${ms(m.p95CycleDurationMs)}`, `平均 ${ms(m.averageCycleDurationMs)} · ${m.cycleSamples} 个样本`),
+    statTile('执行时长', ms(m.averageExecutionDurationMs), `${m.executionSamples} 个样本`),
+    statTile('每个需求 Token', num(m.averageTokensPerCompletedIssue), `合计 ${num(m.completedTokens)}`)) : null;
+  shell([
+    h('div', { class: 'row' }, h('h1', {}, '业务域'), h('span', { class: 'spacer' }), domains.canAdmin ? h('button', { class: 'primary', onclick: () => edit(null) }, '新业务域') : null),
+    h('table', {}, h('tr', {}, ['标识', '名称', '状态', '管理员', '查看者', ''].map((t) => h('th', {}, t))),
+      domains.items.map((i) => h('tr', {}, h('td', { class: 'mono' }, i.domain.id), h('td', {}, i.domain.name, i.domain.description ? h('div', { class: 'muted' }, i.domain.description) : null),
+        h('td', {}, badge(i.domain.active ? 'succeeded' : 'cancelled', i.domain.active ? '启用' : '停用')),
+        h('td', { class: 'mono' }, i.domain.managers.length), h('td', { class: 'mono' }, i.domain.viewers.length),
+        h('td', {}, i.canManage ? h('button', { onclick: () => edit(i) }, '编辑') : null)))),
+    h('h2', {}, '业务域报表'),
+    h('div', { class: 'row mb' },
+      pick('domain', [['all', '全部可见项目'], ['unclassified', '未归属'], ...domains.items.filter((i) => i.canView).map((i) => [i.domain.id, i.domain.name])]),
+      pick('days', [['7', '近 7 天'], ['30', '近 30 天'], ['90', '近 90 天'], ['365', '近一年']]),
+      pick('grain', [['day', '按天'], ['week', '按周'], ['month', '按月']])),
+    reportError ? errorBox(reportError) : null,
+    report ? h('p', { class: 'muted' }, `${report.attribution} · 运行 ${num(report.summary.totalRuns)} · 成功率 ${pct(report.summary.successRate)} · Token ${num(report.summary.totalTokens)} · ${usd(report.summary.totalCostUsd)}`) : null,
+    deliveryTiles,
+    report && report.deliveryTrend.length ? h('h2', {}, '交付趋势') : null,
+    report && report.deliveryTrend.length ? columnChart(report.deliveryTrend, (p) => p.completedIssues, (p) => `${p.date}：完成 ${p.completedIssues} 个需求，合并 ${p.mergedMrs} 个 PR，平均周期 ${ms(p.averageCycleDurationMs)}`) : null,
+    report ? h('h2', {}, '按业务域') : null,
+    report ? h('table', {}, h('tr', {}, ['业务域', '项目', '运行', '成功', '失败', 'Token', '费用', '涉及需求', '完成', '周期 P50'].map((t) => h('th', {}, t))),
+      report.businessDomains.map((d) => h('tr', {}, [d.name, d.projectCount, d.runs, d.success, d.failed, num(d.tokens), usd(d.costUsd), d.uniqueIssues, d.delivered, ms(d.deliveryMetrics.p50CycleDurationMs)].map((v) => h('td', {}, v))))) : null,
+    report ? h('h2', {}, '按项目') : null,
+    report ? h('table', {}, h('tr', {}, ['项目', '业务域', '运行', '成功', '失败', 'Token', '费用', '完成需求', '合并'].map((t) => h('th', {}, t))),
+      report.projects.map((p) => h('tr', {}, h('td', {}, h('a', { href: `#/projects/${encodeURIComponent(p.projectId)}` }, p.name)),
+        ...[p.businessDomainId || '未归属', p.runs, p.succeeded, p.failed, num(p.tokens), usd(p.costUsd), p.deliveryMetrics.completedIssues, p.deliveryMetrics.mergedMrs].map((v) => h('td', {}, v))))) : null,
   ]);
 }
 
@@ -1710,6 +1777,25 @@ function chainEditor(bindings, workflows, onChange) {
   };
   render();
   return box;
+}
+
+function businessDomainRow(project, refresh) {
+  const row = h('div', { class: 'row mb' }, h('span', { class: 'muted' }, `业务域：${project.businessDomainId || '未归属'}`));
+  api('/business-domains').then((list) => {
+    const options = list.items.filter((i) => i.domain.active).map((i) => [i.domain.id, i.domain.name]);
+    const assign = () => prompted('业务域归属', [
+      { name: 'businessDomainId', label: '业务域', type: 'select', options: ['', ...options.map(([id]) => id)], value: project.businessDomainId || '' },
+      { name: 'reason', label: '原因', type: 'textarea', rows: 2 }],
+    (v) => api(`/projects/${encodeURIComponent(project.id)}/business-domain`, { method: 'PUT',
+      body: { businessDomainId: v.businessDomainId || null, expectedDomainId: project.businessDomainId || null, reason: v.reason } }).then(refresh));
+    const history = () => attempt(() => api(`/projects/${encodeURIComponent(project.id)}/business-domain/history`), (rows) => modal('归属历史',
+      rows.length === 0 ? h('p', { class: 'muted' }, '还没有调整过') : h('table', {}, h('tr', {}, ['时间', '从', '到', '操作人', '原因'].map((t) => h('th', {}, t))),
+        rows.map((r) => h('tr', {}, [time(r.createdAt), r.fromDomainId || '未归属', r.toDomainId || '未归属', r.actor || '—', r.reason || ''].map((x) => h('td', {}, x))))), () => null));
+    const name = list.items.find((i) => i.domain.id === project.businessDomainId)?.domain.name;
+    row.replaceChildren(h('span', { class: 'muted' }, `业务域：${name || project.businessDomainId || '未归属'}`),
+      h('button', { onclick: assign }, project.businessDomainId ? '调整归属' : '设置归属'), h('button', { onclick: history }, '归属历史'));
+  }).catch(() => {});
+  return row;
 }
 
 function playbooksSection(projectId, workflows, refresh) {

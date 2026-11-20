@@ -376,7 +376,7 @@ public record RequirementSnapshot(Requirement requirement, Overall overall, List
     }
 
     /** Time the run's nodes spent executing (overlapping parallel nodes counted once). */
-    static long executionMillis(Run run, Instant now) {
+    public static long executionMillis(Run run, Instant now) {
         Instant start = null;
         Instant end = null;
         for (NodeRun nr : run.nodeRuns()) {

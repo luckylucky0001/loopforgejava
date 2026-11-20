@@ -125,7 +125,8 @@ public class ProjectStore {
                 rs.getString("description"),
                 rs.getString("created_by"),
                 SqlTime.read(rs, "created_at"),
-                SqlTime.read(rs, "updated_at"));
+                SqlTime.read(rs, "updated_at"),
+                rs.getString("business_domain_id"));
     }
 
     /** The project's named SOP chains (JSON; empty when none were saved). */

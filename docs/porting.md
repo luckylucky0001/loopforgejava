@@ -34,6 +34,7 @@
 | `internal/observability`（遥测批量）、分析统计 | `core.engine.TelemetryBuffer`、`server.ops.RunMetrics` | 指标以 Micrometer 暴露 |
 | `internal/domain/user.go`、`project.go`、`internal/httpapi` 账户/项目部分 | `server.account` | 密码账户 + Token；未移植 OAuth/企业身份、个人凭据库 |
 | `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*`、`ExternalRef` | 平台需求与外部来源 |
+| `internal/domain/business_domain.go`、`internal/httpapi/business_domains.go`、项目归属 | `server.business.*`、`Project.businessDomainId` | 业务域（管理员 / 查看者、启停、乐观并发）、项目首次归属与迁移及历史、业务域报表（汇总、趋势、按域 / 项目、交付指标与趋势）；交付时间取自运行与 PR 的合并时间 |
 | `internal/httpapi/run_workspace.go`、`run_workspace_edit.go`、`internal/runtime/workspace_edit.go` | `server.workspace.*`、`RunEngine.workspace` | 运行工作区：变更、文件树、文件与历史版本、差异、提交、搜索、带 SHA 冲突检查的编辑；未移植终端、接管与快照恢复，执行机器上的工作区暂不可浏览 |
 | `internal/domain/issue_sop.go`、`sop_lane.go`、`internal/repo/requirement.go`（快照）、`internal/httpapi/dispatch.go`（泳道派发与交接） | `server.work.SopBinding`、`SopPlaybook`、`RequirementSnapshot`、`RequirementService`、`PlaybookController`、`core.domain.SopLanes` | 需求 SOP 链与项目套餐、按泳道派发（重跑需显式指定、交接说明）、泳道快照（节点阶段、子 SOP、用量、整体状态与生命周期）、泳道标签与推断 |
 | `internal/repo/revisions*`、`internal/httpapi`（revisions / publish / clone / logs / schedule-job-executions） | `server.persistence.DefinitionRevision*`、`RevisionSummary`、`web.WorkflowController`、`RunController`、`work.ScheduleExecution*` | SOP 与角色历史版本（保留 100 个、作者、变化摘要）与恢复、发布与复制、运行日志分页与下载、删除已结束运行、定时任务执行记录（保留 200 条） |
@@ -103,4 +104,4 @@
 
 ## 尚未移植
 
-对话的群协作与浏览器工具、对话内自动登记 PR、云端执行池的自动扩缩容、浏览器 MCP、macOS seatbelt 沙箱、企业微信智能机器人长连接与 AI 运行报告、业务域报表、预览截图。排期见 [roadmap.md](roadmap.md)。
+对话的群协作与浏览器工具、对话内自动登记 PR、云端执行池的自动扩缩容、浏览器 MCP、macOS seatbelt 沙箱、企业微信智能机器人长连接与 AI 运行报告、预览截图、工作区终端与快照恢复。排期见 [roadmap.md](roadmap.md)。
