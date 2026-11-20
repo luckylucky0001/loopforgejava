@@ -124,6 +124,15 @@ public class RequirementStore {
     }
 
     /** Read-modify-write under a row lock; returns the stored result. */
+    /** Requirements in a status across projects (for pollers), at most {@code limit}. */
+    public List<Requirement> byStatus(String status, int limit) {
+        return jdbc.sql("SELECT payload FROM requirements WHERE status = :s ORDER BY updated_at LIMIT :limit")
+                .param("s", status)
+                .param("limit", limit)
+                .query((rs, i) -> JsonRows.read(rs.getString("payload"), Requirement.class))
+                .list();
+    }
+
     public Optional<Requirement> update(String id, UnaryOperator<Requirement> change) {
         return JsonRows.store(() -> tx.execute(status -> {
             Optional<Requirement> current = jdbc.sql("SELECT payload FROM requirements WHERE id = :id FOR UPDATE")

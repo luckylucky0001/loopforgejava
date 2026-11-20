@@ -10,6 +10,8 @@ import java.time.Instant;
  * @param status {@code idle}, {@code generating} or {@code cancelling}
  * @param cliSessionId the CLI session the next turn continues
  * @param source {@code chat} (started by a person) or {@code scheduled} (an AI scheduled task)
+ * @param requirementId the requirement the conversation works on (pull requests it opens are
+ *     registered there)
  */
 public record AssistantSession(
         String id,
@@ -27,7 +29,8 @@ public record AssistantSession(
         Instant turnStartedAt,
         Instant createdAt,
         Instant updatedAt,
-        String source) {
+        String source,
+        String requirementId) {
 
     public static final String CHAT = "chat";
     public static final String SCHEDULED = "scheduled";
@@ -55,6 +58,28 @@ public record AssistantSession(
                 started,
                 createdAt,
                 updatedAt,
-                source);
+                source,
+                requirementId);
+    }
+
+    AssistantSession withRequirement(String id) {
+        return new AssistantSession(
+                this.id,
+                projectId,
+                ownerId,
+                ownerName,
+                title,
+                sandboxProfileId,
+                executorId,
+                cliSessionId,
+                status,
+                lastError,
+                totalTokens,
+                costUsd,
+                turnStartedAt,
+                createdAt,
+                updatedAt,
+                source,
+                id);
     }
 }

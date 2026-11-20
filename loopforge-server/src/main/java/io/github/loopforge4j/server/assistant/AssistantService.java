@@ -63,6 +63,7 @@ public class AssistantService {
     private final LoopForgeProperties.Assistant config;
     private final Clock clock;
     private final io.github.loopforge4j.server.account.UserStore users;
+    private final ObjectProvider<ConversationPullRequests> pullRequests;
     private final ScheduledExecutorService watchers =
             Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
 
@@ -77,7 +78,8 @@ public class AssistantService {
             ServerPlatformMcp platform,
             LoopForgeProperties properties,
             Clock clock,
-            io.github.loopforge4j.server.account.UserStore users) {
+            io.github.loopforge4j.server.account.UserStore users,
+            ObjectProvider<ConversationPullRequests> pullRequests) {
         this.store = store;
         this.streams = streams;
         this.access = access;
@@ -86,6 +88,7 @@ public class AssistantService {
         this.config = properties.assistant();
         this.clock = clock;
         this.users = users;
+        this.pullRequests = pullRequests;
     }
 
     public record NewSession(String projectId, String title, String sandboxProfileId, String executorId) {}
@@ -128,7 +131,8 @@ public class AssistantService {
                 null,
                 now,
                 now,
-                AssistantSession.CHAT);
+                AssistantSession.CHAT,
+                null);
         store.create(session);
         return session;
     }
@@ -372,7 +376,8 @@ public class AssistantService {
                 null,
                 now,
                 now,
-                AssistantSession.SCHEDULED);
+                AssistantSession.SCHEDULED,
+                null);
         store.create(session);
         String turn = store.claimTurn(session.id(), now);
         if (turn == null) {
@@ -454,6 +459,13 @@ public class AssistantService {
             tokens += reply.usage().totalTokens();
             cost += reply.usage().costUsd();
             String answer = reply.text() == null || reply.text().isBlank() ? "（没有文字回复）" : reply.text();
+            if (!reply.failed()) {
+                // pull requests the speaker opened in this turn land on the conversation's requirement
+                Optional<String> registered = registerPullRequests(id, speaker);
+                if (registered.isPresent()) {
+                    answer = answer + "\n\n" + registered.get();
+                }
+            }
             AssistantMessage saved = store.append(new AssistantMessage(
                     0,
                     id,
@@ -478,10 +490,28 @@ public class AssistantService {
             streams.publish(id, "message", last);
         } finally {
             watcher.cancel(false);
-            store.finishTurn(current.with("idle", cliSession, error, tokens, cost, null));
+            // re-read: the turn may have linked a requirement meanwhile
+            store.finishTurn(store.find(id).orElse(current).with("idle", cliSession, error, tokens, cost, null));
             streams.publish(id, "status", Map.of("status", "idle"));
         }
         return last;
+    }
+
+    private Optional<String> registerPullRequests(String id, CurrentUser speaker) {
+        try {
+            AssistantSession session = store.find(id).orElse(null);
+            if (session == null || session.projectId() == null) {
+                return Optional.empty();
+            }
+            java.nio.file.Path workspace = engines.getObject()
+                    .conversations()
+                    .workspace(id, session.sandboxProfileId())
+                    .orElse(null);
+            return pullRequests.getObject().register(session, speaker.username(), workspace);
+        } catch (Exception e) {
+            log.warn("conversation {}: cannot look for pull requests: {}", id, e.toString());
+            return Optional.empty();
+        }
     }
 
     /** Turns left running by a stopped instance end, and their tokens with them. */

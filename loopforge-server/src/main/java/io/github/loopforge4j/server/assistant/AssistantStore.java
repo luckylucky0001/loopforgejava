@@ -272,6 +272,14 @@ public class AssistantStore {
                 .list());
     }
 
+    /** Records the requirement the conversation works on. */
+    void linkRequirement(String id, String requirementId) {
+        find(id).ifPresent(session -> jdbc.sql("UPDATE assistant_sessions SET payload = :payload WHERE id = :id")
+                .param("payload", Json.write(session.withRequirement(requirementId)))
+                .param("id", id)
+                .update());
+    }
+
     boolean delete(String id) {
         return jdbc.sql("DELETE FROM assistant_sessions WHERE id = :id")
                         .param("id", id)

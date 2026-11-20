@@ -1777,6 +1777,7 @@ async function chatPage(id) {
   shell([h('div', { class: 'chat' }, list, h('div', {},
     h('div', { class: 'row' }, h('h1', {}, current.title), h('span', { class: 'spacer' }),
       h('span', { class: 'muted' }, `${current.projectId ? `项目 ${current.projectId}` : '个人对话'} · 沙箱 ${current.sandboxProfileId} · ${num(current.totalTokens)} Token · ${usd(current.costUsd)}`),
+      current.requirementId && current.projectId ? h('a', { class: 'chip', href: `#/projects/${encodeURIComponent(current.projectId)}`, title: '对话里开的 PR 会登记到这个需求' }, '已关联需求') : null,
       h('button', { class: 'danger', onclick: remove }, '删除')),
     feed, live, queueBox,
     h('div', { class: 'panel mt' }, input, h('div', { class: 'row mt' },

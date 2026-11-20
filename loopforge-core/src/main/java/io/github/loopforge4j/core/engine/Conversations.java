@@ -255,6 +255,17 @@ public final class Conversations {
         return out;
     }
 
+    /** The conversation's workspace root, if its sandbox profile is available here. */
+    public java.util.Optional<java.nio.file.Path> workspace(String conversationId, String sandboxProfileId)
+            throws IOException {
+        var provider = engine.sandboxProvider(sandboxProfileId);
+        if (provider.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(
+                provider.get().acquire(workspaceId(conversationId)).workspace());
+    }
+
     /** Deletes the conversation's workspace. */
     public void release(String conversationId, String sandboxProfileId) throws IOException {
         var provider = engine.sandboxProvider(sandboxProfileId);

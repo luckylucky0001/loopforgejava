@@ -91,7 +91,7 @@ public record Requirement(
                 bindings);
     }
 
-    Requirement with(String newStatus, List<String> newRunIds, String latest, List<PullRequest> newDeliveries) {
+    public Requirement with(String newStatus, List<String> newRunIds, String latest, List<PullRequest> newDeliveries) {
         return new Requirement(
                 id,
                 projectId,
