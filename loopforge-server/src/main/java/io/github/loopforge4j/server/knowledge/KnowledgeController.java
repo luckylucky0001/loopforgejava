@@ -122,8 +122,9 @@ public class KnowledgeController {
     }
 
     @GetMapping("/usage")
-    List<Map<String, String>> usage() {
-        return knowledge.usage();
+    List<Map<String, String>> usage(java.security.Principal principal) {
+        // project roles only for the project's members
+        return knowledge.usage(project -> access.canSee(principal, project));
     }
 
     @GetMapping("/candidates")

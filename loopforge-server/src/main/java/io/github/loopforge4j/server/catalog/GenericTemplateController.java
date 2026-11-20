@@ -84,7 +84,8 @@ class GenericTemplateController {
     record AdoptRequest(
             @NotBlank @Size(max = 64) String projectId,
             @Size(max = 200) String id,
-            @Size(max = 500) String name) {}
+            @Size(max = 500) String name,
+            @Size(max = 200) String sandboxProfileId) {}
 
     @Operation(summary = "Copy a template and its roles into a project as an editable draft")
     @PostMapping("/{id}/adopt")
@@ -96,13 +97,21 @@ class GenericTemplateController {
         if (projects.find(project).isEmpty()) {
             throw new RunNotFoundException("project '" + project + "' not found");
         }
-        // the copy runs in the template's sandbox: members may only adopt into an isolated one
-        access.requireIsolatedSandbox(principal, template);
+        // the copy's roles belong to the project: it runs only in a sandbox where project roles may run
+        String profile =
+                body.sandboxProfileId() == null || body.sandboxProfileId().isBlank()
+                        ? template.sandboxProfileId()
+                        : body.sandboxProfileId().strip();
+        access.requireIsolatedProfile(principal, profile);
+        if (!access.projectAssetsAllowed(profile)) {
+            throw new io.github.loopforge4j.core.engine.WorkflowValidationException(List.of(
+                    "复制后的 SOP 使用项目自己的角色，只能在隔离沙箱中运行：请选择隔离的沙箱（sandboxProfileId），模板的沙箱是 " + template.sandboxProfileId()));
+        }
         String target = body.id() == null || body.id().isBlank()
                 ? GenericTemplates.defaultId(template.id(), project)
                 : body.id().strip();
         var user = access.current(principal);
-        WorkflowDefinition adopted = templates.adopt(template, project, target, body.name(), user.username());
+        WorkflowDefinition adopted = templates.adopt(template, project, target, body.name(), user.username(), profile);
         return ResponseEntity.status(HttpStatus.CREATED).body(adopted);
     }
 }

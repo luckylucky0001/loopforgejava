@@ -75,10 +75,9 @@ public class RunReports {
 
     public Report generate(Run run, NotificationChannel.Report settings) {
         String responsible = run.context().triggeredBy();
-        boolean admin = responsible != null
-                && users.byUsername(responsible).map(u -> u.admin()).orElse(false);
-        // the turn reads agent-written outputs: it runs where the person's own conversations may run
-        if (!access.profileAllowed(admin, config.sandboxProfile())) {
+        // the turn reads agent-written outputs and a maintainer's instruction: whoever started the
+        // run, it only runs isolated (unless the deployment trusts its members)
+        if (!access.projectAssetsAllowed(config.sandboxProfile())) {
             return Report.fallback("整体汇报需要隔离沙箱（assistant.sandbox-profile）");
         }
         RunEngine engine = engines.getObject();
@@ -96,7 +95,9 @@ public class RunReports {
                 .executor(executor)
                 .model(settings.model())
                 .build();
-        String conversation = "report-" + run.id();
+        // one workspace per report setting: another channel's report must not release it meanwhile
+        String conversation = "report-" + run.id() + "-"
+                + Integer.toHexString(java.util.Objects.hash(settings.instruction(), executor, settings.model()));
         String prompt = prompt(run, engine.artifacts(run.id()), settings.instruction());
         String session = null;
         String problem = "AI 未提交有效报告";
@@ -115,7 +116,8 @@ public class RunReports {
                                         List.of(),
                                         List.of(),
                                         Map.of(),
-                                        responsible),
+                                        responsible,
+                                        false),
                                 telemetry -> {},
                                 new Cancellation());
                 session = reply.sessionId();

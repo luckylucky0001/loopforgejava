@@ -79,7 +79,12 @@ public class GenericTemplates {
      * @throws RunStateException when {@code id} is taken
      */
     public WorkflowDefinition adopt(
-            WorkflowDefinition template, String projectId, String id, String name, String owner) {
+            WorkflowDefinition template,
+            String projectId,
+            String id,
+            String name,
+            String owner,
+            String sandboxProfileId) {
         if (!WorkflowValidator.ID.matcher(id).matches()) {
             throw new WorkflowValidationException(List.of("SOP id '" + id + "' is invalid"));
         }
@@ -110,7 +115,7 @@ public class GenericTemplates {
                 owner,
                 tags,
                 template.description(),
-                template.sandboxProfileId(),
+                sandboxProfileId,
                 nodes,
                 template.edges(),
                 null,

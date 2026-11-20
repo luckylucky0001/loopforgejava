@@ -55,6 +55,39 @@ class ProjectScopedRoleTest {
     }
 
     @Test
+    void projectRolesRunOnlyWhereProjectAssetsMay() {
+        try (EngineFixture f =
+                new EngineFixture(root, (java.util.function.Predicate<String>) profile -> !"local".equals(profile))) {
+            f.agent(role("dev-p1", "p1"))
+                    .agent(AgentDefinition.builder("shared")
+                            .prompt("p")
+                            .executor("mock")
+                            .build())
+                    .workflow(sop("own", "dev-p1"))
+                    .workflow(sop("plain", "shared"));
+            ExecutionContext p1 = new ExecutionContext("p1", "admin", null, null, null);
+            Run own = f.engine.start("own", "x", p1);
+            assertThat(f.awaitStatus(own.id(), RunStatus.FAILED)
+                            .requireNode("a")
+                            .error())
+                    .contains("只能在隔离沙箱中运行");
+            f.awaitStatus(f.engine.start("plain", "x", p1).id(), RunStatus.SUCCEEDED);
+        }
+    }
+
+    @Test
+    void anotherProjectsRuleNeverErasesASharedRolesInlineRule() {
+        var catalog = new io.github.loopforge4j.core.store.InMemoryCatalogStore();
+        catalog.saveAsset(AssetKind.RULE, new RuleDefinition("先写测试", "x", null, "被占用", 1, null, "q"));
+        AgentDefinition shared = AgentDefinition.builder("dev")
+                .prompt("p")
+                .rules(List.of("先写测试"))
+                .build();
+        assertThat(AgentAssets.inlineRules(shared, catalog, "p1")).containsExactly("先写测试");
+        assertThat(AgentAssets.inlineRules(shared, catalog, "q")).isEmpty();
+    }
+
+    @Test
     void genericTemplatesAreAdoptedNotRun() {
         try (EngineFixture f = new EngineFixture(root)) {
             f.agent(AgentDefinition.builder("dev").prompt("p").executor("mock").build());

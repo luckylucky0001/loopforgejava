@@ -136,14 +136,15 @@ public class Notifier implements RunListener {
         if (existing != null) {
             return existing.join();
         }
-        RunReports.Report report;
+        RunReports.Report report = RunReports.Report.fallback("整体汇报生成失败");
         try {
             report = reports.getObject().generate(run, settings);
         } catch (RuntimeException e) {
             log.warn("cannot generate the report of run {}: {}", run.id(), e.toString());
-            report = RunReports.Report.fallback("整体汇报生成失败");
+        } finally {
+            // channels waiting on the same report must never wait forever
+            mine.complete(report);
         }
-        mine.complete(report);
         return report;
     }
 

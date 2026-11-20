@@ -95,6 +95,15 @@ public class PageFeedbackStore {
         return out;
     }
 
+    /** Reports {@code userId} filed since {@code since}. */
+    public long countSince(String userId, Instant since) {
+        return jdbc.sql("SELECT COUNT(*) FROM page_feedbacks WHERE user_id = :user AND created_at >= :since")
+                .param("user", userId)
+                .param("since", SqlTime.of(since))
+                .query(Long.class)
+                .single();
+    }
+
     public long count(String userId) {
         var spec = jdbc.sql("SELECT COUNT(*) FROM page_feedbacks" + (userId == null ? "" : " WHERE user_id = :user"));
         if (userId != null) {

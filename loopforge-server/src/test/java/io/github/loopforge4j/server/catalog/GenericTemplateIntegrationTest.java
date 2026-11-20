@@ -126,12 +126,22 @@ class GenericTemplateIntegrationTest {
         call(mia, "PUT", "/api/v1/agents/dev", role("开发", "改掉", null, List.of()), 403);
         call(mia, "PUT", "/api/v1/rules/r-shared", Map.of("name", "共享", "content", "x"), 403);
 
+        // an id that only normalises to an existing one never gets past the owner check
+        call(mia, "PUT", "/api/v1/agents/ dev", role("开发", "改掉", "p1", List.of()), 422);
+        call(mia, "PUT", "/api/v1/rules/r-shared ", Map.of("name", "共享", "content", "x", "projectId", "p1"), 422);
+        call(mia, "PUT", "/api/v1/workflows/ tpl", sop("p1", "dev", false), 422);
+        assertThat((Map<String, Object>) call(admin, "GET", "/api/v1/agents/dev", null, 200))
+                .doesNotContainKey("projectId")
+                .containsEntry("prompt", "写代码");
+
         // a template belongs to no project and is never run directly
         call(admin, "PUT", "/api/v1/workflows/tpl", sop("p1", "dev", true), 422);
         call(admin, "PUT", "/api/v1/workflows/tpl", sop(null, "dev", true), 200);
         call(admin, "POST", "/api/v1/runs", Map.of("workflowId", "tpl", "input", "x"), 422);
         call(mia, "PUT", "/api/v1/workflows/tpl2", sop(null, "dev", true), 403);
 
+        // publishing keeps it a template
+        call(admin, "POST", "/api/v1/workflows/tpl/publish", null, 200);
         List<Map<String, Object>> templates = call(dave, "GET", "/api/v1/workflow-templates", null, 200);
         assertThat(templates).singleElement().satisfies(t -> {
             assertThat(t).containsEntry("id", "tpl").containsEntry("sopLane", "backend");
@@ -201,7 +211,8 @@ class GenericTemplateIntegrationTest {
         assertThat((List<Map<String, Object>>) call(bob, "GET", "/api/v1/rules", null, 200))
                 .extracting(r -> r.get("id"))
                 .containsExactly("r-shared");
-        call(bob, "PUT", "/api/v1/agents/x-p2", role("X", "x", "p2", List.of("r-p1")), 422);
+        // another project's rule name is only text for this role: it never resolves to p1's rule
+        call(bob, "PUT", "/api/v1/agents/x-p2", role("X", "x", "p2", List.of("r-p1")), 200);
         call(mia, "PUT", "/api/v1/agents/x-p1", role("X", "x", "p1", List.of("r-p1", "r-shared")), 200);
         call(mia, "PUT", "/api/v1/skills/s-p1", Map.of("name", "技能", "content", "步骤", "projectId", "p1"), 200);
         call(bob, "GET", "/api/v1/skills/s-p1", null, 404);

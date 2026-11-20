@@ -55,6 +55,7 @@ class RepositoryController {
     @PutMapping("/{id}")
     RepositoryDefinition put(
             @PathVariable String id, @RequestBody RepositoryDefinition body, java.security.Principal principal) {
+        PathIds.require(id);
         store.repository(id)
                 .ifPresent(existing -> access.requireProject(
                         principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
@@ -73,6 +74,7 @@ class RepositoryController {
 
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(@PathVariable String id, java.security.Principal principal) {
+        PathIds.require(id);
         store.repository(id)
                 .ifPresent(existing -> access.requireProject(
                         principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));

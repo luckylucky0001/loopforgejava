@@ -46,6 +46,7 @@ class PageFeedbackController {
     /** Five images and the form around them. */
     static final long MAX_REQUEST_BYTES = 27L * 1024 * 1024;
 
+    static final int MAX_PER_HOUR = 30;
     private static final int MAX_TITLE = 120;
     private static final int MAX_DESCRIPTION = 5000;
 
@@ -77,6 +78,10 @@ class PageFeedbackController {
             @RequestPart(value = "images", required = false) List<MultipartFile> images,
             Principal principal) {
         CurrentUser user = person(principal);
+        // each report may hold 25 MB of images: a person files at most a few dozen an hour
+        if (store.countSince(user.id(), java.time.Instant.now().minus(java.time.Duration.ofHours(1))) >= MAX_PER_HOUR) {
+            throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "反馈提交过于频繁，请稍后再试");
+        }
         Payload body;
         try {
             body = Json.read(payload, Payload.class);
@@ -181,7 +186,7 @@ class PageFeedbackController {
                 && !p.element().selector().isBlank()) {
             PageFeedback.Element e = p.element();
             element = new PageFeedback.Element(
-                    FeedbackText.clip(e.selector().strip(), 1024),
+                    FeedbackText.clip(FeedbackText.singleLine(e.selector()), 1024),
                     FeedbackText.clip(FeedbackText.singleLine(e.tag()), 32),
                     FeedbackText.clip(
                             String.join(

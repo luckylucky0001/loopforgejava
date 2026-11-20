@@ -61,6 +61,7 @@ class AgentController {
     @Operation(summary = "Create or replace a role: shared roles by administrators, a project's by its maintainers")
     @PutMapping("/{id}")
     AgentDefinition put(@PathVariable String id, @RequestBody AgentDefinition body, java.security.Principal principal) {
+        PathIds.require(id);
         var existing = store.agent(id);
         CatalogScopes.requireWrite(
                 access,
@@ -97,15 +98,23 @@ class AgentController {
     @Operation(summary = "Delete a role; refused while an SOP node still uses it")
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(@PathVariable String id, java.security.Principal principal) {
+        PathIds.require(id);
         store.agent(id)
                 .ifPresent(existing -> access.requireProject(
                         principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
-        List<String> users = store.workflows().stream()
+        List<WorkflowDefinition> users = store.workflows().stream()
                 .filter(w -> w.nodes().stream().anyMatch(n -> id.equals(n.agentId())))
-                .map(WorkflowDefinition::id)
                 .toList();
         if (!users.isEmpty()) {
-            throw new ApiException(HttpStatus.CONFLICT, "role '" + id + "' is used by SOP " + String.join(", ", users));
+            // name only the SOPs the caller can see
+            List<String> visible = users.stream()
+                    .filter(w -> access.canSee(principal, w.projectId()))
+                    .map(WorkflowDefinition::id)
+                    .toList();
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "role '" + id + "' is used by "
+                            + (visible.isEmpty() ? "other SOPs" : "SOP " + String.join(", ", visible)));
         }
         return store.deleteAgent(id)
                 ? ResponseEntity.noContent().build()

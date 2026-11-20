@@ -81,6 +81,20 @@ final class EngineFixture implements AutoCloseable {
                 limits);
     }
 
+    /** Project roles, rules and skills may only run in sandbox profiles {@code projectAssets} accepts. */
+    EngineFixture(Path root, java.util.function.Predicate<String> projectAssets) {
+        this(
+                root,
+                new InMemoryRunStore(),
+                true,
+                GitCredentialProvider.NONE,
+                DeliveryProvider.NONE,
+                io.github.loopforge4j.core.mcp.PlatformMcp.NONE,
+                io.github.loopforge4j.core.store.WorkspaceSnapshotStore.NONE,
+                io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits.DEFAULT,
+                projectAssets);
+    }
+
     EngineFixture(
             Path root,
             RunStore runs,
@@ -90,6 +104,19 @@ final class EngineFixture implements AutoCloseable {
             io.github.loopforge4j.core.mcp.PlatformMcp platform,
             io.github.loopforge4j.core.store.WorkspaceSnapshotStore snapshots,
             io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits limits) {
+        this(root, runs, releaseWorkspace, git, delivery, platform, snapshots, limits, profile -> true);
+    }
+
+    EngineFixture(
+            Path root,
+            RunStore runs,
+            boolean releaseWorkspace,
+            GitCredentialProvider git,
+            DeliveryProvider delivery,
+            io.github.loopforge4j.core.mcp.PlatformMcp platform,
+            io.github.loopforge4j.core.store.WorkspaceSnapshotStore snapshots,
+            io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits limits,
+            java.util.function.Predicate<String> projectAssets) {
         this.root = root;
         this.runs = runs;
         ExecutorRegistry registry = ExecutorRegistry.withBuiltIns(CredentialProvider.NONE)
@@ -106,6 +133,7 @@ final class EngineFixture implements AutoCloseable {
                 .platformMcp(platform)
                 .snapshots(snapshots)
                 .snapshotLimits(limits)
+                .projectAssetSandboxes(projectAssets)
                 .settings(new EngineSettings(
                         "test", "mock", Duration.ofMinutes(2), Duration.ofMillis(25), releaseWorkspace))
                 .build();

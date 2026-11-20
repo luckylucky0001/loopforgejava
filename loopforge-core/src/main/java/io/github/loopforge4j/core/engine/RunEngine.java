@@ -90,6 +90,7 @@ public final class RunEngine implements AutoCloseable {
     private final java.util.function.Function<String, Optional<SandboxProvider>> sandboxProfiles;
     private final io.github.loopforge4j.core.store.PreviewStore previews;
     private final io.github.loopforge4j.core.store.WorkspaceSnapshotStore snapshots;
+    private final java.util.function.Predicate<String> projectAssetSandboxes;
     private final io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits snapshotLimits;
     private final io.github.loopforge4j.core.preview.PreviewArchive.Limits previewLimits;
     private final LeaseKeeper leases;
@@ -120,6 +121,7 @@ public final class RunEngine implements AutoCloseable {
         this.sandboxProfiles = builder.sandboxProfiles;
         this.previews = builder.previews;
         this.snapshots = builder.snapshots;
+        this.projectAssetSandboxes = builder.projectAssetSandboxes;
         this.snapshotLimits = builder.snapshotLimits;
         this.previewLimits = builder.previewLimits;
         this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
@@ -1742,6 +1744,10 @@ public final class RunEngine implements AutoCloseable {
         }
     }
 
+    boolean projectAssetsAllowed(String sandboxProfileId) {
+        return projectAssetSandboxes.test(sandboxProfileId);
+    }
+
     /** The snapshot of a released workspace, if one was saved (workspace page, download). */
     public Optional<io.github.loopforge4j.core.store.WorkspaceSnapshotStore.Info> snapshotInfo(String runId) {
         return snapshots.info(runId);
@@ -2340,6 +2346,17 @@ public final class RunEngine implements AutoCloseable {
 
         private io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits snapshotLimits =
                 io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits.DEFAULT;
+
+        private java.util.function.Predicate<String> projectAssetSandboxes = profile -> true;
+
+        /**
+         * Sandbox profiles in which roles, rules and skills owned by a project (written by its
+         * maintainers, not administrators) may run; elsewhere such a node fails. Everywhere by default.
+         */
+        public Builder projectAssetSandboxes(java.util.function.Predicate<String> value) {
+            this.projectAssetSandboxes = value;
+            return this;
+        }
 
         /** Where finished workspaces are snapshotted before they are released (none by default). */
         public Builder snapshots(io.github.loopforge4j.core.store.WorkspaceSnapshotStore value) {

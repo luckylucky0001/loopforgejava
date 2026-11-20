@@ -85,28 +85,25 @@ public class CatalogService {
                     return;
                 }
                 if (workflow.generic()) {
-                    problems.add("通用模板只能使用共享角色：节点 " + node.id() + " 的角色 " + agent.id() + " 属于项目 " + agent.projectId());
+                    problems.add("通用模板只能使用共享角色：节点 " + node.id() + " 的角色 " + agent.id() + " 不是共享角色");
                 } else if (!agent.usableIn(workflow.projectId())) {
-                    problems.add(
-                            "节点 " + node.id() + " 的角色 " + agent.id() + " 属于项目 " + agent.projectId() + "，不能用于本 SOP");
+                    problems.add("节点 " + node.id() + " 的角色 " + agent.id() + " 不存在或不能用于本 SOP");
                 }
             });
         }
         return problems;
     }
 
-    /** A role may bind shared rules and skills, or those of its own project. */
+    /**
+     * A role may bind shared skills or those of its own project. A rule entry naming another
+     * project's rule is kept as inline text (it never resolves there), so it is no error.
+     */
     List<String> scopeProblems(AgentDefinition agent) {
         List<String> problems = new ArrayList<>();
-        for (String rule : agent.rules()) {
-            store.asset(io.github.loopforge4j.core.domain.AssetKind.RULE, rule.strip())
-                    .filter(r -> r.projectId() != null && !r.projectId().equals(agent.projectId()))
-                    .ifPresent(r -> problems.add("规则 " + r.id() + " 属于项目 " + r.projectId() + "，不能用于本角色"));
-        }
         for (String skill : agent.skills()) {
             store.asset(io.github.loopforge4j.core.domain.AssetKind.SKILL, skill)
                     .filter(k -> k.projectId() != null && !k.projectId().equals(agent.projectId()))
-                    .ifPresent(k -> problems.add("技能 " + k.id() + " 属于项目 " + k.projectId() + "，不能用于本角色"));
+                    .ifPresent(k -> problems.add("技能 " + k.id() + " 不存在或不能用于本角色"));
         }
         return problems;
     }

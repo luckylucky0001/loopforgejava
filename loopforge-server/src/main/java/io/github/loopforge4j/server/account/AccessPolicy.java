@@ -64,6 +64,14 @@ public class AccessPolicy {
         return !membersRequireIsolation || admin || isolated(profileId);
     }
 
+    /**
+     * Whether project-owned roles, rules and skills (which project maintainers write) may run in
+     * {@code profileId}: anywhere when the deployment trusts its members, else only isolated.
+     */
+    public boolean projectAssetsAllowed(String profileId) {
+        return !membersRequireIsolation || isolated(profileId);
+    }
+
     /** Configured as isolated, or a catalog profile whose driver isolates (native, docker). */
     private boolean isolated(String profileId) {
         return isolatedProfiles.contains(profileId)

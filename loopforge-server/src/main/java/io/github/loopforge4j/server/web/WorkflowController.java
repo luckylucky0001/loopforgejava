@@ -64,6 +64,7 @@ class WorkflowController {
     @PutMapping("/workflows/{id}")
     WorkflowDefinition put(
             @PathVariable String id, @RequestBody WorkflowDefinition body, java.security.Principal principal) {
+        PathIds.require(id);
         // project SOPs belong to the project's maintainers; global ones to administrators
         store.workflow(id)
                 .ifPresent(existing -> access.requireProject(
@@ -75,6 +76,7 @@ class WorkflowController {
 
     @DeleteMapping("/workflows/{id}")
     ResponseEntity<Void> delete(@PathVariable String id, java.security.Principal principal) {
+        PathIds.require(id);
         store.workflow(id)
                 .ifPresent(existing -> access.requireProject(
                         principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
@@ -124,7 +126,8 @@ class WorkflowController {
                         current.name(),
                         current.projectId(),
                         io.github.loopforge4j.core.domain.WorkflowStatus.PUBLISHED,
-                        current.version() + 1),
+                        current.version() + 1,
+                        current.generic()),
                 principal);
     }
 
@@ -156,7 +159,8 @@ class WorkflowController {
                         : body.name().strip(),
                 project,
                 io.github.loopforge4j.core.domain.WorkflowStatus.DRAFT,
-                1);
+                1,
+                false);
         return ResponseEntity.status(HttpStatus.CREATED).body(put(target, copy, principal));
     }
 
@@ -166,7 +170,8 @@ class WorkflowController {
             String name,
             String projectId,
             io.github.loopforge4j.core.domain.WorkflowStatus status,
-            int version) {
+            int version,
+            boolean generic) {
         return new WorkflowDefinition(
                 id,
                 name,
@@ -183,7 +188,8 @@ class WorkflowController {
                 null,
                 null,
                 w.preview(),
-                w.sopLane());
+                w.sopLane(),
+                generic);
     }
 
     @Operation(summary = "Validate a workflow without saving it")

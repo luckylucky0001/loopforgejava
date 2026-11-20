@@ -26,8 +26,12 @@ public final class SshKnownHosts {
             if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("@revoked")) {
                 continue;
             }
-            String hosts = trimmed.startsWith("@") ? trimmed.split("\\s+")[1] : trimmed.split("\\s+")[0];
-            for (String h : hosts.split(",")) {
+            String[] fields = trimmed.split("\\s+");
+            int at = trimmed.startsWith("@") ? 1 : 0;
+            if (fields.length < at + 3) {
+                continue;
+            }
+            for (String h : fields[at].split(",")) {
                 if (h.equalsIgnoreCase(wanted)) {
                     return true;
                 }

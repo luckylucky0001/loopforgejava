@@ -57,10 +57,11 @@ final class BotMessages {
             RunReports.Report report) {
         List<String> lines = new ArrayList<>();
         if (report != null && report.generated()) {
+            // AI text never carries the line markers (\u0000 label, \u0001 link) or other controls
             if (!report.summary().isBlank()) {
-                lines.add(report.summary());
+                lines.add(plainText(report.summary()));
             }
-            lines.addAll(report.body().lines().toList());
+            report.body().lines().map(BotMessages::plainText).forEach(lines::add);
             lines.add("");
         }
         lines.addAll(lines(event, run, publicUrl));
@@ -69,7 +70,7 @@ final class BotMessages {
         }
         String title = "LoopForge · "
                 + (report != null && report.generated() && !report.title().isBlank()
-                        ? escape(clip(report.title(), 120))
+                        ? escape(clip(plainText(report.title()), 120))
                         : TITLES.getOrDefault(event, event));
         return switch (channel.kind()) {
             case "wecom" ->
@@ -201,7 +202,7 @@ final class BotMessages {
             } else if (line.contains("\u0000")) {
                 String[] parts = line.split("\u0000", 2);
                 b.append("> ")
-                        .append(parts[0])
+                        .append(escape(parts[0]))
                         .append("：")
                         .append(escape(parts[1]))
                         .append('\n');
@@ -231,6 +232,16 @@ final class BotMessages {
                     return l.replace("\u0000", "：").replace("<", "‹").replace(">", "›");
                 })
                 .toList();
+    }
+
+    /** Text without control characters (tabs and line breaks become spaces). */
+    static String plainText(String s) {
+        if (s == null) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder(s.length());
+        s.codePoints().forEach(cp -> out.appendCodePoint(Character.isISOControl(cp) ? ' ' : cp));
+        return out.toString();
     }
 
     /** Run text must not open links or mention everyone in Markdown chats. */

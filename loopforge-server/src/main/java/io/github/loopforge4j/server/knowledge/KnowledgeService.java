@@ -327,8 +327,14 @@ public class KnowledgeService {
 
     /** Roles that bind the knowledge base. */
     public List<Map<String, String>> usage() {
+        return usage(project -> true);
+    }
+
+    /** Roles that use the knowledge base, among those whose project {@code visible} accepts. */
+    public List<Map<String, String>> usage(java.util.function.Predicate<String> visible) {
         return catalog.agents().stream()
                 .filter(AgentDefinition::knowledgeBase)
+                .filter(a -> visible.test(a.projectId()))
                 .map(a -> Map.of("agentId", a.id(), "name", a.name()))
                 .toList();
     }

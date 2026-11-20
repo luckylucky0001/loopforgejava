@@ -210,6 +210,22 @@ class RunnerIntegrationTest {
 
         // the machine sees only its own runs, and cannot rewrite what defines them
         RestClient machineApi = client(runnerToken);
+        // a machine reads only what the runs it may claim can use
+        ok(admin, "PUT", "/api/v1/projects/p9", Map.of("name", "P9"), 200);
+        ok(admin, "PUT", "/api/v1/rules/p9-rule", Map.of("name", "p9", "content", "机密", "projectId", "p9"), 200);
+        ok(admin, "PUT", "/api/v1/rules/everyone", Map.of("name", "all", "content", "公开"), 200);
+        assertThat(send(machineApi, "GET", "/api/v1/runner-api/catalog/rules/p9-rule", null)
+                        .getStatusCode()
+                        .value())
+                .isEqualTo(404);
+        assertThat(send(machineApi, "GET", "/api/v1/runner-api/catalog/rules/everyone", null)
+                        .getStatusCode()
+                        .value())
+                .isEqualTo(200);
+        assertThat(send(machineApi, "GET", "/api/v1/runner-api/catalog/rules", null)
+                        .getBody())
+                .contains("everyone")
+                .doesNotContain("p9-rule");
         // a member may not start this local-sandbox SOP on the server, unlike on their own machine
         ok(alice, "POST", "/api/v1/runs", Map.of("workflowId", "wf", "projectId", "p1"), 403);
         Map<String, Object> plain =

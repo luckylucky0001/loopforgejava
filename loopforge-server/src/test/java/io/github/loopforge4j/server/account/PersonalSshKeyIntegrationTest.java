@@ -105,7 +105,7 @@ class PersonalSshKeyIntegrationTest {
                         .contains(
                                 ((Map<String, Object>) call(c, "GET", "/api/v1/runs/" + id, null, 200)).get("status")));
         Map<String, Object> done = call(c, "GET", "/api/v1/runs/" + id, null, 200);
-        assertThat(done.get("status")).isEqualTo("succeeded");
+        assertThat(done.get("status")).as(() -> Json.write(done.get("nodes"))).isEqualTo("succeeded");
         return (String) ((Map<String, Object>) ((Map<String, Object>) done.get("nodes")).get("probe")).get("output");
     }
 

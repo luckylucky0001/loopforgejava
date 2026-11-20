@@ -151,15 +151,19 @@ public final class GitEnvironment {
             throws IOException {
         io.github.loopforge4j.core.runtime.ManagedFiles files =
                 new io.github.loopforge4j.core.runtime.ManagedFiles(workspace);
-        Path control = files.root().resolve(LocalSandbox.CONTROL_DIR);
+        // paths handed to commands use the workspace path as configured: a container mounts it at
+        // that path, not at its resolved one
+        Path base = workspace.toAbsolutePath().normalize();
+        Path control = base.resolve(LocalSandbox.CONTROL_DIR);
         // a key file written by earlier versions must not outlive them
         files.delete(control.resolve("ssh").resolve("id_loopforge"));
         String id = java.util.HexFormat.of().formatHex(next());
-        Path dir = files.directory(control.resolve("ssh").resolve(id));
+        Path dir = control.resolve("ssh").resolve(id);
+        files.directory(dir);
         // a Unix socket path has at most 107 bytes: deep workspaces use a short name at their root
         Path socket = control.resolve("s").resolve(id);
         if (socket.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > SshAgent.MAX_SOCKET_PATH) {
-            socket = files.root().resolve(".lf" + id.substring(0, 6));
+            socket = base.resolve(".lf" + id.substring(0, 6));
         } else {
             files.directory(control.resolve("s"));
         }
@@ -251,11 +255,11 @@ public final class GitEnvironment {
             env.put(
                     "GIT_SSH_COMMAND",
                     "sh -c 'echo \"LoopForge: 无法启动 SSH agent（工作区路径过长？）；请改用 HTTPS 地址\" >&2; exit 1' --");
-            return new Binding(env, null, dir, files.root());
+            return new Binding(env, null, dir, base);
         }
         env.put("GIT_SSH_VARIANT", "ssh");
         env.put("GIT_SSH_COMMAND", "ssh -F " + shellQuoted(configFile.toString()));
-        return new Binding(env, agent, dir, files.root());
+        return new Binding(env, agent, dir, base);
     }
 
     private static byte[] next() {

@@ -27,6 +27,8 @@ spring:
       # slightly larger image gets a clear answer from the controller instead of a cut connection
       max-file-size: 6MB
       max-request-size: 27MB
+      # parse a multipart body only where an endpoint asks for its parts, never for every request
+      resolve-lazily: true
   lifecycle:
     timeout-per-shutdown-phase: 30s
   autoconfigure:

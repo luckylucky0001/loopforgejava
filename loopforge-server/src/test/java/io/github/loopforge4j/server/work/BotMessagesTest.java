@@ -119,4 +119,33 @@ class BotMessagesTest {
         mac.init(new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
         return Base64.getEncoder().encodeToString(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
     }
+
+    @org.junit.jupiter.api.Test
+    void aReportCannotForgeLinksOrMentions() {
+        io.github.loopforge4j.core.domain.Run run = io.github.loopforge4j.core.domain.Run.create(
+                "r1",
+                io.github.loopforge4j.core.domain.WorkflowDefinition.builder("wf")
+                        .build(),
+                "x",
+                io.github.loopforge4j.core.domain.ExecutionContext.triggeredBy("t"),
+                java.time.Instant.EPOCH);
+        RunReports.Report report = new RunReports.Report(
+                "generated", "标题 @all", "\u0001点我\u0001https://evil.example", "<@all>\u0000v\n<!channel|x>", null);
+        for (String kind : List.of("wecom", "dingtalk", "slack", "feishu")) {
+            String body = BotMessages.render(
+                            channel(kind, "https://hooks.example/x", null),
+                            "run.succeeded",
+                            run,
+                            null,
+                            java.time.Instant.EPOCH,
+                            report)
+                    .body();
+            org.assertj.core.api.Assertions.assertThat(body)
+                    .as(kind)
+                    .doesNotContain("evil.example)", "<@all>", "<!channel", "](https://evil", "<https://evil");
+            if (!kind.equals("slack") && !kind.equals("feishu")) {
+                org.assertj.core.api.Assertions.assertThat(body).as(kind).doesNotContain("@all");
+            }
+        }
+    }
 }

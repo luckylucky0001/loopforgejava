@@ -246,7 +246,9 @@ class EngineConfiguration {
             io.github.loopforge4j.core.store.InstanceRegistry instances,
             LoopForgeProperties properties,
             Clock clock,
-            List<RunListener> listeners) {
+            List<RunListener> listeners,
+            org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.server.account.AccessPolicy>
+                    access) {
         LoopForgeProperties.Engine engine = properties.engine();
         EngineSettings settings = new EngineSettings(
                 instanceId(properties),
@@ -271,6 +273,7 @@ class EngineConfiguration {
                         properties.preview().maxFiles(),
                         properties.preview().maxFileSize().toBytes(),
                         properties.preview().maxSize().toBytes()))
+                .projectAssetSandboxes(profile -> access.getObject().projectAssetsAllowed(profile))
                 .snapshots(snapshots)
                 .snapshotLimits(new io.github.loopforge4j.core.runtime.WorkspaceSnapshot.Limits(
                         properties.engine().snapshotMaxSize().toBytes(),

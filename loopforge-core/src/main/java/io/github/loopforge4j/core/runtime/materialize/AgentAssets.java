@@ -154,8 +154,19 @@ public record AgentAssets(
 
     /** Rule entries of the role that are inline text rather than catalog references. */
     public static List<String> inlineRules(AgentDefinition agent, CatalogStore catalog) {
+        return inlineRules(agent, catalog, agent.projectId());
+    }
+
+    /**
+     * The same for work of {@code projectId}: an entry naming another project's rule stays text, so
+     * a project cannot erase a shared role's inline rule by creating a rule of that name.
+     */
+    public static List<String> inlineRules(AgentDefinition agent, CatalogStore catalog, String projectId) {
         return agent.rules().stream()
-                .filter(r -> catalog.asset(AssetKind.RULE, r.strip()).isEmpty())
+                .filter(r -> catalog.asset(AssetKind.RULE, r.strip())
+                        .filter(rule ->
+                                rule.projectId() == null || rule.projectId().equals(projectId))
+                        .isEmpty())
                 .toList();
     }
 }

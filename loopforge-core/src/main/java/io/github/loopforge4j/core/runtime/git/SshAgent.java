@@ -28,8 +28,8 @@ public final class SshAgent implements AutoCloseable {
     static final int SIGN_REQUEST = 13;
     static final int SIGN_RESPONSE = 14;
     private static final int MAX_MESSAGE = 256 * 1024;
-    /** sun_path is 108 bytes including the terminating NUL. */
-    public static final int MAX_SOCKET_PATH = 107;
+    /** sun_path is 108 bytes on Linux and 104 on macOS, including the terminating NUL. */
+    public static final int MAX_SOCKET_PATH = 103;
 
     private final Path socket;
     private final List<SshKeys.Identity> identities;
@@ -56,7 +56,7 @@ public final class SshAgent implements AutoCloseable {
         ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
         try {
             server.bind(UnixDomainSocketAddress.of(socket));
-            Files.setPosixFilePermissions(socket, PosixFilePermissions.fromString("rw-------"));
+            restrict(socket);
         } catch (IOException | RuntimeException e) {
             server.close();
             Files.deleteIfExists(socket);
@@ -65,6 +65,28 @@ public final class SshAgent implements AutoCloseable {
         SshAgent agent = new SshAgent(socket, identities, server);
         Thread.ofVirtual().name("ssh-agent-" + socket.getFileName()).start(agent::accept);
         return agent;
+    }
+
+    /** Owner-only, never through a link someone put in the socket's place meanwhile. */
+    private static void restrict(Path socket) throws IOException {
+        var permissions = PosixFilePermissions.fromString("rw-------");
+        try {
+            Files.getFileAttributeView(
+                            socket,
+                            java.nio.file.attribute.PosixFileAttributeView.class,
+                            java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    .setPermissions(permissions);
+        } catch (UnsupportedOperationException | IOException e) {
+            // Linux cannot change a non-link's mode without following: check it is no link first
+            if (Files.readAttributes(
+                            socket,
+                            java.nio.file.attribute.BasicFileAttributes.class,
+                            java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    .isSymbolicLink()) {
+                throw new IOException("the agent socket was replaced by a link: " + socket);
+            }
+            Files.setPosixFilePermissions(socket, permissions);
+        }
     }
 
     public Path socket() {

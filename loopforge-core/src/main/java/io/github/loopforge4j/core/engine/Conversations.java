@@ -47,6 +47,7 @@ public final class Conversations {
      * @param extraServers platform-served MCP servers for this turn, credentials included
      * @param extraRules usage rules that come with them
      * @param responsible the person speaking: their own executor and Git credentials apply
+     * @param withGit whether the turn gets the person's Git credentials (a report needs none)
      */
     public record Turn(
             String conversationId,
@@ -58,7 +59,33 @@ public final class Conversations {
             List<McpServerDefinition> extraServers,
             List<RuleDefinition> extraRules,
             Map<String, String> environment,
-            String responsible) {
+            String responsible,
+            boolean withGit) {
+
+        public Turn(
+                String conversationId,
+                String sandboxProfileId,
+                AgentDefinition bot,
+                String prompt,
+                String resumeSessionId,
+                Duration timeout,
+                List<McpServerDefinition> extraServers,
+                List<RuleDefinition> extraRules,
+                Map<String, String> environment,
+                String responsible) {
+            this(
+                    conversationId,
+                    sandboxProfileId,
+                    bot,
+                    prompt,
+                    resumeSessionId,
+                    timeout,
+                    extraServers,
+                    extraRules,
+                    environment,
+                    responsible,
+                    true);
+        }
 
         public Turn(
                 String conversationId,
@@ -80,7 +107,8 @@ public final class Conversations {
                     extraServers,
                     extraRules,
                     environment,
-                    null);
+                    null,
+                    true);
         }
 
         public Turn {
@@ -143,25 +171,19 @@ public final class Conversations {
                         List.of()))
                 : null;
         // the speaker's own Git credentials, never the deployment's: they can read this environment
-        io.github.loopforge4j.core.runtime.git.GitEnvironment.Binding gitBinding =
-                engine.personalGitBinding(sandbox, turn.responsible());
-        Map<String, String> environment = new java.util.HashMap<>(gitBinding.environment());
-        environment.putAll(turn.environment());
-        AgentInvocation invocation = new AgentInvocation(
-                turn.conversationId(),
-                "chat",
-                1,
-                invocationId,
-                executor,
-                turn.bot(),
-                turn.prompt(),
-                turn.resumeSessionId(),
-                null,
-                List.of(),
-                turn.timeout(),
-                environment,
-                compiled,
-                turn.responsible());
+        io.github.loopforge4j.core.runtime.git.GitEnvironment.Binding gitBinding = turn.withGit()
+                ? engine.personalGitBinding(sandbox, turn.responsible())
+                : io.github.loopforge4j.core.runtime.git.GitEnvironment.Binding.of(Map.of());
+        AgentInvocation invocation;
+        try {
+            Map<String, String> environment = new java.util.HashMap<>(gitBinding.environment());
+            environment.putAll(turn.environment());
+            invocation = invocationOf(turn, invocationId, executor, environment, compiled);
+        } catch (RuntimeException e) {
+            // the SSH agent must not outlive a turn that never started
+            gitBinding.close();
+            throw e;
+        }
         try {
             AgentResult result = adapter.execute(invocation, sandbox, sink, cancellation);
             return reply(executor, result, false);
@@ -181,6 +203,29 @@ public final class Conversations {
                 }
             }
         }
+    }
+
+    private static AgentInvocation invocationOf(
+            Turn turn,
+            String invocationId,
+            ExecutorDefinition executor,
+            Map<String, String> environment,
+            CompiledAgent compiled) {
+        return new AgentInvocation(
+                turn.conversationId(),
+                "chat",
+                1,
+                invocationId,
+                executor,
+                turn.bot(),
+                turn.prompt(),
+                turn.resumeSessionId(),
+                null,
+                List.of(),
+                turn.timeout(),
+                environment,
+                compiled,
+                turn.responsible());
     }
 
     /** A repository checked out read-only into a conversation workspace, or why it could not be. */

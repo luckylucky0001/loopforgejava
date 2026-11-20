@@ -79,6 +79,7 @@ class AssetController {
     @PutMapping("/rules/{id}")
     RuleDefinition putRule(
             @PathVariable String id, @RequestBody RuleDefinition body, java.security.Principal principal) {
+        PathIds.require(id);
         var existing = store.asset(AssetKind.RULE, id);
         CatalogScopes.requireWrite(
                 access,
@@ -94,6 +95,7 @@ class AssetController {
 
     @DeleteMapping("/rules/{id}")
     ResponseEntity<Void> deleteRule(@PathVariable String id, java.security.Principal principal) {
+        PathIds.require(id);
         store.asset(AssetKind.RULE, id)
                 .ifPresent(r -> access.requireProject(
                         principal, r.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
@@ -119,6 +121,7 @@ class AssetController {
     @PutMapping("/skills/{id}")
     SkillDefinition putSkill(
             @PathVariable String id, @RequestBody SkillDefinition body, java.security.Principal principal) {
+        PathIds.require(id);
         var existing = store.asset(AssetKind.SKILL, id);
         CatalogScopes.requireWrite(
                 access,
@@ -134,6 +137,7 @@ class AssetController {
 
     @DeleteMapping("/skills/{id}")
     ResponseEntity<Void> deleteSkill(@PathVariable String id, java.security.Principal principal) {
+        PathIds.require(id);
         store.asset(AssetKind.SKILL, id)
                 .ifPresent(k -> access.requireProject(
                         principal, k.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
@@ -158,6 +162,7 @@ class AssetController {
 
     @PutMapping("/mcp-servers/{id}")
     McpServerDefinition putMcpServer(@PathVariable String id, @RequestBody McpServerDefinition body) {
+        PathIds.require(id);
         return catalog.saveAsset(
                 AssetKind.MCP_SERVER,
                 new McpServerDefinition(
@@ -181,6 +186,7 @@ class AssetController {
 
     @DeleteMapping("/mcp-servers/{id}")
     ResponseEntity<Void> deleteMcpServer(@PathVariable String id) {
+        PathIds.require(id);
         return delete(AssetKind.MCP_SERVER, id);
     }
 

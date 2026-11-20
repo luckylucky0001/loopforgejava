@@ -397,9 +397,9 @@ public class RunnerApiController {
         Set<String> projects = runs.projectsOfRunner(runner.id());
         Optional<?> item = switch (type) {
             case "workflows" -> catalog.workflow(id).filter(w -> visible(w.projectId(), projects));
-            case "agents" -> catalog.agent(id);
+            case "agents" -> catalog.agent(id).filter(a -> visible(a.projectId(), projects));
             case "repositories" -> catalog.repository(id).filter(r -> visible(r.projectId(), projects));
-            default -> catalog.asset(kind(type), id);
+            default -> catalog.asset(kind(type), id).filter(a -> visible(runner, a, projects));
         };
         return json(item.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, type + " " + id + " not found")));
     }
@@ -413,12 +413,18 @@ public class RunnerApiController {
                 catalog.workflows().stream()
                         .filter(w -> visible(w.projectId(), projects))
                         .toList();
-            case "agents" -> catalog.agents();
+            case "agents" ->
+                catalog.agents().stream()
+                        .filter(a -> visible(a.projectId(), projects))
+                        .toList();
             case "repositories" ->
                 catalog.repositories().stream()
                         .filter(r -> visible(r.projectId(), projects))
                         .toList();
-            default -> catalog.assets(kind(type));
+            default ->
+                catalog.assets(kind(type)).stream()
+                        .filter(a -> visible(runner, a, projects))
+                        .toList();
         };
         return json(items);
     }
@@ -443,6 +449,31 @@ public class RunnerApiController {
 
     private static boolean visible(String projectId, Set<String> projects) {
         return projectId == null || projectId.isBlank() || projects.contains(projectId);
+    }
+
+    /**
+     * A machine sees what the runs it may claim can use: shared assets, those of its projects, and
+     * personal MCP servers of the person who registered it.
+     */
+    private static boolean visible(Runner runner, CatalogAsset asset, Set<String> projects) {
+        return switch (asset) {
+            case io.github.loopforge4j.core.domain.RuleDefinition r -> visible(r.projectId(), projects);
+            case io.github.loopforge4j.core.domain.SkillDefinition k -> visible(k.projectId(), projects);
+            case io.github.loopforge4j.core.domain.McpServerDefinition m -> {
+                var placement = m.placement();
+                if (m.shared() || placement == null) {
+                    yield true;
+                }
+                yield switch (placement.scope()) {
+                    case io.github.loopforge4j.core.domain.McpServerDefinition.Placement.PROJECT ->
+                        visible(placement.projectId(), projects);
+                    case io.github.loopforge4j.core.domain.McpServerDefinition.Placement.PERSONAL ->
+                        runner.ownerName() != null && runner.ownerName().equals(placement.owner());
+                    default -> true;
+                };
+            }
+            default -> true;
+        };
     }
 
     @SuppressWarnings("unchecked")

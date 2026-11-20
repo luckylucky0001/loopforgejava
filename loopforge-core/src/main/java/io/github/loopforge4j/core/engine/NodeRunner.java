@@ -583,7 +583,18 @@ final class NodeRunner {
         } catch (IllegalArgumentException e) {
             throw new NodeFailure(FailureKind.CONFIGURATION, "agent '" + agent.id() + "': " + e.getMessage());
         }
-        List<String> inlineRules = AgentAssets.inlineRules(agent, engine.catalog());
+        // a project's own roles, rules and skills are written by its maintainers: their prompts,
+        // hooks and gates only run where a member's code may run
+        boolean projectAssets = agent.projectId() != null
+                || assets.rules().stream().anyMatch(r -> r.projectId() != null)
+                || assets.skills().stream().anyMatch(k -> k.projectId() != null);
+        String profile = currentRun(runId).workflow().sandboxProfileId();
+        if (projectAssets && !engine.projectAssetsAllowed(profile)) {
+            throw new NodeFailure(
+                    FailureKind.CONFIGURATION,
+                    "角色 " + agent.id() + " 使用了项目自己的角色、规则或 Skills，只能在隔离沙箱中运行（当前沙箱 " + profile + "）");
+        }
+        List<String> inlineRules = AgentAssets.inlineRules(agent, engine.catalog(), project);
 
         Run run = currentRun(runId);
         Sandbox sandbox = engine.sandbox(run);
