@@ -36,7 +36,7 @@ jobs:
       LOOPFORGE_TEST_POSTGRES_USER: loopforge
       LOOPFORGE_TEST_POSTGRES_PASSWORD: loopforge
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -59,7 +59,7 @@ jobs:
     needs: build
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Build and start the Compose stack (app + PostgreSQL, prod profile)
         env:
           LOOPFORGE_API_TOKEN: ci-smoke-token-0123456789-abcdefghij
