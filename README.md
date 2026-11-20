@@ -202,7 +202,7 @@ loopforge:
 
 ### 平台助手（对话）
 
-控制台「助手」里新建个人或项目对话。每一轮由默认执行器（或 `loopforge.assistant.executor`）在对话专属的工作区里运行，下一轮续接同一个 CLI 会话；助手拿到的平台 MCP 凭据代表本轮发言人（项目对话只限该项目），只在这一轮回复期间有效，永远没有管理员权限。工作区沙箱默认 `loopforge.assistant.sandbox-profile=local`，成员仍受隔离沙箱要求约束（为成员开放请设为 `docker` 或 `bwrap`）。
+控制台「助手」里新建个人或项目对话（项目成员能查看项目对话，只有发起人能发言）。每一轮由默认执行器（或 `loopforge.assistant.executor`）在对话专属的工作区里运行，下一轮续接同一个 CLI 会话；助手拿到的平台 MCP 凭据代表本轮发言人（项目对话只限该项目），只在这一轮回复期间有效，永远没有管理员权限。工作区沙箱默认 `loopforge.assistant.sandbox-profile=local`，成员仍受隔离沙箱要求约束（为成员开放请设为 `docker` 或 `bwrap`）。
 
 ```yaml
 loopforge:

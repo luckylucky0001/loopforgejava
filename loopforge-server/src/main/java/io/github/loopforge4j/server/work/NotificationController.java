@@ -51,6 +51,8 @@ class NotificationController {
 
     @PostMapping
     ResponseEntity<NotificationChannel> create(@RequestBody NotificationChannel body, Principal principal) {
+        // a channel keeps sending the project's events to its URL after the turn ends
+        access.requireHuman(principal, "save notification channels");
         access.requireProject(principal, body.projectId(), ProjectRole.MAINTAINER);
         validate(body);
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -60,6 +62,7 @@ class NotificationController {
 
     @PutMapping("/{id}")
     NotificationChannel update(@PathVariable String id, @RequestBody NotificationChannel body, Principal principal) {
+        access.requireHuman(principal, "save notification channels");
         NotificationChannel existing = find(id, principal);
         access.requireProject(principal, body.projectId(), ProjectRole.MAINTAINER);
         validate(body);

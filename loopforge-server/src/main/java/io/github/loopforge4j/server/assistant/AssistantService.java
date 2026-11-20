@@ -147,7 +147,7 @@ public class AssistantService {
         if (!own && !user.admin()) {
             access.requireProject(principal, session.projectId(), ProjectRole.MAINTAINER);
         }
-        if ("generating".equals(session.status())) {
+        if ("generating".equals(session.status()) || "cancelling".equals(session.status())) {
             throw new ApiException(HttpStatus.CONFLICT, "stop the current reply first");
         }
         store.delete(id);
@@ -165,6 +165,12 @@ public class AssistantService {
         requireEnabled();
         AssistantSession session = readable(id, principal);
         CurrentUser user = human(principal);
+        // the workspace and CLI session persist across turns: a second speaker could leave something
+        // there (CLI settings, git hooks) that runs in the owner's next turn with the owner's rights
+        if (session.ownerId() == null || !session.ownerId().equals(user.id())) {
+            throw new AccessPolicy.AccessDeniedException(
+                    "only the person who started this conversation can talk in it; start your own");
+        }
         String text = content == null ? "" : content.strip();
         if (text.isEmpty() || text.length() > MAX_MESSAGE) {
             throw new ApiException(
@@ -173,7 +179,8 @@ public class AssistantService {
         // the workspace profile may have become stricter since the conversation started
         access.requireIsolatedProfile(principal, session.sandboxProfileId());
         Instant stale = clock.instant().minus(config.turnTimeout()).minus(Duration.ofMinutes(2));
-        if (!store.claimTurn(id, stale)) {
+        String turn = store.claimTurn(id, stale);
+        if (turn == null) {
             throw new ApiException(HttpStatus.CONFLICT, "the assistant is still answering");
         }
         List<AssistantMessage> history = store.messages(id, Math.max(0, config.history()));
@@ -181,12 +188,16 @@ public class AssistantService {
                 store.append(new AssistantMessage(0, id, "user", user.username(), text, null, 0, 0, null, null));
         streams.publish(id, "message", message);
         streams.publish(id, "status", Map.of("status", "generating"));
-        Thread.ofVirtual().name("assistant-" + id).start(() -> runTurn(session, user, text, history));
+        Thread.ofVirtual().name("assistant-" + id).start(() -> runTurn(session, turn, user, text, history));
         return message;
     }
 
     public void cancel(String id, Principal principal) {
-        readable(id, principal);
+        AssistantSession session = readable(id, principal);
+        CurrentUser user = human(principal);
+        if (session.ownerId() == null || !session.ownerId().equals(user.id())) {
+            access.requireProject(principal, session.projectId(), ProjectRole.MAINTAINER);
+        }
         if (!store.requestCancel(id)) {
             throw new ApiException(HttpStatus.CONFLICT, "nothing to stop");
         }
@@ -238,7 +249,8 @@ public class AssistantService {
                 now,
                 now);
         store.create(session);
-        if (!store.claimTurn(session.id(), now)) {
+        String turn = store.claimTurn(session.id(), now);
+        if (turn == null) {
             throw new ApiException(HttpStatus.CONFLICT, "the conversation is busy");
         }
         String text = SCHEDULED_BRIEF + prompt;
@@ -248,7 +260,7 @@ public class AssistantService {
                 store.append(
                         new AssistantMessage(0, session.id(), "user", user.username(), text, null, 0, 0, null, null)));
         Thread.ofVirtual().name("assistant-scheduled-" + session.id()).start(() -> {
-            AssistantMessage reply = runTurn(session, user, text, List.of());
+            AssistantMessage reply = runTurn(session, turn, user, text, List.of());
             done.accept(new ScheduledOutcome(
                     session.id(),
                     reply == null ? null : reply.content(),
@@ -259,7 +271,7 @@ public class AssistantService {
     }
 
     private AssistantMessage runTurn(
-            AssistantSession session, CurrentUser speaker, String text, List<AssistantMessage> history) {
+            AssistantSession session, String turnId, CurrentUser speaker, String text, List<AssistantMessage> history) {
         String id = session.id();
         Cancellation cancellation = Cancellation.create();
         List<String> activity = new ArrayList<>();
@@ -277,8 +289,8 @@ public class AssistantService {
         String error = null;
         AssistantMessage last = null;
         try {
-            PlatformMcp.Binding binding =
-                    platform.bindConversation(id, session.projectId(), speaker.id(), session.sandboxProfileId());
+            PlatformMcp.Binding binding = platform.bindConversation(
+                    id, turnId, session.projectId(), speaker.id(), session.sandboxProfileId());
             AgentDefinition bot = AgentDefinition.builder("main-bot")
                     .name("LoopForge 助手")
                     .executor(session.executorId())
@@ -344,6 +356,16 @@ public class AssistantService {
             streams.publish(id, "status", Map.of("status", "idle"));
         }
         return last;
+    }
+
+    /** Turns left running by a stopped instance end, and their tokens with them. */
+    @org.springframework.scheduling.annotation.Scheduled(initialDelayString = "PT30S", fixedDelayString = "PT1M")
+    public void endStaleTurns() {
+        int ended =
+                store.endStaleTurns(clock.instant().minus(config.turnTimeout()).minus(Duration.ofMinutes(2)));
+        if (ended > 0) {
+            log.info("ended {} conversation turn(s) left by a stopped instance", ended);
+        }
     }
 
     /** The whole recent conversation, for a turn that cannot continue a CLI session. */

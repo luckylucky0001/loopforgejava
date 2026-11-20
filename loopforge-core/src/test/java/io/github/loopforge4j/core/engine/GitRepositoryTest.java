@@ -361,7 +361,9 @@ class GitRepositoryTest {
                         .id(),
                 RunStatus.SUCCEEDED);
         String output = done.requireNode("n").output();
-        assertThat(output).contains("username=x-access-token", "password=s3cret-token", "other=none");
+        // the helper answered with the token (git saw it), and the recorded output masks it
+        assertThat(output).contains("username=x-access-token", "password=***", "other=none");
+        assertThat(output).doesNotContain("s3cret-token");
         assertThat(output.lines().toList()).contains("0"); // the token is not in the helper file
         assertThat(f.eventTypes(done.id()).toString()).doesNotContain("s3cret");
     }

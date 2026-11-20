@@ -115,7 +115,7 @@ public class RunTokens {
         if (claims.runId().startsWith(CONVERSATION_PREFIX)) {
             // a conversation token lives as long as the turn it was issued for
             return (claims.kind() == Kind.CONVERSATION || claims.kind() == Kind.KNOWLEDGE)
-                            && generating(claims.runId().substring(CONVERSATION_PREFIX.length()))
+                            && generating(claims.runId().substring(CONVERSATION_PREFIX.length()), claims.nodeId())
                     ? Optional.of(claims)
                     : Optional.empty();
         }
@@ -130,12 +130,29 @@ public class RunTokens {
         return Optional.of(claims);
     }
 
-    private boolean generating(String sessionId) {
-        return jdbc.sql("SELECT COUNT(*) FROM assistant_sessions WHERE id = :id AND status = 'generating'")
+    /** The session is answering the very turn the token was issued for. */
+    private boolean generating(String sessionId, String turnId) {
+        if (turnId == null) {
+            return false;
+        }
+        return jdbc.sql("SELECT COUNT(*) FROM assistant_sessions WHERE id = :id AND status = 'generating'"
+                                + " AND turn_id = :turn")
                         .param("id", sessionId)
+                        .param("turn", turnId)
                         .query(Long.class)
                         .single()
                 > 0;
+    }
+
+    /** Header marking a request this server forwarded for a platform MCP tool. */
+    public static final String FORWARDED = "X-LoopForge-Forwarded";
+
+    /**
+     * The value of {@link #FORWARDED}: derived from the shared token key, so every instance accepts
+     * it and no agent knows it.
+     */
+    public String forwardingMark() {
+        return sign("forwarded-by-platform-mcp:v1");
     }
 
     private String sign(String body) {

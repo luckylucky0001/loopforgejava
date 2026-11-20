@@ -153,6 +153,15 @@ class AssistantIntegrationTest {
                         .get("id");
         ok(dave, "POST", "/api/v1/assistant/sessions", Map.of("projectId", "p1"), 403);
         ok(dave, "GET", "/api/v1/assistant/sessions/" + id, null, 404);
+        // project members see the conversation but do not speak in it: the workspace and CLI session
+        // persist across turns and run with the owner's rights
+        String erinId = (String)
+                ok(admin, "POST", "/api/v1/users", Map.of("username", "erin", "password", "erin-password-1"), 201)
+                        .get("id");
+        ok(admin, "PUT", "/api/v1/projects/p1/members/" + erinId, Map.of("role", "maintainer"), 200);
+        RestClient erin = client(login("erin"));
+        ok(erin, "GET", "/api/v1/assistant/sessions/" + id, null, 200);
+        ok(erin, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "我也说一句"), 403);
 
         ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "帮我建一个需求：登录页报错"), 202);
         ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "再来"), 409);

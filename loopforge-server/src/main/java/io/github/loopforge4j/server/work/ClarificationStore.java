@@ -24,7 +24,7 @@ public class ClarificationStore {
     }
 
     public Optional<Clarification> find(String requirementId) {
-        return jdbc.sql("SELECT payload, status, round_started_at FROM requirement_clarifications"
+        return jdbc.sql("SELECT payload, status, round_started_at, updated_at FROM requirement_clarifications"
                         + " WHERE requirement_id = :id")
                 .param("id", requirementId)
                 .query(ClarificationStore::map)
@@ -36,6 +36,8 @@ public class ClarificationStore {
         Clarification.Builder b = c.toBuilder();
         b.status = rs.getString("status");
         b.roundStartedAt = SqlTime.read(rs, "round_started_at");
+        // the column, not the payload: it is what a conditional claim compares against
+        b.updatedAt = SqlTime.read(rs, "updated_at");
         return b.build();
     }
 
@@ -48,14 +50,20 @@ public class ClarificationStore {
     boolean claim(Clarification next, Instant staleBefore) {
         Instant now = clock.instant();
         Clarification stamped = stamp(next, "analyzing", now, now);
-        int updated = jdbc.sql("UPDATE requirement_clarifications SET status = 'analyzing', round_started_at = :now,"
+        // next was built from what the caller read: claim only if nobody saved since (updated_at)
+        String unchanged = next.updatedAt() == null ? "" : " AND updated_at = :read";
+        var statement = jdbc.sql("UPDATE requirement_clarifications SET status = 'analyzing', round_started_at = :now,"
                         + " payload = :payload, updated_at = :now WHERE requirement_id = :id"
-                        + " AND (status IN ('new', 'in_progress', 'ready') OR round_started_at < :stale)")
+                        + " AND (status IN ('new', 'in_progress', 'ready')" + unchanged
+                        + " OR round_started_at < :stale)")
                 .param("id", stamped.requirementId())
                 .param("now", SqlTime.of(now))
                 .param("payload", JsonRows.write(stamped))
-                .param("stale", SqlTime.of(staleBefore))
-                .update();
+                .param("stale", SqlTime.of(staleBefore));
+        if (next.updatedAt() != null) {
+            statement = statement.param("read", SqlTime.of(next.updatedAt()));
+        }
+        int updated = statement.update();
         if (updated == 1) {
             return true;
         }

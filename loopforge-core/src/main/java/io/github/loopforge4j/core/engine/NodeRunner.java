@@ -298,7 +298,9 @@ final class NodeRunner {
         List<String> argv = language == ScriptLanguage.PYTHON
                 ? List.of("sh", "-c", "exec python3 \"$0\" 2>&1", file.toString())
                 : List.of("sh", "-c", "exec sh -l \"$0\" 2>&1", file.toString());
-        EventSink sink = engine.sink(runId, node.id());
+        // tokens in the run's environment may be one person's own: they never reach the logs
+        java.util.Set<String> secrets = io.github.loopforge4j.core.runtime.Secrets.values(runEnvironment);
+        EventSink sink = io.github.loopforge4j.core.runtime.Secrets.redacting(engine.sink(runId, node.id()), secrets);
         sink.emit(Telemetry.of("script", "script.started", "start", language.wire() + " 脚本开始执行"));
         List<ScopeTarget> targets = targets(run, node.effectiveScope());
         StringBuilder combined = new StringBuilder();
@@ -330,7 +332,10 @@ final class NodeRunner {
                         ? "script timed out after " + timeout(node).toSeconds() + "s"
                         : "script exited with code " + result.exitCode();
                 String where = targets.size() > 1 ? target.label() + ": " : "";
-                throw new NodeFailure(FailureKind.SCRIPT, where + reason + ": " + tail(result.output()));
+                throw new NodeFailure(
+                        FailureKind.SCRIPT,
+                        where + reason + ": "
+                                + io.github.loopforge4j.core.runtime.Secrets.redact(tail(result.output()), secrets));
             }
         }
         sink.emit(new Telemetry(
@@ -351,6 +356,9 @@ final class NodeRunner {
                         combined.length(),
                         "targets",
                         targets.size())));
+        String redacted = io.github.loopforge4j.core.runtime.Secrets.redact(combined.toString(), secrets);
+        combined.setLength(0);
+        combined.append(redacted);
         String output = combined.toString().isBlank()
                 ? "# 脚本执行结果\n\n- 语言：" + language.wire() + "\n- 状态：成功\n- 耗时：" + durationMillis + " ms\n- 标准输出：无\n"
                 : combined.toString().strip() + "\n";

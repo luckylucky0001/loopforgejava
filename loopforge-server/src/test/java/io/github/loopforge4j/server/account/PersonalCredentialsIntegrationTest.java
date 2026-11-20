@@ -45,8 +45,10 @@ class PersonalCredentialsIntegrationTest {
                     import json, os, subprocess, sys
                     sys.stdin.read()
                     argv = sys.argv[1:]
-                    seen = "key=%s base=%s model=%s" % (os.environ.get("ANTHROPIC_API_KEY"),
-                        os.environ.get("ANTHROPIC_BASE_URL"), os.environ.get("ANTHROPIC_MODEL"))
+                    key = os.environ.get("ANTHROPIC_API_KEY")
+                    # the reversed key tells which one arrived; the raw one must come out masked
+                    seen = "key=%s base=%s model=%s raw=%s" % (key[::-1] if key else None,
+                        os.environ.get("ANTHROPIC_BASE_URL"), os.environ.get("ANTHROPIC_MODEL"), key)
                     print(json.dumps({"type": "system", "subtype": "init", "session_id": "s"}), flush=True)
                     if "--mcp-config" in argv:
                         gate = json.load(open(argv[argv.index("--mcp-config") + 1]))["mcpServers"]["loopforge-gate"]
@@ -182,7 +184,8 @@ class PersonalCredentialsIntegrationTest {
                                         "type",
                                         "script",
                                         "script",
-                                        "echo git=$LOOPFORGE_GIT_TOKEN__git_example_com")),
+                                        "echo git=$(printf %s \"$LOOPFORGE_GIT_TOKEN__git_example_com\" | rev)"
+                                                + " raw=$LOOPFORGE_GIT_TOKEN__git_example_com")),
                         "edges",
                         List.of(Map.of("source", "ask", "target", "git"))),
                 200);
@@ -235,14 +238,15 @@ class PersonalCredentialsIntegrationTest {
 
         // carol's run uses her key, base URL, extra variable and Git token; dave's the deployment's
         String carolRun = runAndRead(carol, "ask");
-        assertThat(carolRun).isEqualTo("key=sk-carol-0123456789 base=https://gw.example/anthropic model=carol-model");
-        assertThat(daveRunGit(dave)).contains("git=deployment-git");
-        assertThat(runAndRead(dave, "ask")).isEqualTo("key=deployment-key base=None model=None");
+        assertThat(carolRun)
+                .isEqualTo("key=9876543210-lorac-ks base=https://gw.example/anthropic model=carol-model raw=***");
+        assertThat(daveRunGit(dave)).contains("git=tig-tnemyolped raw=***");
+        assertThat(runAndRead(dave, "ask")).isEqualTo("key=yek-tnemyolped base=None model=None raw=***");
         Map<String, Object> carolFull =
                 call(carol, "POST", "/api/v1/runs", Map.of("workflowId", "ask", "projectId", "p1", "input", "x"), 201);
         String carolFullId = (String) carolFull.get("id");
         awaitOutput(carol, carolFullId);
-        assertThat(gitOutput(carol, carolFullId)).contains("git=carol-git-token");
+        assertThat(gitOutput(carol, carolFullId)).contains("git=nekot-tig-lorac raw=***");
 
         // a scheduled run works for the person who created the schedule
         Map<String, Object> schedule = call(
@@ -253,14 +257,14 @@ class PersonalCredentialsIntegrationTest {
                 201);
         call(dave, "POST", "/api/v1/projects/p1/schedules/" + schedule.get("id") + "/run", null, 200);
         Map<String, Object> fired = call(dave, "GET", "/api/v1/projects/p1/schedules/" + schedule.get("id"), null, 200);
-        assertThat(awaitOutput(dave, (String) fired.get("lastRunId"))).startsWith("key=sk-carol-0123456789");
+        assertThat(awaitOutput(dave, (String) fired.get("lastRunId"))).startsWith("key=9876543210-lorac-ks");
 
         // a partial update keeps the stored key; deleting falls back to the deployment's
         call(carol, "PUT", "/api/v1/me/credentials/executor:claude-code", Map.of("baseUrl", ""), 200);
-        assertThat(runAndRead(carol, "ask")).isEqualTo("key=sk-carol-0123456789 base=None model=carol-model");
+        assertThat(runAndRead(carol, "ask")).isEqualTo("key=9876543210-lorac-ks base=None model=carol-model raw=***");
         call(carol, "DELETE", "/api/v1/me/credentials/executor:claude-code", null, 204);
         call(carol, "DELETE", "/api/v1/me/credentials/executor:claude-code", null, 404);
-        assertThat(runAndRead(carol, "ask")).isEqualTo("key=deployment-key base=None model=None");
+        assertThat(runAndRead(carol, "ask")).isEqualTo("key=yek-tnemyolped base=None model=None raw=***");
 
         // a personal endpoint never receives the deployment's key
         call(
@@ -269,7 +273,7 @@ class PersonalCredentialsIntegrationTest {
                 "/api/v1/me/credentials/executor:claude-code",
                 Map.of("variables", Map.of("ANTHROPIC_BASE_URL", "https://collector.example")),
                 200);
-        assertThat(runAndRead(carol, "ask")).isEqualTo("key=None base=https://collector.example model=None");
+        assertThat(runAndRead(carol, "ask")).isEqualTo("key=None base=https://collector.example model=None raw=None");
         call(carol, "DELETE", "/api/v1/me/credentials/executor:claude-code", null, 204);
 
         // a ciphertext moved onto another account does not open there
@@ -281,7 +285,7 @@ class PersonalCredentialsIntegrationTest {
                 .update();
         assertThat((List<Object>) call(dave, "GET", "/api/v1/me/credentials", null, 200))
                 .isEmpty();
-        assertThat(daveRunGit(dave)).contains("git=deployment-git");
+        assertThat(daveRunGit(dave)).contains("git=tig-tnemyolped raw=***");
     }
 
     @SuppressWarnings("unchecked")
@@ -307,13 +311,14 @@ class PersonalCredentialsIntegrationTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
     void theAssistantActingForAPersonCannotCreateDurableCredentials() {
         RestClient admin = client(TOKEN);
         call(admin, "PUT", "/api/v1/projects/p2", Map.of("name", "P2"), 200);
         String erinId = user(admin, "erin");
         call(admin, "PUT", "/api/v1/projects/p2/members/" + erinId, Map.of("role", "developer"), 200);
-        jdbc.sql("INSERT INTO assistant_sessions (id, project_id, owner_id, status, payload, created_at, updated_at)"
-                        + " VALUES ('chat_x', 'p2', :u, 'generating', '{}', :now, :now)")
+        jdbc.sql("INSERT INTO assistant_sessions (id, project_id, owner_id, status, turn_id, payload, created_at,"
+                        + " updated_at) VALUES ('chat_x', 'p2', :u, 'generating', 'turn-1', '{}', :now, :now)")
                 .param("u", erinId)
                 .param("now", OffsetDateTime.now())
                 .update();
@@ -321,14 +326,60 @@ class PersonalCredentialsIntegrationTest {
                 RunTokens.Kind.CONVERSATION,
                 RunTokens.CONVERSATION_PREFIX + "chat_x",
                 "p2",
-                null,
+                "turn-1",
                 null,
                 erinId,
                 Duration.ofMinutes(5));
         RestClient assistant = client(token);
-        // it acts for erin in her project...
-        call(assistant, "GET", "/api/v1/me", null, 200);
-        call(assistant, "GET", "/api/v1/projects/p2/requirements", null, 200);
+        // it acts for erin only through the platform MCP tools...
+        Map<String, Object> viaMcp = call(
+                assistant,
+                "POST",
+                "/mcp",
+                Map.of(
+                        "jsonrpc",
+                        "2.0",
+                        "id",
+                        1,
+                        "method",
+                        "tools/call",
+                        "params",
+                        Map.of("name", "requirements_list", "arguments", Map.of("path", Map.of("projectId", "p2")))),
+                200);
+        assertThat(((Map<String, Object>) viaMcp.get("result")).get("isError")).isEqualTo(false);
+        // ...never on the API directly (account, members, machines, …)
+        call(assistant, "GET", "/api/v1/me", null, 403);
+        call(assistant, "GET", "/api/v1/projects/p2/requirements", null, 403);
+        // a forged forwarding mark does not help
+        ResponseEntity<String> forged = client(token)
+                .get()
+                .uri("/api/v1/projects/p2/requirements")
+                .header(RunTokens.FORWARDED, "guess")
+                .retrieve()
+                .toEntity(String.class);
+        assertThat(forged.getStatusCode().value()).isEqualTo(403);
+        // and through the tools it cannot start runs on execution machines or save lasting automation
+        Map<String, Object> machineRun = call(
+                assistant,
+                "POST",
+                "/mcp",
+                Map.of(
+                        "jsonrpc",
+                        "2.0",
+                        "id",
+                        2,
+                        "method",
+                        "tools/call",
+                        "params",
+                        Map.of(
+                                "name",
+                                "runs_start",
+                                "arguments",
+                                Map.of("body", Map.of("workflowId", "x", "projectId", "p2", "runnerId", "r")))),
+                200);
+        assertThat(((Map<String, Object>) machineRun.get("result")).get("isError"))
+                .isEqualTo(true);
+        assertThat(Json.write(machineRun)).contains("execution machines");
         // ...but cannot mint access that outlives the turn
         call(assistant, "POST", "/api/v1/me/tokens", Map.of("name", "persist"), 403);
         call(assistant, "GET", "/api/v1/me/tokens", null, 403);

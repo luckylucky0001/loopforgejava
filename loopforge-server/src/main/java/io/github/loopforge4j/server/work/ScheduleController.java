@@ -43,6 +43,8 @@ class ScheduleController {
 
     @PostMapping
     ResponseEntity<Schedule> create(@PathVariable String projectId, @RequestBody Schedule body, Principal principal) {
+        // a scheduled task keeps working with its saver's rights and credentials after the turn ends
+        access.requireHuman(principal, "save scheduled tasks");
         access.requireProject(principal, projectId, ProjectRole.MAINTAINER);
         access.requireIsolatedSandbox(principal, body.workflowId());
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -59,6 +61,7 @@ class ScheduleController {
     @PutMapping("/{id}")
     Schedule update(
             @PathVariable String projectId, @PathVariable String id, @RequestBody Schedule body, Principal principal) {
+        access.requireHuman(principal, "save scheduled tasks");
         access.requireProject(principal, projectId, ProjectRole.MAINTAINER);
         find(projectId, id);
         access.requireIsolatedSandbox(principal, body.workflowId());

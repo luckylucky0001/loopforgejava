@@ -75,7 +75,42 @@ public abstract class CliAgentExecutor implements AgentExecutor {
     protected void prepare(AgentInvocation invocation, Sandbox sandbox, EventSink sink) throws IOException {}
 
     @Override
-    public AgentResult execute(AgentInvocation invocation, Sandbox sandbox, EventSink sink, Cancellation cancellation)
+    public AgentResult execute(AgentInvocation invocation, Sandbox sandbox, EventSink events, Cancellation cancellation)
+            throws ExecutorException, IOException, CancelledException {
+        Map<String, String> credentialEnvironment = credentials.environmentFor(kind(), invocation.responsible());
+        java.util.Set<String> secrets = new java.util.TreeSet<>(
+                java.util.Comparator.comparingInt(String::length).reversed().thenComparing(s -> s));
+        secrets.addAll(io.github.loopforge4j.core.runtime.Secrets.values(credentialEnvironment));
+        secrets.addAll(io.github.loopforge4j.core.runtime.Secrets.values(invocation.environment()));
+        EventSink sink = io.github.loopforge4j.core.runtime.Secrets.redacting(events, secrets);
+        try {
+            return redacted(run(invocation, sandbox, sink, cancellation, credentialEnvironment), secrets);
+        } catch (ExecutorException e) {
+            throw new ExecutorException(
+                    io.github.loopforge4j.core.runtime.Secrets.redact(e.getMessage(), secrets),
+                    e.partial() == null ? null : redacted(e.partial(), secrets));
+        }
+    }
+
+    private static AgentResult redacted(AgentResult r, java.util.Set<String> secrets) {
+        return new AgentResult(
+                io.github.loopforge4j.core.runtime.Secrets.redact(r.output(), secrets),
+                r.sessionId(),
+                r.model(),
+                r.usage(),
+                r.toolCalls(),
+                r.terminal(),
+                r.failed(),
+                r.maxTurns(),
+                r.exitCode());
+    }
+
+    private AgentResult run(
+            AgentInvocation invocation,
+            Sandbox sandbox,
+            EventSink sink,
+            Cancellation cancellation,
+            Map<String, String> credentialEnvironment)
             throws ExecutorException, IOException, CancelledException {
         String prompt = taskPrompt(invocation);
         writePromptFile(sandbox.workspace(), invocation.invocationId(), prompt);
@@ -93,7 +128,7 @@ public abstract class CliAgentExecutor implements AgentExecutor {
             env.putAll(invocation.compiled().environment());
         }
         env.putAll(environment(invocation, sandbox));
-        env.putAll(credentials.environmentFor(kind(), invocation.responsible()));
+        env.putAll(credentialEnvironment);
         CommandSpec spec = new CommandSpec(argv, null, env, stdin, invocation.timeout(), kind());
         StreamParser parser = parser(sink);
         sink.emit(new Telemetry(

@@ -195,8 +195,9 @@ public final class RunEngine implements AutoCloseable {
         if (admission.unlimited()) {
             return true;
         }
+        // runs on execution machines use the machines' capacity, not this server's
         List<Run> active = runs.list(RunQuery.withStatus(Set.of(RunStatus.RUNNING))).stream()
-                .filter(r -> !r.context().childRun())
+                .filter(r -> !r.context().childRun() && r.context().runnerId() == null)
                 .toList();
         if (admission.maxActiveRuns() > 0 && active.size() >= admission.maxActiveRuns()) {
             return false;
@@ -1154,6 +1155,34 @@ public final class RunEngine implements AutoCloseable {
         return !run.repositories().isEmpty() && run.repositoriesPrepared();
     }
 
+    /**
+     * Fails a run nobody will finish (its execution machine was removed).
+     *
+     * @return whether the run was still unsettled
+     */
+    public boolean abandon(String runId, String reason) {
+        boolean[] failed = {false};
+        mutateQuietly(runId, c -> {
+            Run r = c.run();
+            failed[0] = false;
+            if (r.status().terminal()) {
+                return false;
+            }
+            for (NodeRun nr : r.nodeRuns()) {
+                if (nr.status() == NodeStatus.RUNNING || nr.status() == NodeStatus.WAITING_APPROVAL) {
+                    nr.error(reason);
+                    nr.finish(NodeStatus.FAILED, c.now());
+                }
+            }
+            r.status(RunStatus.FAILED);
+            r.releaseLease();
+            c.event(null, "run.failed", reason);
+            failed[0] = true;
+            return true;
+        });
+        return failed[0];
+    }
+
     private void failLostWorkspace(Run run) {
         String message = "工作区所在机器 " + run.workspaceHost() + " 已下线，之前节点的代码改动随之丢失，请从头重跑";
         boolean[] failed = {false};
@@ -1770,11 +1799,14 @@ public final class RunEngine implements AutoCloseable {
      * if this engine had made it (requirements, notifications, live streams).
      */
     public void externalChange(Run run, List<RunEvent> storedEvents) {
+        externalEvents(run.id(), storedEvents);
+        notifyChanged(run);
+    }
+
+    /** Events a machine appended without changing the run (telemetry). */
+    public void externalEvents(String runId, List<RunEvent> storedEvents) {
         if (storedEvents != null && !storedEvents.isEmpty()) {
-            listeners.forEach(l -> safely(() -> l.eventsAppended(run.id(), storedEvents)));
-        }
-        if (run != null) {
-            notifyChanged(run);
+            listeners.forEach(l -> safely(() -> l.eventsAppended(runId, storedEvents)));
         }
     }
 

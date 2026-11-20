@@ -53,6 +53,7 @@ class ClarificationIntegrationTest {
             git(seed, "add", ".");
             git(seed, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init");
             git(seed, "push", "-q", remote.toString(), "main");
+            Files.writeString(data.resolve("deploy_key"), "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n");
 
             Path cli = data.resolve("fake-claude");
             Files.writeString(cli, """
@@ -72,16 +73,22 @@ class ClarificationIntegrationTest {
                     login = glob.glob("*/src/Login.java")
                     if "睡一会" in prompt:
                         time.sleep(60)
+                    import os
+                    planted = os.path.exists(".loopforge/ssh/id_loopforge")
                     if resume is None:
                         code = open(login[0]).read() if login else "missing"
                         open(login[0], "w").write("tampered")  # the next round must see a clean checkout
+                        # repository-local and HOME git configuration that would run during the next fetch
+                        for config in glob.glob("*/.git/config") + [".loopforge/home/git/.gitconfig"]:
+                            os.makedirs(os.path.dirname(config), exist_ok=True)
+                            open(config, "a").write("\\n[core]\\n\\tfsmonitor = touch " + os.path.abspath("pwned") + "\\n")
                         fresh = "## 需求" in prompt and "登录页报错" in prompt and "## 代码" in prompt and "ready" in prompt
-                        result(fenced({"ready": False, "summary": "fresh=" + str(fresh) + " code=" + code.strip(),
+                        result(fenced({"ready": False, "summary": "fresh=" + str(fresh) + " key=" + str(planted) + " code=" + code.strip(),
                                        "questions": [{"id": "q1", "question": "错误提示放在哪里？",
                                                       "options": ["表单顶部", "输入框下方", "表单顶部"]},
                                                      {"question": "提示文案由谁提供？", "options": ["产品"]}]}))
                     elif prompt.startswith("刚才的回复里没有有效"):
-                        clean = open(login[0]).read().strip() if login else "missing"
+                        clean = (open(login[0]).read().strip() if login else "missing") + " pwned=" + str(os.path.exists("pwned")) + " key=" + str(planted)
                         result(fenced({"ready": True, "summary": "本次范围：错误提示放在表单顶部。clean=" + clean}))
                     elif "表单顶部" in prompt:
                         result("我觉得已经清楚了")
@@ -146,6 +153,9 @@ class ClarificationIntegrationTest {
                 () -> "http://127.0.0.1:" + github.getAddress().getPort() + "/gh");
         registry.add("loopforge.git.https[0].host", () -> "127.0.0.1");
         registry.add("loopforge.git.https[0].token", () -> "gh-token");
+        registry.add(
+                "loopforge.git.ssh-private-key-file",
+                () -> data.resolve("deploy_key").toString());
     }
 
     @LocalServerPort
@@ -244,7 +254,7 @@ class ClarificationIntegrationTest {
         call(carol, "POST", C, Map.of("message", "再来"), 409);
         Map<String, Object> first = awaitIdle(carol);
         assertThat(first).as(first::toString).containsEntry("status", "in_progress");
-        assertThat((String) first.get("summary")).contains("fresh=True", "shows errors in a toast");
+        assertThat((String) first.get("summary")).contains("fresh=True", "key=False", "shows errors in a toast");
         List<Map<String, Object>> questions = (List<Map<String, Object>>) first.get("questions");
         assertThat(questions).hasSize(2);
         assertThat(questions.get(0))
@@ -263,7 +273,9 @@ class ClarificationIntegrationTest {
                 .as(second::toString)
                 .containsEntry("status", "ready")
                 .containsEntry("writeBack", "succeeded");
-        assertThat((String) second.get("summary")).contains("本次范围：错误提示放在表单顶部", "clean=class Login");
+        // the next round cloned afresh: nothing the agent planted ran, and the deploy key was not left behind
+        assertThat((String) second.get("summary"))
+                .contains("本次范围：错误提示放在表单顶部", "clean=class Login", "pwned=False", "key=False");
         assertThat((List<Map<String, Object>>) second.get("history"))
                 .extracting(m -> m.get("role") + ":" + m.get("author"))
                 .containsExactly("assistant:需求分析师", "user:carol", "assistant:需求分析师");

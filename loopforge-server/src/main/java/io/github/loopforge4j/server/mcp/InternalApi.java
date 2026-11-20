@@ -40,9 +40,11 @@ public class InternalApi {
             .build();
     private final String configured;
     private final String contextPath;
+    private final RunTokens tokens;
     private volatile String loopback;
 
-    public InternalApi(LoopForgeProperties properties, Environment environment) {
+    public InternalApi(LoopForgeProperties properties, Environment environment, RunTokens tokens) {
+        this.tokens = tokens;
         String url = properties.mcp().internalUrl();
         this.configured = url == null || url.isBlank() ? null : strip(url);
         this.contextPath = strip(environment.getProperty("server.servlet.context-path", ""));
@@ -85,6 +87,8 @@ public class InternalApi {
         if (authorization != null && !authorization.isBlank()) {
             request.header("Authorization", authorization);
         }
+        // the assistant's delegated token is accepted only on requests forwarded for its MCP tools
+        request.header(RunTokens.FORWARDED, tokens.forwardingMark());
         if (jsonBody != null) {
             request.header("Content-Type", "application/json")
                     .method(method, HttpRequest.BodyPublishers.ofString(jsonBody, StandardCharsets.UTF_8));

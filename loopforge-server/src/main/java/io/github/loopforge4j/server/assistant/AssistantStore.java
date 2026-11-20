@@ -65,15 +65,31 @@ public class AssistantStore {
      *
      * @return whether this caller owns the turn now
      */
-    boolean claimTurn(String id, Instant staleBefore) {
+    String claimTurn(String id, Instant staleBefore) {
         Instant now = clock.instant();
-        return jdbc.sql("UPDATE assistant_sessions SET status = 'generating', turn_started_at = :now, updated_at = :now"
+        String turn = java.util.UUID.randomUUID().toString();
+        boolean claimed = jdbc.sql("UPDATE assistant_sessions SET status = 'generating', turn_id = :turn,"
+                                + " turn_started_at = :now, updated_at = :now"
                                 + " WHERE id = :id AND (status = 'idle' OR turn_started_at < :stale)")
                         .param("now", SqlTime.of(now))
+                        .param("turn", turn)
                         .param("id", id)
                         .param("stale", SqlTime.of(staleBefore))
                         .update()
                 == 1;
+        return claimed ? turn : null;
+    }
+
+    /**
+     * Ends turns left generating by a stopped instance, so their tokens stop working.
+     *
+     * @return how many were ended
+     */
+    int endStaleTurns(Instant staleBefore) {
+        return jdbc.sql("UPDATE assistant_sessions SET status = 'idle', turn_id = NULL, turn_started_at = NULL"
+                        + " WHERE status IN ('generating', 'cancelling') AND turn_started_at < :stale")
+                .param("stale", SqlTime.of(staleBefore))
+                .update();
     }
 
     boolean requestCancel(String id) {
@@ -85,7 +101,8 @@ public class AssistantStore {
 
     /** Ends the turn and stores what it left (CLI session, usage, last error). */
     void finishTurn(AssistantSession session) {
-        jdbc.sql("UPDATE assistant_sessions SET status = 'idle', turn_started_at = NULL, payload = :payload,"
+        jdbc.sql("UPDATE assistant_sessions SET status = 'idle', turn_id = NULL, turn_started_at = NULL,"
+                        + " payload = :payload,"
                         + " updated_at = :now WHERE id = :id")
                 .param(
                         "payload",

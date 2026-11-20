@@ -104,9 +104,10 @@ public class ServerPlatformMcp implements PlatformMcp {
     /**
      * Servers for one conversation turn: the platform MCP acting for {@code userId} (the person
      * speaking, never with administrator rights) and, when connected, the knowledge base. Tokens
-     * die with the turn.
+     * name the turn and die with it.
      */
-    public Binding bindConversation(String sessionId, String projectId, String userId, String sandboxProfileId) {
+    public Binding bindConversation(
+            String sessionId, String turnId, String projectId, String userId, String sandboxProfileId) {
         List<McpServerDefinition> servers = new ArrayList<>();
         List<RuleDefinition> rules = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
@@ -122,7 +123,7 @@ public class ServerPlatformMcp implements PlatformMcp {
                     "LoopForge 平台",
                     "以本轮发言人的身份操作平台：需求、运行、SOP、项目、知识库与分析",
                     base + PlatformMcpController.PATH,
-                    tokens.issue(RunTokens.Kind.CONVERSATION, run, projectId, null, "main-bot", userId, ttl)));
+                    tokens.issue(RunTokens.Kind.CONVERSATION, run, projectId, turnId, "main-bot", userId, ttl)));
         }
         if (knowledge.ready()) {
             servers.add(server(
@@ -130,7 +131,7 @@ public class ServerPlatformMcp implements PlatformMcp {
                     "团队知识库",
                     "团队知识库只读检索：kb_search / kb_fetch / kb_list_sources / kb_get_source",
                     base + KnowledgeProxyController.PATH,
-                    tokens.issue(RunTokens.Kind.KNOWLEDGE, run, projectId, null, "main-bot", ttl)));
+                    tokens.issue(RunTokens.Kind.KNOWLEDGE, run, projectId, turnId, "main-bot", ttl)));
             rules.add(KnowledgeService.usageRule());
         }
         return new Binding(servers, rules, warnings);

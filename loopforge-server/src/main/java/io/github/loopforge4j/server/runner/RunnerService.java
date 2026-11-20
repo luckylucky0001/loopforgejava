@@ -30,11 +30,20 @@ public class RunnerService {
     private final RunnerStore store;
     private final AccessPolicy access;
     private final Clock clock;
+    private final io.github.loopforge4j.server.persistence.JdbcRunStore runs;
+    private final org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.core.engine.RunEngine> engines;
 
-    public RunnerService(RunnerStore store, AccessPolicy access, Clock clock) {
+    public RunnerService(
+            RunnerStore store,
+            AccessPolicy access,
+            Clock clock,
+            io.github.loopforge4j.server.persistence.JdbcRunStore runs,
+            org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.core.engine.RunEngine> engines) {
         this.store = store;
         this.access = access;
         this.clock = clock;
+        this.runs = runs;
+        this.engines = engines;
     }
 
     /** A personal machine of the caller, or (administrators) a pool machine. */
@@ -76,6 +85,14 @@ public class RunnerService {
             throw new AccessPolicy.AccessDeniedException("only the owner or an administrator removes a machine");
         }
         store.delete(id);
+        // its unsettled runs would otherwise wait forever (and hold queue places)
+        java.util.Set<io.github.loopforge4j.core.domain.RunStatus> open = java.util.EnumSet.complementOf(
+                java.util.EnumSet.copyOf(java.util.Arrays.stream(io.github.loopforge4j.core.domain.RunStatus.values())
+                        .filter(io.github.loopforge4j.core.domain.RunStatus::terminal)
+                        .toList()));
+        for (io.github.loopforge4j.core.domain.Run run : runs.listForRunner(id, open, 500)) {
+            engines.getObject().abandon(run.id(), "执行机器 " + runner.name() + " 已移除，运行无法继续");
+        }
     }
 
     /**

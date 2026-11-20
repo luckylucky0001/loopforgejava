@@ -163,8 +163,11 @@ public class RunnerApiController {
                 || !Objects.equals(stored.workflowId(), run.workflowId())
                 || !Objects.equals(stored.context(), run.context())
                 || !Objects.equals(stored.createdAt(), run.createdAt())
-                || !Json.write(stored.workflow()).equals(Json.write(run.workflow()))) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "the run's identity, context and SOP snapshot are fixed");
+                || !Json.write(stored.workflow()).equals(Json.write(run.workflow()))
+                || !repositoryIdentity(stored).equals(repositoryIdentity(run))) {
+            // the server queries pull requests of these repositories with its own tokens
+            throw new ApiException(
+                    HttpStatus.FORBIDDEN, "the run's identity, context, SOP snapshot and repositories are fixed");
         }
         if (artifacts.size() > 100) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "too many artifacts");
@@ -183,11 +186,27 @@ public class RunnerApiController {
         return json(Map.of("committed", true, "run", now));
     }
 
+    /** What a machine may not change about the run's repositories (it only records the checkout). */
+    private static String repositoryIdentity(Run run) {
+        return Json.write(run.repositories().stream()
+                .map(rc -> java.util.Arrays.asList(
+                        rc.repositoryId(),
+                        rc.name(),
+                        String.valueOf(rc.provider()),
+                        rc.cloneUrl(),
+                        rc.githubRepo(),
+                        rc.baseBranch(),
+                        rc.workBranch(),
+                        rc.workspaceDir(),
+                        String.valueOf(rc.readOnly())))
+                .toList());
+    }
+
     @PostMapping(path = "/runs/{runId}/events", produces = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<String> append(@PathVariable String runId, @RequestBody String body, HttpServletRequest request) {
         owned(runId, runner(request));
         List<RunEvent> stored = runs.appendEvents(runId, events(parse(body).get("events")));
-        engine().externalChange(null, stored);
+        engine().externalEvents(runId, stored);
         return json(stored);
     }
 

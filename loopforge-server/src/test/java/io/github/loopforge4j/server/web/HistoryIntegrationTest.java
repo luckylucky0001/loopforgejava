@@ -47,6 +47,7 @@ class HistoryIntegrationTest {
         registry.add("loopforge.engine.scheduler-tick", () -> "50ms");
         registry.add("loopforge.demo-catalog", () -> "false");
         registry.add("loopforge.security.members-require-isolation", () -> "false");
+        registry.add("loopforge.logs.export-limit", () -> "6");
     }
 
     @LocalServerPort
@@ -268,7 +269,9 @@ class HistoryIntegrationTest {
         assertThat(text.getHeaders().getContentType().toString()).startsWith("text/plain");
         assertThat(text.getBody())
                 .startsWith("# LoopForge4J run " + id + " · 外层 · succeeded")
-                .contains("| first |", "hello-logs");
+                .contains("| first |")
+                .endsWith("# truncated at 6 lines\n");
+        assertThat(text.getBody().lines().filter(l -> !l.startsWith("#"))).hasSize(6);
 
         // the child run cannot be deleted on its own; deleting the parent removes both
         List<Map<String, Object>> children = call(admin, "GET", "/api/v1/runs?parentRunId=" + id, null, 200);

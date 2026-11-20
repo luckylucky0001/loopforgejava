@@ -242,14 +242,50 @@ class RunnerIntegrationTest {
                         .getStatusCode()
                         .value())
                 .isEqualTo(403);
+        // nor may it point the run at other repositories (the server queries them with its own tokens)
+        Map<String, Object> rerouted = new java.util.HashMap<>(mine);
+        rerouted.put(
+                "repositories",
+                List.of(Map.of(
+                        "repositoryId", "x",
+                        "name", "x",
+                        "provider", "github",
+                        "cloneUrl", "https://github.com/victim/private.git",
+                        "githubRepo", "victim/private",
+                        "baseBranch", "main",
+                        "workspaceDir", "x")));
+        assertThat(send(
+                                machineApi,
+                                "POST",
+                                "/api/v1/runner-api/runs/" + runId + "/commit",
+                                Map.of(
+                                        "expectedRevision",
+                                        mine.get("revision"),
+                                        "run",
+                                        rerouted,
+                                        "events",
+                                        List.of(),
+                                        "artifacts",
+                                        List.of()))
+                        .getStatusCode()
+                        .value())
+                .isEqualTo(403);
         assertThat(send(machineApi, "GET", "/api/v1/runner-api/catalog/workflows/wf", null)
                         .getStatusCode()
                         .value())
                 .isEqualTo(200);
         ok(admin, "POST", "/api/v1/runs/" + plain.get("id") + "/cancel", Map.of(), 200);
 
-        // removing the machine revokes its token
+        // removing the machine revokes its token and fails the runs it would never finish
+        Map<String, Object> stranded = ok(
+                alice,
+                "POST",
+                "/api/v1/runs",
+                Map.of("workflowId", "wf", "projectId", "p1", "runnerId", runnerId),
+                201);
         ok(alice, "DELETE", "/api/v1/runners/" + runnerId, null, 204);
+        assertThat(ok(alice, "GET", "/api/v1/runs/" + stranded.get("id"), null, 200))
+                .containsEntry("status", "failed");
         assertThat(send(machineApi, "GET", "/api/v1/runner-api/runs", null)
                         .getStatusCode()
                         .value())

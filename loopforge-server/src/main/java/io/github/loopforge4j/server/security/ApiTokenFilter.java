@@ -68,6 +68,19 @@ class ApiTokenFilter extends OncePerRequestFilter {
         } else if (tokens.authenticate(token).isPresent()) {
             principal = Optional.of(io.github.loopforge4j.server.account.CurrentUser.SERVICE);
         }
+        if (principal.isPresent()
+                && principal.get().agent() != null
+                && principal.get().agent().delegated()
+                && !forwarded(request)) {
+            // the assistant acts for a person only through the curated platform MCP tools, never on
+            // the whole API (account, members, machines, …) with a token it can read
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            response.setContentType("application/problem+json");
+            response.getWriter()
+                    .write("{\"type\":\"about:blank\",\"title\":\"Forbidden\",\"status\":403,"
+                            + "\"detail\":\"conversation tokens are only valid through the platform MCP\"}");
+            return;
+        }
         if (principal.isPresent() && principal.get().readOnly() && !readOnlyRequest(request)) {
             // agents read the platform; the MCP endpoint itself only forwards their read-only tools
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
@@ -84,6 +97,18 @@ class ApiTokenFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(authentication);
         });
         chain.doFilter(request, response);
+    }
+
+    private boolean forwarded(HttpServletRequest request) {
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        if (io.github.loopforge4j.server.mcp.PlatformMcpController.PATH.equals(path)) {
+            return true;
+        }
+        String mark = request.getHeader(io.github.loopforge4j.server.mcp.RunTokens.FORWARDED);
+        return mark != null
+                && java.security.MessageDigest.isEqual(
+                        mark.getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                        runTokens.forwardingMark().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
     }
 
     private static boolean readOnlyRequest(HttpServletRequest request) {

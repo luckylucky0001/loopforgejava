@@ -69,6 +69,11 @@ class RunController {
         String runnerId = request.runnerId() == null || request.runnerId().isBlank()
                 ? null
                 : request.runnerId().strip();
+        if (runnerId != null && access.current(principal).agent() != null) {
+            // a personal machine runs scripts with its owner's rights, outside any server sandbox
+            throw new io.github.loopforge4j.server.account.AccessPolicy.AccessDeniedException(
+                    "agents cannot start runs on execution machines");
+        }
         if (runnerId == null || runners.requireUsable(runnerId, principal).shared()) {
             // a personal machine runs scripts with its owner's own rights; the server and pool machines do not
             access.requireIsolatedSandbox(principal, request.workflowId());
@@ -139,7 +144,9 @@ class RunController {
         return out;
     }
 
-    static final int LOG_EXPORT_LIMIT = 20_000;
+    /** Lines a log download holds at most ({@code loopforge.logs.export-limit}). */
+    @org.springframework.beans.factory.annotation.Value("${loopforge.logs.export-limit:20000}")
+    int logExportLimit = 20_000;
 
     @Operation(summary = "Download the run's logs as text (at most 20,000 lines)")
     @GetMapping(path = "/{runId}/logs.txt", produces = "text/plain;charset=UTF-8")
@@ -161,15 +168,19 @@ class RunController {
         text.append("# time | node | category/type | level | message\n");
         long cursor = 0;
         int lines = 0;
-        while (lines < LOG_EXPORT_LIMIT) {
+        boolean truncated = false;
+        pages:
+        while (true) {
             List<RunEvent> page = engine.eventPage(runId, node, cursor, null, 1000);
             if (page.isEmpty()) {
                 break;
             }
             for (RunEvent e : page) {
-                if (lines++ == LOG_EXPORT_LIMIT) {
-                    break;
+                if (lines == logExportLimit) {
+                    truncated = true;
+                    break pages;
                 }
+                lines++;
                 text.append(e.timestamp())
                         .append(" | ")
                         .append(e.nodeId() == null ? "-" : e.nodeId())
@@ -185,8 +196,8 @@ class RunController {
             }
             cursor = page.getLast().sequence();
         }
-        if (lines > LOG_EXPORT_LIMIT) {
-            text.append("# truncated at ").append(LOG_EXPORT_LIMIT).append(" lines\n");
+        if (truncated) {
+            text.append("# truncated at ").append(logExportLimit).append(" lines\n");
         }
         return ResponseEntity.ok()
                 .header(
