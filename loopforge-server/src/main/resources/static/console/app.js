@@ -1141,6 +1141,19 @@ async function settingsPage() {
     if (v.token) body.token = v.token;
     return api(`/me/credentials/${encodeURIComponent(existing ? existing.kind : `git:${v.host.trim().toLowerCase()}`)}`, { method: 'PUT', body }).then(refresh);
   });
+  const editSsh = (existing) => prompted(existing ? `Git SSH 密钥 · ${existing.kind.slice(4)}` : '添加 Git SSH 密钥', [
+    existing ? null : { name: 'host', label: 'SSH 主机（如 github.com；每个主机一把密钥）' },
+    { name: 'privateKey', label: existing ? '私钥（留空 = 保留已保存的）' : '私钥（OpenSSH 或 PEM，无口令；建议单独生成部署用密钥）', type: 'textarea', rows: 8 },
+  ].filter(Boolean), (v) => {
+    const body = {};
+    if (v.privateKey) body.privateKey = v.privateKey;
+    return api(`/me/credentials/${encodeURIComponent(existing ? existing.kind : `ssh:${v.host.trim().toLowerCase()}`)}`, { method: 'PUT', body })
+      .then((saved) => { refresh(); if (!existing) showPublicKey(saved); return saved; });
+  });
+  const showPublicKey = (c) => modal(`公钥 · ${c.kind.slice(4)}`, h('div', {},
+    h('p', {}, '把这把公钥添加到代码托管平台（账户的 SSH Keys 或仓库的 Deploy Keys）：'),
+    h('pre', { class: 'mono wrap' }, c.publicKey || ''),
+    c.trusted === false ? h('div', { class: 'error panel' }, `平台还不信任 ${c.kind.slice(4)} 的主机公钥，SSH 连接会被拒绝：请管理员把它加入 loopforge.git.ssh-known-hosts-file，或改用 HTTPS 地址与 Git Token。`) : null), () => null);
   const createToken = () => prompted('新建个人 Token', [{ name: 'name', label: '名称' }, { name: 'days', label: '有效天数（留空=永久）', type: 'number' }],
     async (v) => {
       const expiresAt = v.days ? new Date(Date.now() + Number(v.days) * 86400000).toISOString() : undefined;
@@ -1155,13 +1168,17 @@ async function settingsPage() {
     h('div', { class: 'panel' }, h('div', { class: 'row' }, h('strong', {}, me.user.username), h('span', { class: 'muted' }, me.user.email || ''), h('span', { class: 'spacer' }),
       h('button', { onclick: changePassword }, '修改密码'))),
     h('div', { class: 'row' }, h('h2', {}, '个人凭据'), h('span', { class: 'spacer' }),
-      h('button', { onclick: () => editExecutor(null) }, '添加模型凭据'), h('button', { onclick: () => editGit(null) }, '添加 Git 凭据')),
-    h('p', { class: 'muted' }, '你启动的运行、你创建的定时任务、你在助手里的发言和你发起的需求澄清使用这里的凭据；某个执行器配置了个人凭据时完全替代平台的凭据，Git Token 按主机替代。密钥加密保存，任何接口都不会返回。'),
+      h('button', { onclick: () => editExecutor(null) }, '添加模型凭据'), h('button', { onclick: () => editGit(null) }, '添加 Git 凭据'),
+      h('button', { onclick: () => editSsh(null) }, '添加 Git SSH 密钥')),
+    h('p', { class: 'muted' }, '你启动的运行、你创建的定时任务、你在助手里的发言和你发起的需求澄清使用这里的凭据；某个执行器配置了个人凭据时完全替代平台的凭据，Git Token 与 SSH 密钥按主机替代。SSH 私钥只在每条命令运行期间通过 SSH agent 提供，不会写进工作区。密钥加密保存，任何接口都不会返回。'),
     credentials.length === 0 ? h('p', { class: 'muted' }, '未配置：使用平台管理员配置的凭据。') :
       h('table', {}, h('tr', {}, ['类型', 'Key / Token', 'Base URL / 用户名', '其他变量', '更新', ''].map((t) => h('th', {}, t))),
-        credentials.map((c) => h('tr', {}, h('td', { class: 'mono' }, c.kind), h('td', { class: 'mono' }, c.hint || '—'),
+        credentials.map((c) => h('tr', {}, h('td', { class: 'mono' }, c.kind,
+          c.trusted === false ? h('span', { class: 'chip', title: '平台不信任该主机的公钥，SSH 会被拒绝' }, '主机未受信任') : null),
+          h('td', { class: 'mono' }, c.hint || '—'),
           h('td', { class: 'mono' }, c.baseUrl || c.username || '—'), h('td', { class: 'mono' }, (c.variables || []).join(', ') || '—'), h('td', {}, time(c.updatedAt)),
-          h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => (c.kind.startsWith('git:') ? editGit(c) : editExecutor(c)) }, '修改'),
+          h('td', {}, h('div', { class: 'row' }, c.kind.startsWith('ssh:') ? h('button', { onclick: () => showPublicKey(c) }, '公钥') : null,
+            h('button', { onclick: () => (c.kind.startsWith('git:') ? editGit(c) : c.kind.startsWith('ssh:') ? editSsh(c) : editExecutor(c)) }, '修改'),
             h('button', { class: 'danger', onclick: () => confirm(`删除 ${c.kind}？`) && attempt(() => api(`/me/credentials/${encodeURIComponent(c.kind)}`, { method: 'DELETE' }), refresh) }, '删除')))))),
     h('div', { class: 'row' }, h('h2', {}, '我的 MCP'), h('span', { class: 'spacer' }),
       h('button', { onclick: () => prompted('添加个人 MCP（HTTP）', [{ name: 'name', label: '名称' }, { name: 'url', label: 'URL（https://…）' }, { name: 'description', label: '说明' }],

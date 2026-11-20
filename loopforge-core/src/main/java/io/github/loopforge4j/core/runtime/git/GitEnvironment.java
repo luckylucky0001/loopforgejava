@@ -36,9 +36,60 @@ public final class GitEnvironment {
     }
 
     /**
-     * Builds the environment and writes the (secret-free) helper script and, when configured, the SSH
-     * key into the workspace control directory.
+     * The environment of one command (or one batch of platform Git operations) and the SSH agent
+     * that serves it: close it when the command ends, which removes the agent's socket and files.
      */
+    public static final class Binding implements AutoCloseable {
+        private final Map<String, String> environment;
+        private final SshAgent agent;
+        private final Path files;
+        private final Path workspace;
+
+        Binding(Map<String, String> environment, SshAgent agent, Path files, Path workspace) {
+            this.environment = java.util.Collections.unmodifiableMap(environment);
+            this.agent = agent;
+            this.files = files;
+            this.workspace = workspace;
+        }
+
+        /** An environment without an SSH agent. */
+        public static Binding of(Map<String, String> environment) {
+            return new Binding(new LinkedHashMap<>(environment), null, null, null);
+        }
+
+        public Map<String, String> environment() {
+            return environment;
+        }
+
+        @Override
+        public void close() {
+            if (agent != null) {
+                agent.close();
+            }
+            if (files != null) {
+                try {
+                    new io.github.loopforge4j.core.runtime.ManagedFiles(workspace).delete(files);
+                } catch (IOException e) {
+                    // the workspace is released with the run
+                }
+            }
+        }
+    }
+
+    /**
+     * Builds the environment and writes the (secret-free) helper script and SSH configuration into
+     * the workspace control directory; SSH keys are served by an agent until the binding is closed.
+     */
+    public static Binding bind(Path workspace, GitCredentials credentials, List<RepositoryContext> repositories)
+            throws IOException {
+        Map<String, String> env = build(workspace, credentials, repositories);
+        if (!credentials.hasSsh()) {
+            return new Binding(env, null, null, null);
+        }
+        return bindSsh(workspace, credentials, env);
+    }
+
+    /** The environment without SSH keys (tokens, identity and manifest only). */
     public static Map<String, String> build(
             Path workspace, GitCredentials credentials, List<RepositoryContext> repositories) throws IOException {
         Map<String, String> env = new LinkedHashMap<>();
@@ -78,21 +129,6 @@ public final class GitEnvironment {
                 }
             }
         }
-        if (credentials.sshPrivateKey() != null && !credentials.sshPrivateKey().isBlank()) {
-            io.github.loopforge4j.core.runtime.ManagedFiles files =
-                    new io.github.loopforge4j.core.runtime.ManagedFiles(workspace);
-            Path ssh = control.resolve("ssh");
-            Path key = ssh.resolve("id_loopforge");
-            files.write(key, credentials.sshPrivateKey().strip() + "\n", false);
-            Path knownHosts = ssh.resolve("known_hosts");
-            if (!Files.isRegularFile(knownHosts, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                files.write(knownHosts, "", false);
-            }
-            env.put(
-                    "GIT_SSH_COMMAND",
-                    "ssh -i " + key + " -o IdentitiesOnly=yes -o BatchMode=yes"
-                            + " -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=" + knownHosts);
-        }
         // Like upstream: an explicit account name and a non-deliverable address, never an inferred identity.
         String name = blank(credentials.authorName()) ? DEFAULT_AUTHOR_NAME : credentials.authorName();
         String email = blank(credentials.authorEmail()) ? DEFAULT_AUTHOR_EMAIL : credentials.authorEmail();
@@ -102,6 +138,141 @@ public final class GitEnvironment {
         env.put("GIT_COMMITTER_EMAIL", email);
         env.put("LOOPFORGE_WORK_BRANCHES", manifest(repositories));
         return env;
+    }
+
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
+
+    /**
+     * Starts an agent with the personal keys (each only for its host, whose host key must be pinned)
+     * and the deployment key (every other host, first contact accepted as before) and points ssh at a
+     * generated configuration that offers each host only its own key.
+     */
+    private static Binding bindSsh(Path workspace, GitCredentials credentials, Map<String, String> env)
+            throws IOException {
+        io.github.loopforge4j.core.runtime.ManagedFiles files =
+                new io.github.loopforge4j.core.runtime.ManagedFiles(workspace);
+        Path control = files.root().resolve(LocalSandbox.CONTROL_DIR);
+        // a key file written by earlier versions must not outlive them
+        files.delete(control.resolve("ssh").resolve("id_loopforge"));
+        String id = java.util.HexFormat.of().formatHex(next());
+        Path dir = files.directory(control.resolve("ssh").resolve(id));
+        // a Unix socket path has at most 107 bytes: deep workspaces use a short name at their root
+        Path socket = control.resolve("s").resolve(id);
+        if (socket.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > SshAgent.MAX_SOCKET_PATH) {
+            socket = files.root().resolve(".lf" + id.substring(0, 6));
+        } else {
+            files.directory(control.resolve("s"));
+        }
+        List<SshKeys.Identity> identities = new java.util.ArrayList<>();
+        StringBuilder config = new StringBuilder();
+        java.util.List<String> personalHosts = new java.util.ArrayList<>();
+        Path pinned = dir.resolve("known_hosts");
+        files.write(
+                pinned,
+                SshKnownHosts.BUILT_IN + "\n" + credentials.sshKnownHosts().strip() + "\n",
+                false);
+        for (Map.Entry<String, String> entry : new java.util.TreeMap<>(credentials.sshKeys()).entrySet()) {
+            String host = entry.getKey().toLowerCase(Locale.ROOT);
+            if (!SAFE_HOST.matcher(host).matches()) {
+                continue;
+            }
+            SshKeys.Identity identity;
+            try {
+                identity = SshKeys.parse(entry.getValue());
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            identities.add(identity);
+            personalHosts.add(host);
+            Path pub = dir.resolve(host + ".pub");
+            files.write(pub, identity.publicKeyLine() + "\n", false);
+            config.append("Host ")
+                    .append(host)
+                    .append('\n')
+                    .append("  IdentityFile ")
+                    .append(quoted(pub))
+                    .append('\n')
+                    .append("  StrictHostKeyChecking yes\n")
+                    .append("  UserKnownHostsFile ")
+                    .append(quoted(pinned))
+                    .append('\n');
+        }
+        config.append("Host *");
+        personalHosts.forEach(h -> config.append(" !").append(h));
+        config.append('\n');
+        SshKeys.Identity deployment = null;
+        if (credentials.sshPrivateKey() != null && !credentials.sshPrivateKey().isBlank()) {
+            try {
+                deployment = SshKeys.parse(credentials.sshPrivateKey());
+            } catch (IllegalArgumentException e) {
+                deployment = null;
+            }
+        }
+        if (deployment != null) {
+            identities.add(deployment);
+            Path pub = dir.resolve("deployment.pub");
+            files.write(pub, deployment.publicKeyLine() + "\n", false);
+            Path learned = control.resolve("ssh").resolve("known_hosts");
+            if (!Files.isRegularFile(learned, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                files.write(learned, "", false);
+            }
+            config.append("  IdentityFile ")
+                    .append(quoted(pub))
+                    .append('\n')
+                    .append("  StrictHostKeyChecking accept-new\n")
+                    .append("  UserKnownHostsFile ")
+                    .append(quoted(learned))
+                    .append(' ')
+                    .append(quoted(pinned))
+                    .append('\n');
+        } else {
+            config.append("  IdentityFile none\n")
+                    .append("  StrictHostKeyChecking yes\n")
+                    .append("  UserKnownHostsFile ")
+                    .append(quoted(pinned))
+                    .append('\n');
+        }
+        config.append("Host *\n")
+                .append("  IdentityAgent ")
+                .append(quoted(socket))
+                .append('\n')
+                .append("  IdentitiesOnly yes\n")
+                .append("  BatchMode yes\n")
+                .append("  GlobalKnownHostsFile /dev/null\n")
+                .append("  PasswordAuthentication no\n")
+                .append("  KbdInteractiveAuthentication no\n");
+        Path configFile = dir.resolve("config");
+        files.write(configFile, config.toString(), false);
+        SshAgent agent;
+        try {
+            agent = SshAgent.start(socket, identities);
+        } catch (IOException e) {
+            env.put("GIT_SSH_VARIANT", "ssh");
+            env.put(
+                    "GIT_SSH_COMMAND",
+                    "sh -c 'echo \"LoopForge: 无法启动 SSH agent（工作区路径过长？）；请改用 HTTPS 地址\" >&2; exit 1' --");
+            return new Binding(env, null, dir, files.root());
+        }
+        env.put("GIT_SSH_VARIANT", "ssh");
+        env.put("GIT_SSH_COMMAND", "ssh -F " + shellQuoted(configFile.toString()));
+        return new Binding(env, agent, dir, files.root());
+    }
+
+    private static byte[] next() {
+        byte[] bytes = new byte[6];
+        RANDOM.nextBytes(bytes);
+        return bytes;
+    }
+
+    private static final Pattern SAFE_HOST = Pattern.compile("[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?");
+
+    /** An ssh_config argument (paths of a workspace never contain quotes). */
+    private static String quoted(Path path) {
+        return "\"" + path.toString().replace("\"", "") + "\"";
+    }
+
+    private static String shellQuoted(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
     }
 
     /** Per-repository variables for commands that run inside one checkout. */

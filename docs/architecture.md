@@ -144,7 +144,7 @@ OIDC 授权码流程：`/api/v1/auth/oidc/start` 生成 state、nonce 与 PKCE v
 - 只有 `/actuator/health/**` 公开；`/actuator/info`、`/actuator/prometheus` 需要 Token。
 
 - 工作区：Agent 可以把工作区里的任何目录换成指向宿主机的符号链接（容器里也一样，工作区以相同路径挂载）。引擎侧的所有控制文件操作（角色物化、提示词、脚本、输入产物、门禁结果读取与清理、凭据助手、进程记录）都经过 `ManagedFiles`：拒绝符号链接目录、以临时文件 + 原子重命名替换目标、以 `NOFOLLOW_LINKS` 读取、删除时只删除链接本身。
-- Git：凭据只来自服务端配置。HTTPS token 放在运行进程的环境变量里，由控制目录中的 credential helper 按主机读取（`GIT_CONFIG_COUNT` 注入 `credential.helper`，先清空用户/系统级 helper），因此不会出现在克隆 URL、`.git/config`、运行数据或日志中；SSH 私钥写入控制目录且仅属主可读，`known_hosts` 采用 `accept-new`。`GIT_TERMINAL_PROMPT=0` 防止 CLI 卡在交互式询问。克隆 URL 内嵌凭据、`file:`/本地路径和 `http://` 默认拒绝。
+- Git：凭据只来自服务端配置。HTTPS token 放在运行进程的环境变量里，由控制目录中的 credential helper 按主机读取（`GIT_CONFIG_COUNT` 注入 `credential.helper`，先清空用户/系统级 helper），因此不会出现在克隆 URL、`.git/config`、运行数据或日志中；SSH 私钥不进工作区：`GitEnvironment.bind` 为每条命令在控制目录里开一个 `SshAgent`（JVM 内的 SSH agent，Unix 套接字，仅属主可连接，只支持列出与签名），生成的 ssh 配置让个人密钥只用于各自主机且必须匹配固定的主机公钥（内置 GitHub，其余来自 `ssh-known-hosts-file`），部署密钥用于其他主机（`accept-new`）；命令结束即关闭 agent 并删除配置。`GIT_TERMINAL_PROMPT=0` 防止 CLI 卡在交互式询问。克隆 URL 内嵌凭据、`file:`/本地路径和 `http://` 默认拒绝。
 
 本地沙箱是**环境**边界而非文件系统边界，适用于可信团队；不可信负载需等待 Docker 沙箱（见路线图）。
 

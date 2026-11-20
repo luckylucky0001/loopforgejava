@@ -46,8 +46,8 @@ class PersonalCredentialController {
     }
 
     @Operation(
-            summary = "Save a credential: executor:<kind> {apiKey, baseUrl, variables} or git:<host> {token,"
-                    + " username}; omitted secrets keep the stored ones")
+            summary = "Save a credential: executor:<kind> {apiKey, baseUrl, variables}, git:<host> {token,"
+                    + " username} or ssh:<host> {privateKey}; omitted secrets keep the stored ones")
     @PutMapping("/{kind}")
     PersonalCredential save(
             @PathVariable String kind, @RequestBody PersonalCredentials.Input body, Principal principal) {

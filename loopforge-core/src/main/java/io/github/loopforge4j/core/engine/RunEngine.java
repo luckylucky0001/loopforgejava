@@ -1766,39 +1766,10 @@ public final class RunEngine implements AutoCloseable {
             if (run.repositoriesPrepared()) {
                 return run;
             }
-            GitWorkspace git = new GitWorkspace(sandbox, processEnvironment(run, sandbox), cancellation);
             List<RepositoryContext> prepared = new ArrayList<>();
-            for (RepositoryContext rc : run.repositories()) {
-                try {
-                    RepositoryContext checkedOut = git.prepare(rc);
-                    prepared.add(checkedOut);
-                    emit(
-                            runId,
-                            null,
-                            new Telemetry(
-                                    "sandbox",
-                                    "repository.checked_out",
-                                    "finish",
-                                    "info",
-                                    rc.name() + " @ "
-                                            + (rc.writableWorkBranch() == null
-                                                    ? rc.baseBranch() + "（只读）"
-                                                    : rc.writableWorkBranch()),
-                                    null,
-                                    null,
-                                    null,
-                                    Map.of(
-                                            "repositoryId",
-                                            rc.repositoryId(),
-                                            "dir",
-                                            rc.workspaceDir(),
-                                            "baseBranch",
-                                            rc.baseBranch(),
-                                            "baseSha",
-                                            String.valueOf(checkedOut.baseSha()))));
-                } catch (GitException e) {
-                    throw new NodeFailure(FailureKind.EXECUTOR, "repository " + rc.name() + ": " + e.getMessage());
-                }
+            try (GitEnvironment.Binding binding = processBinding(run, sandbox)) {
+                GitWorkspace git = new GitWorkspace(sandbox, binding.environment(), cancellation);
+                prepareAll(runId, run, git, prepared);
             }
             mutateQuietly(runId, c -> {
                 c.run().repositories(prepared);
@@ -1811,29 +1782,70 @@ public final class RunEngine implements AutoCloseable {
         }
     }
 
-    /** Environment for every process of the run: git credentials, commit identity, repository manifest. */
-    /** Git environment of work outside runs done for {@code responsible}: theirs over the deployment's. */
-    Map<String, String> gitEnvironment(Sandbox sandbox, List<RepositoryContext> repositories, String responsible)
+    private void prepareAll(String runId, Run run, GitWorkspace git, List<RepositoryContext> prepared)
+            throws NodeFailure, CancelledException {
+        for (RepositoryContext rc : run.repositories()) {
+            try {
+                RepositoryContext checkedOut = git.prepare(rc);
+                prepared.add(checkedOut);
+                emit(
+                        runId,
+                        null,
+                        new Telemetry(
+                                "sandbox",
+                                "repository.checked_out",
+                                "finish",
+                                "info",
+                                rc.name() + " @ "
+                                        + (rc.writableWorkBranch() == null
+                                                ? rc.baseBranch() + "（只读）"
+                                                : rc.writableWorkBranch()),
+                                null,
+                                null,
+                                null,
+                                Map.of(
+                                        "repositoryId",
+                                        rc.repositoryId(),
+                                        "dir",
+                                        rc.workspaceDir(),
+                                        "baseBranch",
+                                        rc.baseBranch(),
+                                        "baseSha",
+                                        String.valueOf(checkedOut.baseSha()))));
+            } catch (GitException e) {
+                throw new NodeFailure(FailureKind.EXECUTOR, "repository " + rc.name() + ": " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Git environment of work outside runs done for {@code responsible} (theirs over the
+     * deployment's); close it when the work ends.
+     */
+    GitEnvironment.Binding gitBinding(Sandbox sandbox, List<RepositoryContext> repositories, String responsible)
             throws IOException {
-        return GitEnvironment.build(sandbox.workspace(), gitCredentials.credentialsForUser(responsible), repositories);
+        return GitEnvironment.bind(sandbox.workspace(), gitCredentials.credentialsForUser(responsible), repositories);
     }
 
     /** {@code responsible}'s own Git credentials only (conversation workspaces); empty when none. */
-    Map<String, String> personalGitEnvironment(Sandbox sandbox, String responsible) throws IOException {
+    GitEnvironment.Binding personalGitBinding(Sandbox sandbox, String responsible) throws IOException {
         if (responsible == null) {
-            return Map.of();
+            return GitEnvironment.Binding.of(Map.of());
         }
         io.github.loopforge4j.core.runtime.git.GitCredentials personal =
                 gitCredentials.personalCredentials(responsible);
-        if (personal.https().isEmpty()
-                && (personal.sshPrivateKey() == null || personal.sshPrivateKey().isBlank())) {
-            return Map.of();
+        if (personal.https().isEmpty() && !personal.hasSsh()) {
+            return GitEnvironment.Binding.of(Map.of());
         }
-        return GitEnvironment.build(sandbox.workspace(), personal, List.of());
+        return GitEnvironment.bind(sandbox.workspace(), personal, List.of());
     }
 
-    Map<String, String> processEnvironment(Run run, Sandbox sandbox) throws IOException {
-        return GitEnvironment.build(sandbox.workspace(), gitCredentials.credentialsFor(run), run.repositories());
+    /**
+     * Environment of one command of the run: git credentials (SSH keys through an agent that lives
+     * until the binding is closed), commit identity, repository manifest.
+     */
+    GitEnvironment.Binding processBinding(Run run, Sandbox sandbox) throws IOException {
+        return GitEnvironment.bind(sandbox.workspace(), gitCredentials.credentialsFor(run), run.repositories());
     }
 
     io.github.loopforge4j.core.pricing.TokenPricing pricing() {

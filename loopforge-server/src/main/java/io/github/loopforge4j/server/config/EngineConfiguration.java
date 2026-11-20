@@ -157,34 +157,42 @@ class EngineConfiguration {
                 throw new IllegalStateException("cannot read loopforge.git.ssh-private-key-file", e);
             }
         }
-        GitCredentials credentials = new GitCredentials(https, sshKey, git.authorName(), git.authorEmail());
+        GitCredentials credentials =
+                new GitCredentials(https, sshKey, git.authorName(), git.authorEmail(), Map.of(), git.sshKnownHosts());
         return new GitCredentialProvider() {
             @Override
             public GitCredentials credentialsFor(io.github.loopforge4j.core.domain.Run run) {
                 return credentialsForUser(run == null ? null : run.context().triggeredBy());
             }
 
-            /** A person's token for a host replaces the deployment's for that host. */
+            /** A person's token or SSH key for a host replaces the deployment's for that host. */
             @Override
             public GitCredentials credentialsForUser(String responsible) {
                 Map<String, GitCredentials.HttpsCredential> own =
                         personal.getObject().gitHttps(responsible);
-                if (own.isEmpty()) {
+                Map<String, String> ownSsh = personal.getObject().gitSsh(responsible);
+                if (own.isEmpty() && ownSsh.isEmpty()) {
                     return credentials;
                 }
                 Map<String, GitCredentials.HttpsCredential> merged = new java.util.LinkedHashMap<>(credentials.https());
                 merged.putAll(own);
-                return new GitCredentials(
-                        merged, credentials.sshPrivateKey(), credentials.authorName(), credentials.authorEmail());
+                return credentials.with(merged, ownSsh);
             }
 
             @Override
             public GitCredentials personalCredentials(String responsible) {
                 Map<String, GitCredentials.HttpsCredential> own =
                         personal.getObject().gitHttps(responsible);
-                return own.isEmpty()
+                Map<String, String> ownSsh = personal.getObject().gitSsh(responsible);
+                return own.isEmpty() && ownSsh.isEmpty()
                         ? GitCredentials.NONE
-                        : new GitCredentials(own, null, credentials.authorName(), credentials.authorEmail());
+                        : new GitCredentials(
+                                own,
+                                null,
+                                credentials.authorName(),
+                                credentials.authorEmail(),
+                                ownSsh,
+                                credentials.sshKnownHosts());
             }
         };
     }

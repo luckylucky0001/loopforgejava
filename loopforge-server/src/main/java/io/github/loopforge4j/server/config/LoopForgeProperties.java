@@ -286,15 +286,32 @@ public record LoopForgeProperties(
      *
      * @param https token per host, e.g. {@code [{host: github.com, token: ${GITHUB_TOKEN}}]} (a list,
      *     so it binds from environment variables such as {@code LOOPFORGE_GIT_HTTPS_0_TOKEN})
-     * @param sshPrivateKeyFile OpenSSH key for ssh:// and scp-style remotes
+     * @param sshPrivateKeyFile the deployment's SSH key for ssh:// and scp-style remotes of hosts a
+     *     person has no key for
      * @param allowLocalRemotes accept file:// and local-path repositories (development and tests only)
+     * @param sshKnownHostsFile {@code known_hosts} of the SSH hosts personal keys may be used with,
+     *     besides the built-in GitHub keys
      */
     public record Git(
             @Valid @DefaultValue List<HttpsCredential> https,
             Path sshPrivateKeyFile,
             @DefaultValue("LoopForge4J") String authorName,
             @DefaultValue("loopforge4j@users.noreply.local") String authorEmail,
-            @DefaultValue("false") boolean allowLocalRemotes) {}
+            @DefaultValue("false") boolean allowLocalRemotes,
+            Path sshKnownHostsFile) {
+
+        /** The administrator's known hosts (empty when none are configured). */
+        public String sshKnownHosts() {
+            if (sshKnownHostsFile == null) {
+                return "";
+            }
+            try {
+                return java.nio.file.Files.readString(sshKnownHostsFile);
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("cannot read loopforge.git.ssh-known-hosts-file", e);
+            }
+        }
+    }
 
     /** Token-based credential of one Git host; username defaults to {@code x-access-token}. */
     public record HttpsCredential(@NotBlank String host, String username, String token) {

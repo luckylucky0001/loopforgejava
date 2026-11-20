@@ -32,6 +32,9 @@ public class PersonalCredentials {
 
     public static final String EXECUTOR = "executor:";
     public static final String GIT = "git:";
+    public static final String SSH = "ssh:";
+    private static final Pattern SSH_HOST =
+            Pattern.compile("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$");
     private static final Pattern HOST =
             Pattern.compile("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(:\\d{1,5})?$");
     private static final int MAX_SECRET = 4096;
@@ -43,26 +46,35 @@ public class PersonalCredentials {
     private final UserStore users;
     private final ObjectProvider<ScheduleStore> schedules;
     private final Clock clock;
+    private final String knownHosts;
 
     public PersonalCredentials(
             JdbcClient jdbc,
             CredentialCipher cipher,
             UserStore users,
             ObjectProvider<ScheduleStore> schedules,
-            Clock clock) {
+            Clock clock,
+            io.github.loopforge4j.server.config.LoopForgeProperties properties) {
         this.jdbc = jdbc;
         this.cipher = cipher;
         this.users = users;
         this.schedules = schedules;
         this.clock = clock;
+        this.knownHosts = properties.git().sshKnownHosts();
     }
 
     /** What a person sends; {@code null} secrets keep the stored ones. */
-    public record Input(String apiKey, String baseUrl, String token, String username, Map<String, String> variables) {}
+    public record Input(
+            String apiKey,
+            String baseUrl,
+            String token,
+            String username,
+            Map<String, String> variables,
+            String privateKey) {}
 
-    private record Secret(String apiKey, String token, Map<String, String> variables) {}
+    private record Secret(String apiKey, String token, Map<String, String> variables, String privateKey) {}
 
-    private record Public(String baseUrl, String username, String hint, List<String> variables) {}
+    private record Public(String baseUrl, String username, String hint, List<String> variables, String publicKey) {}
 
     private record Row(String kind, Secret secret, Public info, java.time.Instant updatedAt) {}
 
@@ -70,14 +82,24 @@ public class PersonalCredentials {
 
     public List<PersonalCredential> list(String userId) {
         return rows(userId).stream()
-                .map(r -> new PersonalCredential(
-                        r.kind(),
-                        r.info().baseUrl(),
-                        r.info().username(),
-                        r.info().hint(),
-                        r.info().variables(),
-                        r.updatedAt()))
+                .map(r -> view(r.kind(), r.info(), r.updatedAt()))
                 .toList();
+    }
+
+    private PersonalCredential view(String kind, Public info, java.time.Instant updatedAt) {
+        boolean ssh = kind.startsWith(SSH);
+        return new PersonalCredential(
+                kind,
+                info.baseUrl(),
+                info.username(),
+                info.hint(),
+                info.variables(),
+                updatedAt,
+                ssh ? info.publicKey() : null,
+                ssh
+                        ? io.github.loopforge4j.core.runtime.git.SshKnownHosts.pinned(
+                                kind.substring(SSH.length()), knownHosts)
+                        : null);
     }
 
     public PersonalCredential save(String userId, String kind, Input input) {
@@ -99,8 +121,8 @@ public class PersonalCredentials {
             String baseUrl = input.baseUrl() != null
                     ? baseUrl(input.baseUrl())
                     : existing.map(r -> r.info().baseUrl()).orElse(null);
-            secret = new Secret(apiKey == null || apiKey.isEmpty() ? null : apiKey, null, variables);
-            info = new Public(baseUrl, null, hint(apiKey), List.copyOf(new TreeMap<>(variables).keySet()));
+            secret = new Secret(apiKey == null || apiKey.isEmpty() ? null : apiKey, null, variables, null);
+            info = new Public(baseUrl, null, hint(apiKey), List.copyOf(new TreeMap<>(variables).keySet()), null);
         } else if (k.startsWith(GIT) && HOST.matcher(k.substring(GIT.length())).matches()) {
             String token = input.token() != null
                     ? secretValue(input.token(), "token")
@@ -111,12 +133,38 @@ public class PersonalCredentials {
             String username = input.username() != null
                     ? plain(input.username(), 200, "username")
                     : existing.map(r -> r.info().username()).orElse(null);
-            secret = new Secret(null, token, Map.of());
-            info = new Public(null, username == null || username.isEmpty() ? null : username, hint(token), List.of());
+            secret = new Secret(null, token, Map.of(), null);
+            info = new Public(
+                    null, username == null || username.isEmpty() ? null : username, hint(token), List.of(), null);
+        } else if (k.startsWith(SSH)
+                && SSH_HOST.matcher(k.substring(SSH.length())).matches()) {
+            // one key per SSH host (upstream user_git_ssh_keys): it signs only through the run's agent
+            String privateKey;
+            if (input.privateKey() != null) {
+                try {
+                    privateKey = io.github.loopforge4j.core.runtime.git.SshKeys.normalize(input.privateKey());
+                } catch (IllegalArgumentException e) {
+                    throw invalid(e.getMessage());
+                }
+            } else {
+                privateKey = existing.map(r -> r.secret().privateKey()).orElse(null);
+            }
+            if (privateKey == null) {
+                throw invalid("an SSH credential needs privateKey");
+            }
+            io.github.loopforge4j.core.runtime.git.SshKeys.Identity identity;
+            try {
+                identity = io.github.loopforge4j.core.runtime.git.SshKeys.parse(privateKey);
+            } catch (IllegalArgumentException e) {
+                throw invalid(e.getMessage());
+            }
+            secret = new Secret(null, null, Map.of(), privateKey);
+            info = new Public(
+                    null, null, identity.type() + " " + identity.fingerprint(), List.of(), identity.publicKeyLine());
         } else {
             throw invalid("kind must be executor:<"
                     + String.join("|", new java.util.TreeSet<>(PersonalCredentialVariables.kinds()))
-                    + "> or git:<host>");
+                    + ">, git:<host> or ssh:<host>");
         }
         java.time.Instant now = clock.instant();
         String sealed = cipher.encrypt(Json.write(secret), binding(userId, k));
@@ -132,7 +180,7 @@ public class PersonalCredentials {
                 .param("info", Json.write(info))
                 .param("now", SqlTime.of(now))
                 .update();
-        return new PersonalCredential(k, info.baseUrl(), info.username(), info.hint(), info.variables(), now);
+        return view(k, info, now);
     }
 
     public boolean delete(String userId, String kind) {
@@ -197,6 +245,21 @@ public class PersonalCredentials {
                         r.kind().substring(GIT.length()),
                         new GitCredentials.HttpsCredential(
                                 r.info().username(), r.secret().token()));
+            }
+        }
+        return out;
+    }
+
+    /** The person's SSH private keys per host. */
+    public Map<String, String> gitSsh(String responsible) {
+        Optional<String> user = accountOf(responsible);
+        if (user.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Row r : rows(user.get())) {
+            if (r.kind().startsWith(SSH) && r.secret().privateKey() != null) {
+                out.put(r.kind().substring(SSH.length()), r.secret().privateKey());
             }
         }
         return out;

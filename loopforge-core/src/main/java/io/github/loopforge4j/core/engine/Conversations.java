@@ -19,7 +19,6 @@ import io.github.loopforge4j.core.runtime.git.GitWorkspace;
 import io.github.loopforge4j.core.runtime.materialize.AgentAssets;
 import io.github.loopforge4j.core.runtime.materialize.AgentMaterializer;
 import io.github.loopforge4j.core.runtime.materialize.CompiledAgent;
-import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
 import io.github.loopforge4j.core.runtime.sandbox.Sandbox;
 import io.github.loopforge4j.core.runtime.sandbox.SandboxProvider;
 import java.io.IOException;
@@ -144,8 +143,9 @@ public final class Conversations {
                         List.of()))
                 : null;
         // the speaker's own Git credentials, never the deployment's: they can read this environment
-        Map<String, String> environment =
-                new java.util.HashMap<>(engine.personalGitEnvironment(sandbox, turn.responsible()));
+        io.github.loopforge4j.core.runtime.git.GitEnvironment.Binding gitBinding =
+                engine.personalGitBinding(sandbox, turn.responsible());
+        Map<String, String> environment = new java.util.HashMap<>(gitBinding.environment());
         environment.putAll(turn.environment());
         AgentInvocation invocation = new AgentInvocation(
                 turn.conversationId(),
@@ -172,6 +172,7 @@ public final class Conversations {
             }
             throw e;
         } finally {
+            gitBinding.close();
             if (compiled != null) {
                 try {
                     compiled.cleanup();
@@ -237,9 +238,9 @@ public final class Conversations {
             files.delete(gitHome);
         }
         List<Checkout> out = new java.util.ArrayList<>();
-        try {
-            GitWorkspace git =
-                    new GitWorkspace(sandbox, engine.gitEnvironment(sandbox, contexts, responsible), cancellation);
+        try (io.github.loopforge4j.core.runtime.git.GitEnvironment.Binding gitBinding =
+                engine.gitBinding(sandbox, contexts, responsible)) {
+            GitWorkspace git = new GitWorkspace(sandbox, gitBinding.environment(), cancellation);
             for (RepositoryContext rc : contexts) {
                 try {
                     git.prepare(rc);
@@ -250,9 +251,6 @@ public final class Conversations {
                             rc.repositoryId(), rc.name(), rc.workspaceDir(), rc.baseBranch(), e.getMessage()));
                 }
             }
-        } finally {
-            // the SSH key was for the clone only; the agent that reads the code must not find it
-            files.delete(sandbox.workspace().resolve(LocalSandbox.CONTROL_DIR).resolve("ssh"));
         }
         return out;
     }

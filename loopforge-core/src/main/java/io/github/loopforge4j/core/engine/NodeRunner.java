@@ -307,84 +307,89 @@ final class NodeRunner {
         Run run = currentRun(runId);
         Sandbox sandbox = engine.sandbox(run);
         run = engine.prepareRepositories(runId, sandbox, cancellation);
-        Map<String, String> runEnvironment = engine.processEnvironment(run, sandbox);
-        ArtifactSupport.materializeInputs(
-                sandbox.workspace(), run, node, engine.runs().artifacts(runId));
-        ScriptLanguage language = node.effectiveScriptLanguage();
-        String relative = LocalSandbox.CONTROL_DIR + "/scripts/" + node.id().replaceAll("[^A-Za-z0-9._-]", "_")
-                + "-attempt-" + attempt + (language == ScriptLanguage.PYTHON ? ".py" : ".sh");
-        Path file = sandbox.workspace().resolve(relative);
-        new io.github.loopforge4j.core.runtime.ManagedFiles(sandbox.workspace()).write(file, node.script(), false);
-        // absolute path: repository-scoped scripts run inside the checkout directory
-        // stderr joins stdout so both reach the run's logs, in order
-        List<String> argv = language == ScriptLanguage.PYTHON
-                ? List.of("sh", "-c", "exec python3 \"$0\" 2>&1", file.toString())
-                : List.of("sh", "-c", "exec sh -l \"$0\" 2>&1", file.toString());
-        // tokens in the run's environment may be one person's own: they never reach the logs
-        java.util.Set<String> secrets = io.github.loopforge4j.core.runtime.Secrets.values(runEnvironment);
-        EventSink sink = io.github.loopforge4j.core.runtime.Secrets.redacting(engine.sink(runId, node.id()), secrets);
-        sink.emit(Telemetry.of("script", "script.started", "start", language.wire() + " 脚本开始执行"));
-        List<ScopeTarget> targets = targets(run, node.effectiveScope());
-        StringBuilder combined = new StringBuilder();
-        long durationMillis = 0;
-        for (ScopeTarget target : targets) {
-            Map<String, String> env = new java.util.HashMap<>(runEnvironment);
-            env.putAll(scriptEnvironment(runId, node, attempt));
-            env.putAll(target.environment());
-            CommandSpec spec = new CommandSpec(argv, target.directory(), env, null, timeout(node), "script");
-            ExecResult result =
-                    sandbox.exec(spec, scriptOutput(sink, targets.size() > 1 ? target.label() : null), cancellation);
-            durationMillis += result.duration().toMillis();
-            if (targets.size() > 1) {
-                combined.append("## ").append(target.label()).append("\n\n");
+        try (io.github.loopforge4j.core.runtime.git.GitEnvironment.Binding gitBinding =
+                engine.processBinding(run, sandbox)) {
+            Map<String, String> runEnvironment = gitBinding.environment();
+            ArtifactSupport.materializeInputs(
+                    sandbox.workspace(), run, node, engine.runs().artifacts(runId));
+            ScriptLanguage language = node.effectiveScriptLanguage();
+            String relative = LocalSandbox.CONTROL_DIR + "/scripts/" + node.id().replaceAll("[^A-Za-z0-9._-]", "_")
+                    + "-attempt-" + attempt + (language == ScriptLanguage.PYTHON ? ".py" : ".sh");
+            Path file = sandbox.workspace().resolve(relative);
+            new io.github.loopforge4j.core.runtime.ManagedFiles(sandbox.workspace()).write(file, node.script(), false);
+            // absolute path: repository-scoped scripts run inside the checkout directory
+            // stderr joins stdout so both reach the run's logs, in order
+            List<String> argv = language == ScriptLanguage.PYTHON
+                    ? List.of("sh", "-c", "exec python3 \"$0\" 2>&1", file.toString())
+                    : List.of("sh", "-c", "exec sh -l \"$0\" 2>&1", file.toString());
+            // tokens in the run's environment may be one person's own: they never reach the logs
+            java.util.Set<String> secrets = io.github.loopforge4j.core.runtime.Secrets.values(runEnvironment);
+            EventSink sink =
+                    io.github.loopforge4j.core.runtime.Secrets.redacting(engine.sink(runId, node.id()), secrets);
+            sink.emit(Telemetry.of("script", "script.started", "start", language.wire() + " 脚本开始执行"));
+            List<ScopeTarget> targets = targets(run, node.effectiveScope());
+            StringBuilder combined = new StringBuilder();
+            long durationMillis = 0;
+            for (ScopeTarget target : targets) {
+                Map<String, String> env = new java.util.HashMap<>(runEnvironment);
+                env.putAll(scriptEnvironment(runId, node, attempt));
+                env.putAll(target.environment());
+                CommandSpec spec = new CommandSpec(argv, target.directory(), env, null, timeout(node), "script");
+                ExecResult result = sandbox.exec(
+                        spec, scriptOutput(sink, targets.size() > 1 ? target.label() : null), cancellation);
+                durationMillis += result.duration().toMillis();
+                if (targets.size() > 1) {
+                    combined.append("## ").append(target.label()).append("\n\n");
+                }
+                combined.append(result.output().strip()).append(targets.size() > 1 ? "\n\n" : "");
+                if (!result.succeeded()) {
+                    sink.emit(new Telemetry(
+                            "script",
+                            "script.completed",
+                            "finish",
+                            "error",
+                            language.wire() + " 脚本执行失败 · " + target.label(),
+                            null,
+                            null,
+                            null,
+                            Map.of("exitCode", result.exitCode(), "durationMs", durationMillis)));
+                    String reason = result.timedOut()
+                            ? "script timed out after " + timeout(node).toSeconds() + "s"
+                            : "script exited with code " + result.exitCode();
+                    String where = targets.size() > 1 ? target.label() + ": " : "";
+                    throw new NodeFailure(
+                            FailureKind.SCRIPT,
+                            where + reason + ": "
+                                    + io.github.loopforge4j.core.runtime.Secrets.redact(
+                                            tail(result.output()), secrets));
+                }
             }
-            combined.append(result.output().strip()).append(targets.size() > 1 ? "\n\n" : "");
-            if (!result.succeeded()) {
-                sink.emit(new Telemetry(
-                        "script",
-                        "script.completed",
-                        "finish",
-                        "error",
-                        language.wire() + " 脚本执行失败 · " + target.label(),
-                        null,
-                        null,
-                        null,
-                        Map.of("exitCode", result.exitCode(), "durationMs", durationMillis)));
-                String reason = result.timedOut()
-                        ? "script timed out after " + timeout(node).toSeconds() + "s"
-                        : "script exited with code " + result.exitCode();
-                String where = targets.size() > 1 ? target.label() + ": " : "";
-                throw new NodeFailure(
-                        FailureKind.SCRIPT,
-                        where + reason + ": "
-                                + io.github.loopforge4j.core.runtime.Secrets.redact(tail(result.output()), secrets));
-            }
+            sink.emit(new Telemetry(
+                    "script",
+                    "script.completed",
+                    "finish",
+                    "info",
+                    language.wire() + " 脚本执行成功 · " + durationMillis + " ms",
+                    null,
+                    null,
+                    null,
+                    Map.of(
+                            "exitCode",
+                            0,
+                            "durationMs",
+                            durationMillis,
+                            "outputBytes",
+                            combined.length(),
+                            "targets",
+                            targets.size())));
+            String redacted = io.github.loopforge4j.core.runtime.Secrets.redact(combined.toString(), secrets);
+            combined.setLength(0);
+            combined.append(redacted);
+            String output = combined.toString().isBlank()
+                    ? "# 脚本执行结果\n\n- 语言：" + language.wire() + "\n- 状态：成功\n- 耗时：" + durationMillis + " ms\n- 标准输出：无\n"
+                    : combined.toString().strip() + "\n";
+            return output;
         }
-        sink.emit(new Telemetry(
-                "script",
-                "script.completed",
-                "finish",
-                "info",
-                language.wire() + " 脚本执行成功 · " + durationMillis + " ms",
-                null,
-                null,
-                null,
-                Map.of(
-                        "exitCode",
-                        0,
-                        "durationMs",
-                        durationMillis,
-                        "outputBytes",
-                        combined.length(),
-                        "targets",
-                        targets.size())));
-        String redacted = io.github.loopforge4j.core.runtime.Secrets.redact(combined.toString(), secrets);
-        combined.setLength(0);
-        combined.append(redacted);
-        String output = combined.toString().isBlank()
-                ? "# 脚本执行结果\n\n- 语言：" + language.wire() + "\n- 状态：成功\n- 耗时：" + durationMillis + " ms\n- 标准输出：无\n"
-                : combined.toString().strip() + "\n";
-        return output;
     }
 
     // ---------------------------------------------------------------- preview
@@ -586,200 +591,205 @@ final class NodeRunner {
         if (previewBuild && skipPreviewBuild(runId, generation, attempt, node, previewContract, sandbox)) {
             return;
         }
-        Map<String, String> runEnvironment = engine.processEnvironment(run, sandbox);
-        String manifest = ArtifactSupport.materializeInputs(
-                sandbox.workspace(), run, node, engine.runs().artifacts(runId));
-        String gatePath = GateResults.path(node.id(), attempt);
-        EventSink sink = sessionRecordingSink(engine.sink(runId, node.id()), runId, generation, attempt, node.id());
-        if (agent.platformMcp() || agent.knowledgeBase()) {
-            assets = bindPlatformMcp(run, node, agent, assets, sink);
-        }
-        AgentCall call = new AgentCall(
-                runId,
-                generation,
-                attempt,
-                node,
-                agent,
-                executor,
-                adapter,
-                sandbox,
-                sink,
-                cancellation,
-                contracts,
-                gatePath,
-                runEnvironment,
-                assets,
-                inlineRules,
-                run.context().triggeredBy());
+        try (io.github.loopforge4j.core.runtime.git.GitEnvironment.Binding gitBinding =
+                engine.processBinding(run, sandbox)) {
+            Map<String, String> runEnvironment = gitBinding.environment();
+            String manifest = ArtifactSupport.materializeInputs(
+                    sandbox.workspace(), run, node, engine.runs().artifacts(runId));
+            String gatePath = GateResults.path(node.id(), attempt);
+            EventSink sink = sessionRecordingSink(engine.sink(runId, node.id()), runId, generation, attempt, node.id());
+            if (agent.platformMcp() || agent.knowledgeBase()) {
+                assets = bindPlatformMcp(run, node, agent, assets, sink);
+            }
+            AgentCall call = new AgentCall(
+                    runId,
+                    generation,
+                    attempt,
+                    node,
+                    agent,
+                    executor,
+                    adapter,
+                    sandbox,
+                    sink,
+                    cancellation,
+                    contracts,
+                    gatePath,
+                    runEnvironment,
+                    assets,
+                    inlineRules,
+                    run.context().triggeredBy());
 
-        NodeFailure failure = null;
-        AgentResult last = null;
-        String loopFeedback = null;
-        for (int iteration = 1; iteration <= maxIterations; iteration++) {
-            failure = null;
-            GateResults.clear(sandbox.workspace(), gatePath);
-            Run current = currentRun(runId);
-            NodeRun nr = current.requireNode(node.id());
-            String resume = iteration == 1
-                            && nr.resumeSessionId() != null
-                            && !nr.resumeSessionId().isBlank()
-                    ? nr.resumeSessionId()
-                    : null;
-            String prompt = resume != null
-                    ? PromptCompiler.resume(nr.feedback(), gatePath, node.rejectTo())
-                    : freshPrompt(current, call, manifest);
-            if (loopFeedback != null) {
-                prompt = PromptCompiler.withLoopFeedback(prompt, agent, loopFeedback);
-            }
-            try {
-                last = invokeWithSessionFallback(call, prompt, resume, manifest, loopFeedback);
-            } catch (NodeFailure f) {
-                failure = f;
-                break;
-            }
-            Optional<GateResult> submitted = readGateResult(call);
-            if (submitted.isEmpty()
-                    && last.sessionId() != null
-                    && !last.sessionId().isBlank()) {
-                sink.emit(Telemetry.of("verification", "gate.submit.missing", "progress", "未收到节点终态，恢复同一 CLI 会话要求重新提交")
-                        .withLevel("warn"));
+            NodeFailure failure = null;
+            AgentResult last = null;
+            String loopFeedback = null;
+            for (int iteration = 1; iteration <= maxIterations; iteration++) {
+                failure = null;
+                GateResults.clear(sandbox.workspace(), gatePath);
+                Run current = currentRun(runId);
+                NodeRun nr = current.requireNode(node.id());
+                String resume = iteration == 1
+                                && nr.resumeSessionId() != null
+                                && !nr.resumeSessionId().isBlank()
+                        ? nr.resumeSessionId()
+                        : null;
+                String prompt = resume != null
+                        ? PromptCompiler.resume(nr.feedback(), gatePath, node.rejectTo())
+                        : freshPrompt(current, call, manifest);
+                if (loopFeedback != null) {
+                    prompt = PromptCompiler.withLoopFeedback(prompt, agent, loopFeedback);
+                }
                 try {
-                    last = invoke(call, PromptCompiler.missingGateResult(gatePath, node.rejectTo()), last.sessionId());
+                    last = invokeWithSessionFallback(call, prompt, resume, manifest, loopFeedback);
                 } catch (NodeFailure f) {
                     failure = f;
                     break;
                 }
-                submitted = readGateResult(call);
-            }
-            if (submitted.isEmpty()) {
-                failure =
-                        new NodeFailure(FailureKind.GATE_DECISION, "未收到节点终态：执行器没有写入 " + gatePath, FailurePolicy.HUMAN);
-                break;
-            }
-            GateResult result = submitted.get();
-            recordGateResult(runId, generation, node.id(), result);
-            sink.emit(new Telemetry(
-                    "verification",
-                    "gate.submit.received",
-                    "finish",
-                    "info",
-                    "收到 Agent 节点终态：" + result.decision().wire(),
-                    null,
-                    null,
-                    null,
-                    Map.of("decision", result.decision().wire(), "reason", result.reason())));
-            Optional<NodeFailure> decision = GateResults.toFailure(result, node.rejectTo());
-            if (decision.isPresent()) {
-                failure = decision.get();
-                if (!gates.isEmpty() || !contracts.isEmpty()) {
+                Optional<GateResult> submitted = readGateResult(call);
+                if (submitted.isEmpty()
+                        && last.sessionId() != null
+                        && !last.sessionId().isBlank()) {
+                    sink.emit(
+                            Telemetry.of("verification", "gate.submit.missing", "progress", "未收到节点终态，恢复同一 CLI 会话要求重新提交")
+                                    .withLevel("warn"));
+                    try {
+                        last = invoke(
+                                call, PromptCompiler.missingGateResult(gatePath, node.rejectTo()), last.sessionId());
+                    } catch (NodeFailure f) {
+                        failure = f;
+                        break;
+                    }
+                    submitted = readGateResult(call);
+                }
+                if (submitted.isEmpty()) {
+                    failure = new NodeFailure(
+                            FailureKind.GATE_DECISION, "未收到节点终态：执行器没有写入 " + gatePath, FailurePolicy.HUMAN);
+                    break;
+                }
+                GateResult result = submitted.get();
+                recordGateResult(runId, generation, node.id(), result);
+                sink.emit(new Telemetry(
+                        "verification",
+                        "gate.submit.received",
+                        "finish",
+                        "info",
+                        "收到 Agent 节点终态：" + result.decision().wire(),
+                        null,
+                        null,
+                        null,
+                        Map.of("decision", result.decision().wire(), "reason", result.reason())));
+                Optional<NodeFailure> decision = GateResults.toFailure(result, node.rejectTo());
+                if (decision.isPresent()) {
+                    failure = decision.get();
+                    if (!gates.isEmpty() || !contracts.isEmpty()) {
+                        sink.emit(Telemetry.of(
+                                        "verification",
+                                        "gate.terminal",
+                                        "finish",
+                                        "decision="
+                                                + result.decision().wire()
+                                                + "; skipped by terminal decision (command gates " + gates.size()
+                                                + ", artifact contracts " + contracts.size() + ")")
+                                .withLevel("warn"));
+                    }
+                    break;
+                }
+                try {
+                    ArtifactSupport.validate(sandbox.workspace(), contracts);
+                    if (!contracts.isEmpty()) {
+                        sink.emit(Telemetry.of("artifact", "artifact.contract.validated", "finish", "产物契约校验通过"));
+                    }
+                    for (GateRun gate : gates) {
+                        runGate(call, gate, iteration);
+                    }
+                } catch (NodeFailure f) {
+                    failure = f;
+                }
+                if (failure == null || iteration == maxIterations) {
+                    break;
+                }
+                if (failure.action() != FailurePolicy.LOOP) {
                     sink.emit(Telemetry.of(
-                                    "verification",
-                                    "gate.terminal",
-                                    "finish",
-                                    "decision="
-                                            + result.decision().wire()
-                                            + "; skipped by terminal decision (command gates " + gates.size()
-                                            + ", artifact contracts " + contracts.size() + ")")
-                            .withLevel("warn"));
+                            "orchestration",
+                            "agent.loop",
+                            "finish",
+                            "门禁失败策略为 "
+                                    + (failure.action() == null
+                                            ? "fail"
+                                            : failure.action().wire()) + "，跳过自修正"));
+                    break;
                 }
-                break;
-            }
-            try {
-                ArtifactSupport.validate(sandbox.workspace(), contracts);
-                if (!contracts.isEmpty()) {
-                    sink.emit(Telemetry.of("artifact", "artifact.contract.validated", "finish", "产物契约校验通过"));
-                }
-                for (GateRun gate : gates) {
-                    runGate(call, gate, iteration);
-                }
-            } catch (NodeFailure f) {
-                failure = f;
-            }
-            if (failure == null || iteration == maxIterations) {
-                break;
-            }
-            if (failure.action() != FailurePolicy.LOOP) {
-                sink.emit(Telemetry.of(
+                loopFeedback = failure.getMessage();
+                sink.emit(new Telemetry(
                         "orchestration",
                         "agent.loop",
-                        "finish",
-                        "门禁失败策略为 "
-                                + (failure.action() == null
-                                        ? "fail"
-                                        : failure.action().wire()) + "，跳过自修正"));
-                break;
+                        "progress",
+                        "info",
+                        "第 " + iteration + " 轮未通过，进入自修正",
+                        null,
+                        null,
+                        null,
+                        Map.of("iteration", iteration, "maxIterations", maxIterations)));
             }
-            loopFeedback = failure.getMessage();
-            sink.emit(new Telemetry(
-                    "orchestration",
-                    "agent.loop",
-                    "progress",
-                    "info",
-                    "第 " + iteration + " 轮未通过，进入自修正",
-                    null,
-                    null,
-                    null,
-                    Map.of("iteration", iteration, "maxIterations", maxIterations)));
-        }
 
-        if (failure != null) {
-            if (failure.kind() == FailureKind.MAX_TURNS) {
-                commitWaiting(
-                        runId,
-                        generation,
-                        attempt,
-                        node,
-                        "对话轮次用尽，等待确认是否重试",
-                        failure.getMessage(),
-                        "agent.turns.exhausted",
-                        "对话轮次已用尽，请确认是否重试本节点");
-                return;
+            if (failure != null) {
+                if (failure.kind() == FailureKind.MAX_TURNS) {
+                    commitWaiting(
+                            runId,
+                            generation,
+                            attempt,
+                            node,
+                            "对话轮次用尽，等待确认是否重试",
+                            failure.getMessage(),
+                            "agent.turns.exhausted",
+                            "对话轮次已用尽，请确认是否重试本节点");
+                    return;
+                }
+                if (failure.action() == FailurePolicy.HUMAN) {
+                    String action = currentRun(runId)
+                            .node(node.id())
+                            .map(NodeRun::gateResult)
+                            .map(GateResult::actionRequired)
+                            .orElse(null);
+                    commitWaiting(
+                            runId,
+                            generation,
+                            attempt,
+                            node,
+                            "等待人工确认",
+                            failure.getMessage(),
+                            "gate.waiting",
+                            "Agent 请求人工确认：" + (action == null ? clip(failure.getMessage(), 600) : action));
+                    return;
+                }
+                if (maxIterations > 1 && agent.loop().onExhausted() == LoopExhaustedPolicy.HUMAN) {
+                    commitWaiting(
+                            runId,
+                            generation,
+                            attempt,
+                            node,
+                            "自修正次数已耗尽，等待人工判断",
+                            failure.getMessage(),
+                            "agent.loop.exhausted",
+                            "Agent 自修正次数已耗尽，转人工判断：" + failure.getMessage());
+                    return;
+                }
+                throw failure;
             }
-            if (failure.action() == FailurePolicy.HUMAN) {
-                String action = currentRun(runId)
-                        .node(node.id())
-                        .map(NodeRun::gateResult)
-                        .map(GateResult::actionRequired)
-                        .orElse(null);
-                commitWaiting(
-                        runId,
-                        generation,
-                        attempt,
-                        node,
-                        "等待人工确认",
-                        failure.getMessage(),
-                        "gate.waiting",
-                        "Agent 请求人工确认：" + (action == null ? clip(failure.getMessage(), 600) : action));
-                return;
+            String output = last == null ? "" : last.output();
+            List<Artifact> artifacts = ArtifactSupport.collect(
+                    sandbox.workspace(),
+                    currentRun(runId),
+                    node,
+                    attempt,
+                    contracts,
+                    output,
+                    engine.clock().instant());
+            if (previewBuild && manualGate == null) {
+                output = (output == null || output.isBlank() ? "" : output.strip() + "\n\n")
+                        + archiveBuiltPreview(runId, node, previewContract, sandbox) + "\n";
             }
-            if (maxIterations > 1 && agent.loop().onExhausted() == LoopExhaustedPolicy.HUMAN) {
-                commitWaiting(
-                        runId,
-                        generation,
-                        attempt,
-                        node,
-                        "自修正次数已耗尽，等待人工判断",
-                        failure.getMessage(),
-                        "agent.loop.exhausted",
-                        "Agent 自修正次数已耗尽，转人工判断：" + failure.getMessage());
-                return;
-            }
-            throw failure;
+            commitSuccess(runId, generation, attempt, node, output, artifacts, manualGate);
         }
-        String output = last == null ? "" : last.output();
-        List<Artifact> artifacts = ArtifactSupport.collect(
-                sandbox.workspace(),
-                currentRun(runId),
-                node,
-                attempt,
-                contracts,
-                output,
-                engine.clock().instant());
-        if (previewBuild && manualGate == null) {
-            output = (output == null || output.isBlank() ? "" : output.strip() + "\n\n")
-                    + archiveBuiltPreview(runId, node, previewContract, sandbox) + "\n";
-        }
-        commitSuccess(runId, generation, attempt, node, output, artifacts, manualGate);
     }
 
     /** Workspace-root file a knowledge-enabled role leaves distilled knowledge in (upstream). */

@@ -165,7 +165,9 @@ loopforge:
 
 ### 个人凭据
 
-「设置 → 个人凭据」里每个人可以配置自己的模型凭据（每个执行器：API Key、模型网关 Base URL、其他凭据变量）和 Git Token（按主机）。你启动的运行、你创建的定时任务、你在助手里的发言和你发起的需求澄清使用这些凭据：某个执行器配置了个人凭据时完全替代平台的 `loopforge.credentials`，Git Token 按主机替代 `loopforge.git.https`。密钥加密保存（生产环境请配置 `loopforge.security.credential-key`），接口只返回末尾几位。执行机器上的运行仍使用机器本地的凭据。
+「设置 → 个人凭据」里每个人可以配置自己的模型凭据（每个执行器：API Key、模型网关 Base URL、其他凭据变量）、Git Token（按主机）和 Git SSH 密钥（按主机，每个主机一把）。你启动的运行、你创建的定时任务、你在助手里的发言和你发起的需求澄清使用这些凭据：某个执行器配置了个人凭据时完全替代平台的 `loopforge.credentials`，Git Token 按主机替代 `loopforge.git.https`，SSH 密钥按主机替代部署的 SSH 密钥。密钥加密保存（生产环境请配置 `loopforge.security.credential-key`），接口只返回末尾几位或指纹。执行机器上的运行仍使用机器本地的凭据。
+
+SSH 私钥（OpenSSH 或 PEM 格式的 ed25519、RSA ≥ 2048、ECDSA，不能有口令）从不写进工作区：服务端在每条命令（Agent CLI、脚本、门禁、检出）运行期间，在工作区控制目录里开一个只有属主可连接的 SSH agent 套接字，并生成只给对应主机提供对应密钥的 ssh 配置；命令结束即关闭。个人密钥只能用于受信任的主机：内置 GitHub 的公钥，其他主机由管理员写入 `loopforge.git.ssh-known-hosts-file`（标准 `known_hosts` 格式），未受信任的主机在设置页标出，SSH 连接会被拒绝。套接字路径受 Unix 108 字节限制，工作区根目录请尽量短（例如 `/data/workspaces`）。
 
 ### 让运行改代码并提交 PR
 
@@ -175,7 +177,8 @@ loopforge:
     https:                       # 列表形式，可用 LOOPFORGE_GIT_HTTPS_0_HOST / _TOKEN 环境变量配置
       - host: github.com
         token: ${GITHUB_TOKEN}
-    # ssh-private-key-file: /run/secrets/deploy_key
+    # ssh-private-key-file: /run/secrets/deploy_key   # 部署的 SSH 密钥（没有个人密钥的主机）
+    # ssh-known-hosts-file: /etc/loopforge/known_hosts  # 个人 SSH 密钥可用的主机（GitHub 已内置）
   github:
     api-url: https://api.github.com   # GitHub Enterprise: https://<host>/api/v3
   gitlab:                        # GitLab / 工蜂：仓库设置 "provider": "gitlab"，凭据同样放在 git.https
@@ -347,7 +350,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` / `POST` | `/api/v1/workflow-templates[/{id}]` / `/api/v1/workflow-templates/{id}/adopt` | 通用 SOP 模板；复制到项目（`projectId`、可选 `id`、`name`，需要维护者） |
 | `GET` / `POST` | `/api/v1/auth/status`、`/auth/setup`、`/auth/login`、`/auth/logout` | 初始化与登录（公开） |
 | `GET/POST/DELETE` | `/api/v1/me`、`/me/tokens`、`/me/password`；`/api/v1/users` | 当前账户与个人 Token；账户管理（管理员） |
-| `GET/PUT/DELETE` | `/api/v1/me/credentials[/{kind}\|/kinds]` | 个人凭据：`executor:<kind>`（apiKey、baseUrl、variables）与 `git:<host>`（token、username）；从不返回密钥 |
+| `GET/PUT/DELETE` | `/api/v1/me/credentials[/{kind}\|/kinds]` | 个人凭据：`executor:<kind>`（apiKey、baseUrl、variables）、`git:<host>`（token、username）与 `ssh:<host>`（privateKey；返回指纹、公钥与主机是否受信任）；从不返回密钥 |
 | `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs\|/snapshot\|/sops]]` | 需求、启动泳道（`workflowId`、`rerun`）、泳道快照、SOP 链与套餐 |
 | `GET/PUT` | `/api/v1/projects/{id}/playbooks` | 项目的流程套餐（写入需要维护者） |
