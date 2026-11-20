@@ -22,18 +22,26 @@ class ApiTokenFilter extends OncePerRequestFilter {
     private static final Pattern STREAM = Pattern.compile("^/api/v1/runs/[^/]+/stream$");
 
     private final ApiTokens tokens;
+    private final io.github.loopforge4j.server.account.TokenStore accountTokens;
 
-    ApiTokenFilter(ApiTokens tokens) {
+    ApiTokenFilter(ApiTokens tokens, io.github.loopforge4j.server.account.TokenStore accountTokens) {
         this.tokens = tokens;
+        this.accountTokens = accountTokens;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        Optional<String> principal = tokens.authenticate(extract(request));
-        principal.ifPresent(name -> {
+        String token = extract(request);
+        Optional<io.github.loopforge4j.server.account.CurrentUser> principal = Optional.empty();
+        if (token != null && token.startsWith(io.github.loopforge4j.server.account.TokenStore.PREFIX)) {
+            principal = accountTokens.authenticate(token).map(io.github.loopforge4j.server.account.CurrentUser::of);
+        } else if (tokens.authenticate(token).isPresent()) {
+            principal = Optional.of(io.github.loopforge4j.server.account.CurrentUser.SERVICE);
+        }
+        principal.ifPresent(user -> {
             var authentication = UsernamePasswordAuthenticationToken.authenticated(
-                    name, null, List.of(new SimpleGrantedAuthority("ROLE_OPERATOR")));
+                    user, null, List.of(new SimpleGrantedAuthority(user.admin() ? "ROLE_ADMIN" : "ROLE_MEMBER")));
             SecurityContextHolder.getContext().setAuthentication(authentication);
         });
         chain.doFilter(request, response);

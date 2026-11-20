@@ -62,10 +62,7 @@ public final class InMemoryRunStore implements RunStore {
     public List<Run> list(RunQuery query) {
         return runs.values().stream()
                 .map(json -> Json.read(json, Run.class))
-                .filter(r -> query.statuses().isEmpty() || query.statuses().contains(r.status()))
-                .filter(r -> query.workflowId() == null || query.workflowId().equals(r.workflowId()))
-                .filter(r -> query.parentRunId() == null
-                        || query.parentRunId().equals(r.context().parentRunId()))
+                .filter(query::matches)
                 .sorted(Comparator.comparing(Run::createdAt)
                         .thenComparing(Run::id)
                         .reversed())

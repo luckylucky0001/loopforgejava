@@ -21,8 +21,14 @@ class RunStreamController {
     private final RunEngine engine;
     private final RunStreamBroadcaster broadcaster;
 
-    RunStreamController(RunEngine engine, RunStreamBroadcaster broadcaster) {
+    private final io.github.loopforge4j.server.account.AccessPolicy access;
+
+    RunStreamController(
+            RunEngine engine,
+            RunStreamBroadcaster broadcaster,
+            io.github.loopforge4j.server.account.AccessPolicy access) {
         this.engine = engine;
+        this.access = access;
         this.broadcaster = broadcaster;
     }
 
@@ -31,8 +37,9 @@ class RunStreamController {
     SseEmitter stream(
             @PathVariable String runId,
             @RequestParam(defaultValue = "0") long after,
-            @RequestHeader(name = "Last-Event-ID", required = false) Long lastEventId) {
-        engine.require(runId);
+            @RequestHeader(name = "Last-Event-ID", required = false) Long lastEventId,
+            java.security.Principal principal) {
+        access.requireReadRun(principal, engine.require(runId));
         return broadcaster.subscribe(runId, lastEventId != null ? lastEventId : after);
     }
 }

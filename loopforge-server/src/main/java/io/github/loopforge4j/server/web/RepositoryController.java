@@ -28,7 +28,11 @@ class RepositoryController {
     private final CatalogStore store;
     private final CatalogService catalog;
 
-    RepositoryController(CatalogStore store, CatalogService catalog) {
+    private final io.github.loopforge4j.server.account.AccessPolicy access;
+
+    RepositoryController(
+            CatalogStore store, CatalogService catalog, io.github.loopforge4j.server.account.AccessPolicy access) {
+        this.access = access;
         this.store = store;
         this.catalog = catalog;
     }
@@ -45,7 +49,12 @@ class RepositoryController {
 
     @Operation(summary = "Create or replace a repository (credentials belong in server configuration, not the URL)")
     @PutMapping("/{id}")
-    RepositoryDefinition put(@PathVariable String id, @RequestBody RepositoryDefinition body) {
+    RepositoryDefinition put(
+            @PathVariable String id, @RequestBody RepositoryDefinition body, java.security.Principal principal) {
+        store.repository(id)
+                .ifPresent(existing -> access.requireProject(
+                        principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
+        access.requireProject(principal, body.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER);
         return catalog.saveRepository(new RepositoryDefinition(
                 id,
                 body.name(),
@@ -59,7 +68,10 @@ class RepositoryController {
     }
 
     @DeleteMapping("/{id}")
-    ResponseEntity<Void> delete(@PathVariable String id) {
+    ResponseEntity<Void> delete(@PathVariable String id, java.security.Principal principal) {
+        store.repository(id)
+                .ifPresent(existing -> access.requireProject(
+                        principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
         return store.deleteRepository(id)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();

@@ -55,9 +55,12 @@ public class JdbcRunStore implements RunStore {
         try {
             executeWithoutResult(status -> {
                 jdbc.sql("""
-                        INSERT INTO runs (id, workflow_id, status, parent_run_id, revision, payload, created_at, updated_at)
-                        VALUES (:id, :workflowId, :status, :parent, 1, :payload, :createdAt, :updatedAt)""")
+                        INSERT INTO runs (id, workflow_id, status, parent_run_id, project_id, triggered_by, revision,
+                                          payload, created_at, updated_at)
+                        VALUES (:id, :workflowId, :status, :parent, :project, :actor, 1, :payload, :createdAt, :updatedAt)""")
                         .param("id", copy.id())
+                        .param("project", copy.context().projectId())
+                        .param("actor", copy.context().triggeredBy())
                         .param("workflowId", copy.workflowId())
                         .param("status", copy.status().wire())
                         .param("parent", copy.context().parentRunId())
@@ -96,6 +99,15 @@ public class JdbcRunStore implements RunStore {
         if (query.parentRunId() != null) {
             sql.append(" AND parent_run_id = :parent");
             params.put("parent", query.parentRunId());
+        }
+        if (query.projectIds() != null) {
+            sql.append(" AND (triggered_by = :actor");
+            params.put("actor", query.actor() == null ? "" : query.actor());
+            if (!query.projectIds().isEmpty()) {
+                sql.append(" OR project_id IN (:projects)");
+                params.put("projects", List.copyOf(query.projectIds()));
+            }
+            sql.append(")");
         }
         sql.append(" ORDER BY created_at DESC, id DESC LIMIT :limit");
         params.put("limit", query.limit());

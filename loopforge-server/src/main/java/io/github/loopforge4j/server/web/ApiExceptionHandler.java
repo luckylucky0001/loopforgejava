@@ -29,6 +29,16 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, "Not found", e.getMessage());
     }
 
+    @ExceptionHandler(io.github.loopforge4j.server.account.AccessPolicy.AccessDeniedException.class)
+    ProblemDetail forbidden(io.github.loopforge4j.server.account.AccessPolicy.AccessDeniedException e) {
+        return problem(HttpStatus.FORBIDDEN, "Forbidden", e.getMessage());
+    }
+
+    @ExceptionHandler(io.github.loopforge4j.server.account.AccountService.LoginException.class)
+    ProblemDetail unauthorized(io.github.loopforge4j.server.account.AccountService.LoginException e) {
+        return problem(HttpStatus.UNAUTHORIZED, "Unauthorized", e.getMessage());
+    }
+
     @ExceptionHandler(RunStateException.class)
     ProblemDetail conflict(RunStateException e) {
         return problem(HttpStatus.CONFLICT, "Operation not allowed in the current state", e.getMessage());

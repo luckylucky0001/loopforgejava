@@ -94,12 +94,14 @@ public record LoopForgeProperties(
      *     with owner-only permissions; it is reused across restarts
      * @param publicDocs expose the OpenAPI document and Swagger UI without a token
      * @param maxRequestSize largest accepted request body; larger ones get 413 before parsing
+     * @param sessionTtl lifetime of a login session token
      */
     public record Security(
             @DefaultValue List<String> apiTokens,
             @NotNull @DefaultValue("./data/api-token") Path tokenFile,
             @DefaultValue("true") boolean publicDocs,
-            @NotNull @DefaultValue("8MB") org.springframework.util.unit.DataSize maxRequestSize) {}
+            @NotNull @DefaultValue("8MB") org.springframework.util.unit.DataSize maxRequestSize,
+            @NotNull @DefaultValue("12h") Duration sessionTtl) {}
 
     /**
      * Git access of runs. Tokens are injected through a credential helper into the processes of a

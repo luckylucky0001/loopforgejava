@@ -32,7 +32,11 @@ class WorkflowController {
     private final CatalogStore store;
     private final CatalogService catalog;
 
-    WorkflowController(CatalogStore store, CatalogService catalog) {
+    private final io.github.loopforge4j.server.account.AccessPolicy access;
+
+    WorkflowController(
+            CatalogStore store, CatalogService catalog, io.github.loopforge4j.server.account.AccessPolicy access) {
+        this.access = access;
         this.store = store;
         this.catalog = catalog;
     }
@@ -49,12 +53,21 @@ class WorkflowController {
 
     @Operation(summary = "Create or replace a workflow; the path id wins over the body id")
     @PutMapping("/workflows/{id}")
-    WorkflowDefinition put(@PathVariable String id, @RequestBody WorkflowDefinition body) {
+    WorkflowDefinition put(
+            @PathVariable String id, @RequestBody WorkflowDefinition body, java.security.Principal principal) {
+        // project SOPs belong to the project's maintainers; global ones to administrators
+        store.workflow(id)
+                .ifPresent(existing -> access.requireProject(
+                        principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
+        access.requireProject(principal, body.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER);
         return catalog.saveWorkflow(withId(body, id));
     }
 
     @DeleteMapping("/workflows/{id}")
-    ResponseEntity<Void> delete(@PathVariable String id) {
+    ResponseEntity<Void> delete(@PathVariable String id, java.security.Principal principal) {
+        store.workflow(id)
+                .ifPresent(existing -> access.requireProject(
+                        principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
         return store.deleteWorkflow(id)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();

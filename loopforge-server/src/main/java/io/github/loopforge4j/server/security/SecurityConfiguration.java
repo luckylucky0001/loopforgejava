@@ -20,7 +20,11 @@ import org.springframework.security.web.authentication.AnonymousAuthenticationFi
 class SecurityConfiguration {
 
     @Bean
-    SecurityFilterChain apiSecurity(HttpSecurity http, ApiTokens tokens, LoopForgeProperties properties)
+    SecurityFilterChain apiSecurity(
+            HttpSecurity http,
+            ApiTokens tokens,
+            io.github.loopforge4j.server.account.TokenStore accountTokens,
+            LoopForgeProperties properties)
             throws Exception {
         boolean publicDocs = properties.security().publicDocs();
         http.csrf(AbstractHttpConfigurer::disable)
@@ -41,9 +45,18 @@ class SecurityConfiguration {
                                 .permitAll();
                     }
                     auth.requestMatchers("/error").permitAll();
+                    auth.requestMatchers(
+                                    "/api/v1/auth/status",
+                                    "/api/v1/auth/setup",
+                                    "/api/v1/auth/login",
+                                    "/api/v1/auth/logout")
+                            .permitAll();
+                    // the web console is static; every API call it makes needs a token
+                    auth.requestMatchers("/", "/index.html", "/console/**", "/favicon.svg")
+                            .permitAll();
                     auth.anyRequest().authenticated();
                 })
-                .addFilterBefore(new ApiTokenFilter(tokens), AnonymousAuthenticationFilter.class)
+                .addFilterBefore(new ApiTokenFilter(tokens, accountTokens), AnonymousAuthenticationFilter.class)
                 .addFilterBefore(
                         new RequestSizeLimitFilter(
                                 properties.security().maxRequestSize().toBytes()),

@@ -9,6 +9,38 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration(proxyBeanMethods = false)
 class WebConfiguration implements WebMvcConfigurer {
 
+    private final io.github.loopforge4j.server.account.AccessPolicy access;
+
+    WebConfiguration(io.github.loopforge4j.server.account.AccessPolicy access) {
+        this.access = access;
+    }
+
+    /**
+     * The global catalog (roles, rules, skills, MCP servers, bundle import) is writable by
+     * administrators; SOPs and repositories check project roles in their controllers.
+     */
+    @Override
+    public void addInterceptors(org.springframework.web.servlet.config.annotation.InterceptorRegistry registry) {
+        registry.addInterceptor(new org.springframework.web.servlet.HandlerInterceptor() {
+                    @Override
+                    public boolean preHandle(
+                            jakarta.servlet.http.HttpServletRequest request,
+                            jakarta.servlet.http.HttpServletResponse response,
+                            Object handler) {
+                        if (!"GET".equals(request.getMethod()) && !"HEAD".equals(request.getMethod())) {
+                            access.requireAdmin(request.getUserPrincipal());
+                        }
+                        return true;
+                    }
+                })
+                .addPathPatterns(
+                        "/api/v1/agents/**",
+                        "/api/v1/rules/**",
+                        "/api/v1/skills/**",
+                        "/api/v1/mcp-servers/**",
+                        "/api/v1/catalog/import");
+    }
+
     @Override
     public void addFormatters(FormatterRegistry registry) {
         registry.addConverter(String.class, RunStatus.class, RunStatus::fromWire);
