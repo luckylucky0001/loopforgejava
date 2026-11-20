@@ -75,7 +75,9 @@ class MultiInstanceTest {
         assertThat(b.scheduling(run.id())).isFalse();
         assertThat(b.ownedElsewhere(run.id())).isTrue();
         Run done = awaitRun(run.id(), RunStatus.SUCCEEDED);
-        assertThat(done.ownerInstanceId()).isNull(); // released once settled
+        // the retiring scheduler releases the lease right after it leaves the scheduler table
+        await().atMost(Duration.ofSeconds(5))
+                .until(() -> runs.find(run.id()).orElseThrow().ownerInstanceId() == null);
         assertThat(Files.readAllLines(root.resolve("ws/beats.txt")))
                 .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
         assertThat(done.workspaceHost()).isEqualTo("host-1");
