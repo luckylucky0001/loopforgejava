@@ -189,3 +189,8 @@ meter { width: 160px; }
 .pick-box { position: fixed; z-index: 1000; pointer-events: none; outline: 2px solid #2f6fed; background: rgba(47, 111, 237, 0.08); }
 .pick-tip { position: fixed; z-index: 1001; top: 12px; left: 50%; transform: translateX(-50%); background: #111; color: #fff; padding: 6px 12px; border-radius: 6px; font-size: 13px; }
 .row.wrap { flex-wrap: wrap; }
+
+/* conversation queue and unread */
+.chat-queue { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.chat-queue .queued { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px dashed var(--border, #ccc); border-radius: 8px; }
+.unread-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2f6fed; margin-right: 6px; vertical-align: middle; }

@@ -118,6 +118,160 @@ public class AssistantStore {
                 .update();
     }
 
+    /** A message waiting for the current reply to end ({@code priority} 1 steers: it runs first). */
+    public record Queued(
+            String id,
+            String sessionId,
+            String speakerId,
+            String speaker,
+            String content,
+            int priority,
+            Instant createdAt) {}
+
+    Queued enqueue(String sessionId, String speakerId, String speaker, String content, boolean steer) {
+        Queued queued = new Queued(
+                "q_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 20),
+                sessionId,
+                speakerId,
+                speaker,
+                content,
+                steer ? 1 : 0,
+                clock.instant());
+        jdbc.sql("INSERT INTO assistant_queue (id, session_id, speaker_id, speaker, content, priority, created_at)"
+                        + " VALUES (:id, :s, :uid, :name, :content, :priority, :now)")
+                .param("id", queued.id())
+                .param("s", sessionId)
+                .param("uid", speakerId)
+                .param("name", speaker)
+                .param("content", content)
+                .param("priority", queued.priority())
+                .param("now", SqlTime.of(queued.createdAt()))
+                .update();
+        return queued;
+    }
+
+    /** In the order they will run: steering messages first, then oldest first. */
+    List<Queued> queued(String sessionId) {
+        return jdbc.sql("SELECT * FROM assistant_queue WHERE session_id = :s ORDER BY priority DESC, created_at, id")
+                .param("s", sessionId)
+                .query((rs, i) -> new Queued(
+                        rs.getString("id"),
+                        rs.getString("session_id"),
+                        rs.getString("speaker_id"),
+                        rs.getString("speaker"),
+                        rs.getString("content"),
+                        rs.getInt("priority"),
+                        SqlTime.read(rs, "created_at")))
+                .list();
+    }
+
+    /** Takes the next queued message; only one caller gets each. */
+    Optional<Queued> takeNext(String sessionId) {
+        for (Queued next : queued(sessionId)) {
+            if (removeQueued(sessionId, next.id())) {
+                return Optional.of(next);
+            }
+        }
+        return Optional.empty();
+    }
+
+    boolean removeQueued(String sessionId, String id) {
+        return jdbc.sql("DELETE FROM assistant_queue WHERE session_id = :s AND id = :id")
+                        .param("s", sessionId)
+                        .param("id", id)
+                        .update()
+                == 1;
+    }
+
+    /** Idle conversations whose queue was left behind (an instance stopped between turns). */
+    List<String> idleWithQueue() {
+        return jdbc.sql("SELECT DISTINCT q.session_id FROM assistant_queue q JOIN assistant_sessions s"
+                        + " ON s.id = q.session_id WHERE s.status = 'idle'")
+                .query(String.class)
+                .list();
+    }
+
+    /** Gives back a claimed turn that had nothing to do. */
+    void releaseTurn(String id, String turn) {
+        jdbc.sql("UPDATE assistant_sessions SET status = 'idle', turn_id = NULL, turn_started_at = NULL"
+                        + " WHERE id = :id AND turn_id = :turn")
+                .param("id", id)
+                .param("turn", turn)
+                .update();
+    }
+
+    boolean steerOnSend(String userId) {
+        return userId != null
+                && jdbc.sql("SELECT steer_on_send FROM assistant_preferences WHERE user_id = :u")
+                        .param("u", userId)
+                        .query(Boolean.class)
+                        .optional()
+                        .orElse(false);
+    }
+
+    void steerOnSend(String userId, boolean value) {
+        int updated = jdbc.sql(
+                        "UPDATE assistant_preferences SET steer_on_send = :v, updated_at = :now WHERE user_id = :u")
+                .param("v", value)
+                .param("now", SqlTime.of(clock.instant()))
+                .param("u", userId)
+                .update();
+        if (updated == 0) {
+            try {
+                jdbc.sql("INSERT INTO assistant_preferences (user_id, steer_on_send, updated_at) VALUES (:u, :v, :now)")
+                        .param("u", userId)
+                        .param("v", value)
+                        .param("now", SqlTime.of(clock.instant()))
+                        .update();
+            } catch (org.springframework.dao.DuplicateKeyException e) {
+                steerOnSend(userId, value);
+            }
+        }
+    }
+
+    /** Marks everything up to the latest message as seen by {@code userId}. */
+    void markRead(String sessionId, String userId) {
+        if (userId == null) {
+            return;
+        }
+        long latest = jdbc.sql("SELECT COALESCE(MAX(seq), 0) FROM assistant_messages WHERE session_id = :s")
+                .param("s", sessionId)
+                .query(Long.class)
+                .single();
+        int updated = jdbc.sql("UPDATE assistant_reads SET last_seq = :seq WHERE session_id = :s AND user_id = :u"
+                        + " AND last_seq < :seq")
+                .param("seq", latest)
+                .param("s", sessionId)
+                .param("u", userId)
+                .update();
+        if (updated == 0) {
+            try {
+                jdbc.sql("INSERT INTO assistant_reads (session_id, user_id, last_seq) VALUES (:s, :u, :seq)")
+                        .param("s", sessionId)
+                        .param("u", userId)
+                        .param("seq", latest)
+                        .update();
+            } catch (org.springframework.dao.DuplicateKeyException e) {
+                // already read at least this far
+            }
+        }
+    }
+
+    /** Conversations among {@code sessionIds} with messages {@code userId} has not seen. */
+    java.util.Set<String> unread(String userId, java.util.Collection<String> sessionIds) {
+        if (userId == null || sessionIds.isEmpty()) {
+            return java.util.Set.of();
+        }
+        return new java.util.HashSet<>(jdbc.sql("SELECT m.session_id FROM assistant_messages m"
+                        + " LEFT JOIN assistant_reads r ON r.session_id = m.session_id AND r.user_id = :u"
+                        + " WHERE m.session_id IN (:ids) GROUP BY m.session_id, r.last_seq"
+                        + " HAVING MAX(m.seq) > COALESCE(r.last_seq, 0)")
+                .param("u", userId)
+                .param("ids", sessionIds)
+                .query(String.class)
+                .list());
+    }
+
     boolean delete(String id) {
         return jdbc.sql("DELETE FROM assistant_sessions WHERE id = :id")
                         .param("id", id)

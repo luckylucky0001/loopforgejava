@@ -1718,7 +1718,9 @@ function chatMessage(m) {
 }
 
 async function chatPage(id) {
-  const [sessions, projects] = await Promise.all([api('/assistant/sessions'), api('/projects').catch(() => [])]);
+  const [sessions, projects, unread, prefs] = await Promise.all([api('/assistant/sessions'), api('/projects').catch(() => []),
+    api('/assistant/sessions/unread').catch(() => ({ sessionIds: [] })), api('/assistant/sessions/preferences').catch(() => ({ steerOnSend: false }))]);
+  const unreadIds = new Set(unread.sessionIds || []);
   const current = id ? await api(`/assistant/sessions/${encodeURIComponent(id)}`) : sessions[0] || null;
   if (!id && current) { location.hash = `#/chat/${current.id}`; return; }
   const create = () => prompted('新对话', [
@@ -1729,7 +1731,9 @@ async function chatPage(id) {
     sandboxProfileId: v.sandboxProfileId || undefined } }).then((s) => { location.hash = `#/chat/${s.id}`; return s; }));
   const list = h('div', { class: 'chat-list' }, h('button', { class: 'primary', onclick: create }, '新对话'),
     sessions.map((s) => h('a', { href: `#/chat/${s.id}`, class: current && s.id === current.id ? 'chat-item active' : 'chat-item' },
-      h('div', {}, s.title), h('div', { class: 'muted' }, `${s.projectId || '个人'}${s.status !== 'idle' ? ' · 回复中' : ''}`))));
+      h('div', {}, unreadIds.has(s.id) && !(current && s.id === current.id) ? h('span', { class: 'unread-dot', title: '有未读回复' }) : null, s.title,
+        s.source === 'scheduled' ? h('span', { class: 'chip' }, '定时') : null),
+      h('div', { class: 'muted' }, `${s.projectId || '个人'}${s.status !== 'idle' ? ' · 回复中' : ''}`))));
   if (!current) {
     shell([h('h1', {}, '助手'), h('div', { class: 'chat' }, list,
       h('div', { class: 'panel' }, h('p', {}, '助手可以查需求、建需求、启动 SOP、看运行和产物，也可以在对话专属的工作区里看代码、改代码。它以你的身份操作平台，没有管理员权限。'),
@@ -1744,15 +1748,23 @@ async function chatPage(id) {
   const sendButton = h('button', { class: 'primary' }, '发送');
   const stopButton = h('button', { class: 'danger' }, '停止');
   const sync = () => {
-    sendButton.disabled = generating;
+    sendButton.textContent = generating ? (steer.checked ? '插队发送' : '排队发送') : '发送';
     stopButton.disabled = !generating;
     live.hidden = !generating;
   };
+  // messages sent while the assistant answers wait here (or stop the reply when steering)
+  const queueBox = h('div', { class: 'chat-queue' });
+  const showQueue = (items) => queueBox.replaceChildren(...(items || []).map((q) => h('div', { class: 'queued' },
+    h('span', { class: 'chip' }, q.priority > 0 ? '插队' : '排队中'), h('span', {}, q.content.length > 120 ? `${q.content.slice(0, 120)}…` : q.content),
+    q.speakerId === me?.user?.id ? h('button', { onclick: () => attempt(() => api(`/assistant/sessions/${current.id}/queue/${q.id}`, { method: 'DELETE' })) }, '撤回') : null)));
+  const steer = h('input', { type: 'checkbox', checked: !!prefs.steerOnSend });
+  steer.addEventListener('change', () => attempt(() => api('/assistant/sessions/preferences', { method: 'PUT', body: { steerOnSend: steer.checked } })));
   const send = () => {
     const content = input.value.trim();
-    if (!content || generating) return;
-    attempt(() => api(`/assistant/sessions/${current.id}/messages`, { method: 'POST', body: { content } }), () => {
+    if (!content) return;
+    attempt(() => api(`/assistant/sessions/${current.id}/messages`, { method: 'POST', body: { content } }), (result) => {
       input.value = '';
+      if (result?.queued) return;
       generating = true;
       live.replaceChildren();
       sync();
@@ -1766,14 +1778,19 @@ async function chatPage(id) {
     h('div', { class: 'row' }, h('h1', {}, current.title), h('span', { class: 'spacer' }),
       h('span', { class: 'muted' }, `${current.projectId ? `项目 ${current.projectId}` : '个人对话'} · 沙箱 ${current.sandboxProfileId} · ${num(current.totalTokens)} Token · ${usd(current.costUsd)}`),
       h('button', { class: 'danger', onclick: remove }, '删除')),
-    feed, live,
-    h('div', { class: 'panel mt' }, input, h('div', { class: 'row mt' }, h('span', { class: 'spacer' }), stopButton, sendButton))))]);
+    feed, live, queueBox,
+    h('div', { class: 'panel mt' }, input, h('div', { class: 'row mt' },
+      h('label', { class: 'muted', title: '回复进行中时发送：打断当前回复并先处理这条（否则排队等待）' }, steer, ' 发送时打断当前回复'),
+      h('span', { class: 'spacer' }), stopButton, sendButton))))]);
+  steer.addEventListener('change', sync);
   sync();
+  api(`/assistant/sessions/${current.id}/queue`).then(showQueue).catch(() => {});
   feed.scrollTop = feed.scrollHeight;
   stream = new EventSource(`/api/v1/assistant/sessions/${current.id}/stream?access_token=${encodeURIComponent(token())}`);
   stream.addEventListener('activity', (e) => { live.append(h('div', {}, String(sseData(e)))); live.scrollTop = live.scrollHeight; });
   stream.addEventListener('message', (e) => { feed.append(chatMessage(sseData(e))); feed.scrollTop = feed.scrollHeight; });
   stream.addEventListener('status', (e) => { generating = sseData(e).status !== 'idle'; if (!generating) live.replaceChildren(); sync(); });
+  stream.addEventListener('queue', (e) => showQueue(sseData(e)));
 }
 
 // ------------------------------------------------------------------ run evaluation

@@ -9,6 +9,7 @@ import java.time.Instant;
  *
  * @param status {@code idle}, {@code generating} or {@code cancelling}
  * @param cliSessionId the CLI session the next turn continues
+ * @param source {@code chat} (started by a person) or {@code scheduled} (an AI scheduled task)
  */
 public record AssistantSession(
         String id,
@@ -25,7 +26,16 @@ public record AssistantSession(
         double costUsd,
         Instant turnStartedAt,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        String source) {
+
+    public static final String CHAT = "chat";
+    public static final String SCHEDULED = "scheduled";
+
+    public AssistantSession {
+        // conversations stored before sources existed: scheduled ones carried a title prefix
+        source = source != null ? source : title != null && title.startsWith("定时") ? SCHEDULED : CHAT;
+    }
 
     AssistantSession with(
             String newStatus, String newCliSession, String error, long tokens, double cost, Instant started) {
@@ -44,6 +54,7 @@ public record AssistantSession(
                 cost,
                 started,
                 createdAt,
-                updatedAt);
+                updatedAt,
+                source);
     }
 }

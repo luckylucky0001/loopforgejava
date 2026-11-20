@@ -285,6 +285,8 @@ loopforge:
 
 控制台「助手」里新建个人或项目对话（项目成员能查看项目对话，只有发起人能发言）。每一轮由默认执行器（或 `loopforge.assistant.executor`）在对话专属的工作区里运行，下一轮续接同一个 CLI 会话；助手拿到的平台 MCP 凭据代表本轮发言人（项目对话只限该项目），只在这一轮回复期间有效，永远没有管理员权限。工作区沙箱默认 `loopforge.assistant.sandbox-profile=local`，成员仍受隔离沙箱要求约束（为成员开放请设为 `docker` 或 `bwrap`）。
 
+助手回复期间可以继续发送：消息默认排队，在当前回复结束后依次处理（发送人可以撤回）；勾选「发送时打断当前回复」（或请求里 `mode: steer`）则停止当前回复并先处理这条，选择按人保存。对话列表标出未读的回复和定时任务创建的对话。
+
 ```yaml
 loopforge:
   assistant:
@@ -384,7 +386,8 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
 | `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |
 | `POST` | `/api/v1/projects/{id}/requirements/{n}/external` | 把本地需求推送为 GitHub / GitLab Issue 或 TAPD 需求 |
-| `GET/POST/DELETE` | `/api/v1/assistant/sessions[/{id}[/messages\|/cancel\|/stream]]` | 平台助手对话、发言、停止与实时事件（SSE） |
+| `GET/POST/DELETE` | `/api/v1/assistant/sessions[/{id}[/messages\|/cancel\|/stream]]` | 平台助手对话、发言（回复中时排队，`mode: steer` 打断）、停止与实时事件（SSE） |
+| `GET/DELETE/POST` | `/api/v1/assistant/sessions/{id}/queue[/{qid}]`、`/{id}/read`、`/unread`、`/preferences` | 排队中的消息与撤回、已读与未读、发送时是否打断的偏好 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{p}/requirements/{n}/clarification[/cancel\|/stream]` | 需求 AI 澄清：开始 / 回答一轮、修改结论、停止、重新开始、实时事件（SSE） |
 | `GET/POST/DELETE` | `/api/v1/runners[/{id}]`、`/api/v1/runners/agent.jar` | 执行机器的注册、列表、移除与程序下载 |
 | `*` | `/api/v1/runner-api/**` | 执行机器调用的接口（机器 Token 认证，只能访问分配给它的运行） |

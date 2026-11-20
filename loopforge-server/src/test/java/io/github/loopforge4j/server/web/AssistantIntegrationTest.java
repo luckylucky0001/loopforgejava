@@ -164,7 +164,14 @@ class AssistantIntegrationTest {
         ok(erin, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "我也说一句"), 403);
 
         ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "帮我建一个需求：登录页报错"), 202);
-        ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "再来"), 409);
+        // a message sent while the assistant answers waits; its author can take it back
+        Map<String, Object> waiting =
+                ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "再来"), 202);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> queued = (Map<String, Object>) waiting.get("queued");
+        assertThat(queued).containsEntry("content", "再来").containsEntry("priority", 0);
+        ok(erin, "DELETE", "/api/v1/assistant/sessions/" + id + "/queue/" + queued.get("id"), null, 404);
+        ok(carol, "DELETE", "/api/v1/assistant/sessions/" + id + "/queue/" + queued.get("id"), null, 204);
         awaitIdle(carol, id);
         List<Map<String, Object>> first = messages(carol, id);
         Path ws = data.resolve("workspaces").resolve("conv-" + id);
@@ -200,7 +207,75 @@ class AssistantIntegrationTest {
         awaitIdle(carol, id);
         assertThat(messages(carol, id).getLast()).containsEntry("role", "error").containsEntry("content", "已停止回复");
 
+        // waiting messages run in order after the reply; a steering one stops it and goes first
+        ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "睡一会"), 202);
+        ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "排队一"), 202);
+        ok(
+                carol,
+                "POST",
+                "/api/v1/assistant/sessions/" + id + "/messages",
+                Map.of("content", "排队二", "mode", "queue"),
+                202);
+        ok(
+                carol,
+                "POST",
+                "/api/v1/assistant/sessions/" + id + "/messages",
+                Map.of("content", "x", "mode", "nope"),
+                422);
+        assertThat(carol.get()
+                        .uri("/api/v1/assistant/sessions/{id}/queue", id)
+                        .retrieve()
+                        .body(LIST))
+                .extracting(q -> q.get("content"))
+                .containsExactly("排队一", "排队二");
+        ok(
+                carol,
+                "POST",
+                "/api/v1/assistant/sessions/" + id + "/messages",
+                Map.of("content", "转向", "mode", "steer"),
+                202);
+        await().atMost(Duration.ofSeconds(60))
+                .until(() -> messages(carol, id).stream()
+                        .anyMatch(m -> String.valueOf(m.get("content")).contains("prompt=[carol] 排队二")));
+        List<Object> spoken = messages(carol, id).stream()
+                .filter(m -> "user".equals(m.get("role")))
+                .map(m -> m.get("content"))
+                .toList();
+        assertThat(spoken.subList(spoken.size() - 4, spoken.size())).containsExactly("睡一会", "转向", "排队一", "排队二");
+        assertThat(carol.get()
+                        .uri("/api/v1/assistant/sessions/{id}/queue", id)
+                        .retrieve()
+                        .body(LIST))
+                .isEmpty();
+
+        // the preference makes steering the default
+        assertThat(ok(carol, "GET", "/api/v1/assistant/sessions/preferences", null, 200))
+                .containsEntry("steerOnSend", false);
+        ok(carol, "PUT", "/api/v1/assistant/sessions/preferences", Map.of("steerOnSend", true), 200);
+        awaitIdle(carol, id);
+        ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "睡一会"), 202);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> steering = (Map<String, Object>)
+                ok(carol, "POST", "/api/v1/assistant/sessions/" + id + "/messages", Map.of("content", "停下"), 202)
+                        .get("queued");
+        assertThat(steering).containsEntry("priority", 1);
+        await().atMost(Duration.ofSeconds(60))
+                .until(() -> messages(carol, id).stream()
+                        .anyMatch(m -> String.valueOf(m.get("content")).contains("prompt=[carol] 停下")));
+
+        // replies someone has not seen yet are marked for them until they read the conversation
+        assertThat(String.valueOf(ok(erin, "GET", "/api/v1/assistant/sessions/unread", null, 200)
+                        .get("sessionIds")))
+                .contains(id);
+        messages(erin, id);
+        assertThat(String.valueOf(ok(erin, "GET", "/api/v1/assistant/sessions/unread", null, 200)
+                        .get("sessionIds")))
+                .doesNotContain(id);
+        assertThat(ok(carol, "GET", "/api/v1/assistant/sessions/" + id, null, 200))
+                .containsEntry("source", "chat");
+
         // deleting the conversation removes its workspace
+        awaitIdle(carol, id);
         ok(carol, "DELETE", "/api/v1/assistant/sessions/" + id, null, 204);
         await().atMost(Duration.ofSeconds(10)).until(() -> !Files.exists(workspace));
     }

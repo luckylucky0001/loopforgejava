@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -61,8 +62,12 @@ public class AssistantService {
     private final ServerPlatformMcp platform;
     private final LoopForgeProperties.Assistant config;
     private final Clock clock;
+    private final io.github.loopforge4j.server.account.UserStore users;
     private final ScheduledExecutorService watchers =
             Executors.newScheduledThreadPool(1, Thread.ofVirtual().factory());
+
+    /** Messages that may wait for one reply. */
+    static final int MAX_QUEUED = 20;
 
     public AssistantService(
             AssistantStore store,
@@ -71,7 +76,8 @@ public class AssistantService {
             ObjectProvider<RunEngine> engines,
             ServerPlatformMcp platform,
             LoopForgeProperties properties,
-            Clock clock) {
+            Clock clock,
+            io.github.loopforge4j.server.account.UserStore users) {
         this.store = store;
         this.streams = streams;
         this.access = access;
@@ -79,6 +85,7 @@ public class AssistantService {
         this.platform = platform;
         this.config = properties.assistant();
         this.clock = clock;
+        this.users = users;
     }
 
     public record NewSession(String projectId, String title, String sandboxProfileId, String executorId) {}
@@ -120,7 +127,8 @@ public class AssistantService {
                 0,
                 null,
                 now,
-                now);
+                now,
+                AssistantSession.CHAT);
         store.create(session);
         return session;
     }
@@ -137,8 +145,58 @@ public class AssistantService {
 
     public List<AssistantMessage> messages(String id, Principal principal) {
         readable(id, principal);
-        return store.messages(id, 500);
+        List<AssistantMessage> messages = store.messages(id, 500);
+        store.markRead(id, human(principal).id());
+        return messages;
     }
+
+    /** The caller's conversations with replies they have not seen. */
+    public Set<String> unread(Principal principal) {
+        CurrentUser user = human(principal);
+        List<String> ids = list(principal).stream().map(AssistantSession::id).toList();
+        return store.unread(user.id(), ids);
+    }
+
+    public void markRead(String id, Principal principal) {
+        readable(id, principal);
+        store.markRead(id, human(principal).id());
+    }
+
+    /** Messages waiting for the current reply, in the order they will run. */
+    public List<AssistantStore.Queued> queue(String id, Principal principal) {
+        readable(id, principal);
+        return store.queued(id);
+    }
+
+    /** Takes a waiting message back (its author only). */
+    public void unqueue(String id, String queuedId, Principal principal) {
+        readable(id, principal);
+        CurrentUser user = human(principal);
+        boolean mine = store.queued(id).stream()
+                .anyMatch(q -> q.id().equals(queuedId) && q.speakerId().equals(user.id()));
+        if (!mine || !store.removeQueued(id, queuedId)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "queued message not found");
+        }
+        streams.publish(id, "queue", store.queued(id));
+    }
+
+    public boolean steerOnSend(Principal principal) {
+        return store.steerOnSend(human(principal).id());
+    }
+
+    public void steerOnSend(Principal principal, boolean value) {
+        CurrentUser user = human(principal);
+        if (user.id() == null) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "preferences need an account");
+        }
+        store.steerOnSend(user.id(), value);
+    }
+
+    /**
+     * What sending did: started a reply ({@code message}) or waits for the current one ({@code
+     * queued}, which runs first when it steers).
+     */
+    public record Sent(AssistantMessage message, AssistantStore.Queued queued) {}
 
     public void delete(String id, Principal principal) {
         AssistantSession session = readable(id, principal);
@@ -160,8 +218,12 @@ public class AssistantService {
         });
     }
 
-    /** Starts a turn; the reply arrives on the stream and in the message list. */
-    public AssistantMessage send(String id, String content, Principal principal) {
+    /**
+     * Starts a turn, or queues the message while the assistant is answering (upstream). {@code mode}
+     * {@code steer} stops the current reply and runs this message next, {@code queue} waits; without
+     * it the person's preference decides.
+     */
+    public Sent send(String id, String content, String mode, Principal principal) {
         requireEnabled();
         AssistantSession session = readable(id, principal);
         CurrentUser user = human(principal);
@@ -179,17 +241,79 @@ public class AssistantService {
         // the workspace profile may have become stricter since the conversation started
         access.requireIsolatedProfile(principal, session.sandboxProfileId());
         Instant stale = clock.instant().minus(config.turnTimeout()).minus(Duration.ofMinutes(2));
-        String turn = store.claimTurn(id, stale);
+        String turn = store.queued(id).isEmpty() ? store.claimTurn(id, stale) : null;
         if (turn == null) {
-            throw new ApiException(HttpStatus.CONFLICT, "the assistant is still answering");
+            if (mode != null && !mode.equals("queue") && !mode.equals("steer")) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "mode must be queue or steer");
+            }
+            if (store.queued(id).size() >= MAX_QUEUED) {
+                throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "too many messages are waiting; try again later");
+            }
+            boolean steer = mode == null ? store.steerOnSend(user.id()) : mode.equals("steer");
+            AssistantStore.Queued queued = store.enqueue(id, user.id(), user.username(), text, steer);
+            streams.publish(id, "queue", store.queued(id));
+            if (steer && store.requestCancel(id)) {
+                streams.publish(id, "status", Map.of("status", "cancelling"));
+            }
+            // the reply may have ended between the claim and the enqueue
+            drain(id);
+            return new Sent(null, queued);
         }
+        streams.publish(id, "status", Map.of("status", "generating"));
+        return new Sent(start(session, turn, user, text), null);
+    }
+
+    private AssistantMessage start(AssistantSession session, String turn, CurrentUser user, String text) {
+        String id = session.id();
+        store.markRead(id, user.id());
         List<AssistantMessage> history = store.messages(id, Math.max(0, config.history()));
         AssistantMessage message =
                 store.append(new AssistantMessage(0, id, "user", user.username(), text, null, 0, 0, null, null));
         streams.publish(id, "message", message);
-        streams.publish(id, "status", Map.of("status", "generating"));
-        Thread.ofVirtual().name("assistant-" + id).start(() -> runTurn(session, turn, user, text, history));
+        Thread.ofVirtual().name("assistant-" + id).start(() -> {
+            runTurn(session, turn, user, text, history);
+            drain(id);
+        });
         return message;
+    }
+
+    /**
+     * Runs the next waiting message if the conversation is free. A message whose author can no
+     * longer talk here (account gone, workspace profile now too open for them) is dropped with a note.
+     */
+    void drain(String id) {
+        for (int guard = 0; guard < MAX_QUEUED + 1; guard++) {
+            if (store.queued(id).isEmpty()) {
+                return;
+            }
+            Instant stale = clock.instant().minus(config.turnTimeout()).minus(Duration.ofMinutes(2));
+            String turn = store.claimTurn(id, stale);
+            if (turn == null) {
+                // still answering (here or on another instance): that turn drains when it ends
+                return;
+            }
+            Optional<AssistantStore.Queued> next = store.takeNext(id);
+            AssistantSession session = store.find(id).orElse(null);
+            if (next.isEmpty() || session == null) {
+                store.releaseTurn(id, turn);
+                continue;
+            }
+            AssistantStore.Queued q = next.get();
+            streams.publish(id, "queue", store.queued(id));
+            io.github.loopforge4j.server.account.User author =
+                    users.byId(q.speakerId()).filter(u -> !u.disabled()).orElse(null);
+            if (author == null
+                    || !author.id().equals(session.ownerId())
+                    || !access.profileAllowed(author.admin(), session.sandboxProfileId())) {
+                AssistantMessage note = store.append(errorMessage(id, "排队的消息没有发送：发送人已不能在这个对话里发言", List.of()));
+                streams.publish(id, "message", note);
+                store.releaseTurn(id, turn);
+                continue;
+            }
+            streams.publish(id, "status", Map.of("status", "generating"));
+            start(session, turn, CurrentUser.of(author), q.content());
+            return;
+        }
     }
 
     public void cancel(String id, Principal principal) {
@@ -247,7 +371,8 @@ public class AssistantService {
                 0,
                 null,
                 now,
-                now);
+                now,
+                AssistantSession.SCHEDULED);
         store.create(session);
         String turn = store.claimTurn(session.id(), now);
         if (turn == null) {
@@ -261,6 +386,7 @@ public class AssistantService {
                         new AssistantMessage(0, session.id(), "user", user.username(), text, null, 0, 0, null, null)));
         Thread.ofVirtual().name("assistant-scheduled-" + session.id()).start(() -> {
             AssistantMessage reply = runTurn(session, turn, user, text, List.of());
+            drain(session.id());
             done.accept(new ScheduledOutcome(
                     session.id(),
                     reply == null ? null : reply.content(),
@@ -365,6 +491,14 @@ public class AssistantService {
                 store.endStaleTurns(clock.instant().minus(config.turnTimeout()).minus(Duration.ofMinutes(2)));
         if (ended > 0) {
             log.info("ended {} conversation turn(s) left by a stopped instance", ended);
+        }
+        // messages left waiting by an instance that stopped between turns
+        for (String id : store.idleWithQueue()) {
+            try {
+                drain(id);
+            } catch (RuntimeException e) {
+                log.warn("cannot run the queued messages of conversation {}: {}", id, e.toString());
+            }
         }
     }
 
