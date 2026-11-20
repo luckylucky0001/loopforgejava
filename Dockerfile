@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM eclipse-temurin:21-jdk AS build
+FROM eclipse-temurin:25-jdk AS build
 WORKDIR /src
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -ntp -q package -DskipTests -D
     && java -Djarmode=tools -jar loopforge-server/target/loopforge-server-*.jar extract --layers --launcher --destination /extracted \
     && mkdir -p /extracted/runner && cp loopforge-runner/target/loopforge-runner-*-all.jar /extracted/runner/loopforge-runner.jar
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 # Scripts and agent CLIs commonly need git, python3 and a POSIX shell. Agent CLIs themselves are not
 # bundled (some are proprietary); extend this image to add the ones you are licensed to use.
 RUN apt-get update \
