@@ -49,12 +49,19 @@ public class RequirementStore {
                             List.of(),
                             null,
                             List.of(),
+                            draft.source(),
+                            draft.external(),
                             draft.createdBy(),
                             now,
                             now);
                     jdbc.sql(
-                                    "INSERT INTO requirements (id, project_id, number, status, latest_run_id, payload, created_at,"
-                                            + " updated_at) VALUES (:id, :p, :n, :s, NULL, :payload, :now, :now)")
+                                    "INSERT INTO requirements (id, project_id, number, status, latest_run_id, external_key, payload,"
+                                            + " created_at, updated_at) VALUES (:id, :p, :n, :s, NULL, :key, :payload, :now, :now)")
+                            .param(
+                                    "key",
+                                    created.external() == null
+                                            ? null
+                                            : created.external().key())
                             .param("id", created.id())
                             .param("p", created.projectId())
                             .param("n", number)
@@ -65,7 +72,13 @@ public class RequirementStore {
                     return created;
                 }));
             } catch (DuplicateKeyException e) {
-                if (attempt >= 5) {
+                // a number taken concurrently is retried; an external item that exists already is not
+                if (attempt >= 5
+                        || draft.external() != null
+                                && findByExternal(
+                                                draft.projectId(),
+                                                draft.external().key())
+                                        .isPresent()) {
                     throw e;
                 }
             }
@@ -76,6 +89,14 @@ public class RequirementStore {
         return jdbc.sql("SELECT payload FROM requirements WHERE project_id = :p AND number = :n")
                 .param("p", projectId)
                 .param("n", number)
+                .query((rs, i) -> JsonRows.read(rs.getString("payload"), Requirement.class))
+                .optional();
+    }
+
+    public Optional<Requirement> findByExternal(String projectId, String key) {
+        return jdbc.sql("SELECT payload FROM requirements WHERE project_id = :p AND external_key = :k")
+                .param("p", projectId)
+                .param("k", key)
                 .query((rs, i) -> JsonRows.read(rs.getString("payload"), Requirement.class))
                 .optional();
     }
@@ -125,11 +146,19 @@ public class RequirementStore {
                     changed.runIds(),
                     changed.latestRunId(),
                     changed.deliveries(),
+                    changed.source(),
+                    changed.external(),
                     changed.createdBy(),
                     changed.createdAt(),
                     clock.instant());
-            jdbc.sql("UPDATE requirements SET status = :s, latest_run_id = :run, payload = :payload, updated_at = :now"
-                            + " WHERE id = :id")
+            jdbc.sql(
+                            "UPDATE requirements SET status = :s, latest_run_id = :run, external_key = :key, payload = :payload,"
+                                    + " updated_at = :now WHERE id = :id")
+                    .param(
+                            "key",
+                            stamped.external() == null
+                                    ? null
+                                    : stamped.external().key())
                     .param("id", id)
                     .param("s", stamped.status())
                     .param("run", stamped.latestRunId())

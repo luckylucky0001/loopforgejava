@@ -33,7 +33,8 @@
 | `internal/engine/run_recovery.go`（租约、接管、工作区主机绑定）、`internal/repo/run_admission.go`（租约 SQL） | `core.engine.LeaseKeeper`、`RunEngine.claimOrphanedRuns`、`server.persistence.JdbcInstanceRegistry` | 已移植（排队准入/桶限流未移植） |
 | `internal/observability`（遥测批量）、分析统计 | `core.engine.TelemetryBuffer`、`server.ops.RunMetrics` | 指标以 Micrometer 暴露 |
 | `internal/domain/user.go`、`project.go`、`internal/httpapi` 账户/项目部分 | `server.account` | 密码账户 + Token；未移植 OAuth/企业身份、个人凭据库 |
-| `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*` | 平台需求；未移植工蜂/TAPD 同步、多泳道 |
+| `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*`、`ExternalRef` | 平台需求与外部来源；未移植多泳道与 AI 澄清 |
+| `internal/tracker/service.go`、`tapd_url.go` | `server.tracker`（`TrackerService`、`GitHubIssues`、`GitLabIssues`、`TapdClient`、`TapdLinks`） | 拉取、TAPD 链接导入、推送、交付回写、定时同步；直接调用 GitHub / GitLab / TAPD 开放 API |
 | `internal/domain/shared_schedule.go`、`schedule_execution.go` | `server.work.Schedule*` | cron 定时运行 |
 | `internal/domain/notification*.go`、`internal/notification` | `server.work.Notifier`、`NotificationChannel`、`BotMessages` | Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人；未移植企业微信智能机器人长连接（卡片内审批）与 AI 运行报告 |
 | `internal/runtime/sandbox_process.go`（bwrap） | `core.runtime.sandbox.BwrapSandboxProvider` | 已移植（Linux bwrap；macOS seatbelt 未移植） |
@@ -72,9 +73,12 @@
 | Agent 的平台 MCP 凭据 | 部署级 Token（全部操作） | 每次调用签发的运行令牌：只读、只能访问运行所在项目、运行结束即失效 | Agent 受提示词注入影响，不应拥有写权限 |
 | 知识库代理令牌 | 由上游 Token 派生的密钥签名，48 小时有效 | 数据库共享密钥签名；运行结束即失效 | 多实例共享，泄露窗口更短 |
 | `knowledge.md` | 需 SOP 声明为产物 | 开启知识库的角色自动收集（可选产物） | 使用规范要求写这个文件，不应依赖每个 SOP 记得声明 |
+| 需求同步的通道 | 内部 MCP 网关（工蜂 `search_project_issues`、TAPD `proxy_execute_tool`） | GitHub / GitLab REST 与 TAPD 开放 API | 其他部署没有这些内部网关；开放 API 可直接用部署级凭据 |
+| 同步时已关闭的外部项 | 也导入（状态为已关闭） | 首次看到时已关闭则不导入 | 避免历史 Issue 涌入待办 |
+| TAPD 迭代对账 | 删除不在迭代里的未保留条目 | 只删除未开始（待办/待规划、无运行）的条目 | 已在执行的需求不应因外部调整而消失 |
 | bwrap 沙箱可见范围 | 只读根文件系统，其他工作区可读 | 另外隐藏工作区根目录（含其他运行）与服务端 HOME，可配置更多 | 一个运行不应读到另一个运行或服务端的登录凭据 |
 | 单点登录账户绑定 | 企业身份 | issuer + subject 绑定；重名时改用新用户名，邮箱关联需显式开启 | 防止身份提供方里的同名用户接管本地账户（含管理员） |
 
 ## 尚未移植
 
-Chat/Main Bot 与会话工作区、工蜂/TAPD Issue 同步、执行机器（runner）与云端池（含按执行机器分桶的准入）、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、Agent CLI 的模型网关与个人凭据、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。
+Chat/Main Bot 与会话工作区、需求 AI 澄清与多泳道、执行机器（runner）与云端池（含按执行机器分桶的准入）、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、Agent CLI 的模型网关与个人凭据、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。

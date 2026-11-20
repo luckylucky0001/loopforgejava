@@ -35,6 +35,8 @@ const token = () => localStorage.getItem(TOKEN_KEY);
 const badge = (status) => h('span', { class: `badge s-${status}` }, status ?? '—');
 const time = (value) => (value ? new Date(value).toLocaleString() : '—');
 const json = (value) => JSON.stringify(value, null, 2);
+/** Links that come from external systems: only http(s), never javascript: or data: URLs. */
+const safeHref = (url) => (typeof url === 'string' && /^https?:\/\//i.test(url) ? url : undefined);
 
 class ApiError extends Error {
   constructor(status, problem) {
@@ -386,7 +388,7 @@ async function runPage(runId) {
       (run.repositories || []).length ? h('div', { class: 'panel' }, h('h2', {}, '仓库'), h('table', {}, h('tr', {}, ['仓库', '基线', '工作分支', '目录'].map((t) => h('th', {}, t))),
         run.repositories.map((r) => h('tr', {}, h('td', {}, r.name), h('td', { class: 'mono' }, r.baseBranch), h('td', { class: 'mono' }, r.workBranch || '只读'), h('td', { class: 'mono' }, r.workspaceDir))))) : null,
       (run.deliveries || []).length ? h('div', { class: 'panel' }, h('h2', {}, '交付'), run.deliveries.map((p) =>
-        h('div', { class: 'row' }, badge(p.state), h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, `#${p.number} ${p.headBranch} → ${p.baseBranch}`))),
+        h('div', { class: 'row' }, badge(p.state), h('a', { href: safeHref(p.url), target: '_blank', rel: 'noopener noreferrer' }, `#${p.number} ${p.headBranch} → ${p.baseBranch}`))),
         h('button', { onclick: () => attempt(() => api(`/runs/${runId}/deliveries/refresh`, { method: 'POST' }), render) }, '刷新 PR 状态')) : null,
       artifacts.length ? h('div', { class: 'panel' }, h('h2', {}, '产物'), h('table', {}, h('tr', {}, ['节点', '名称', '路径', '大小'].map((t) => h('th', {}, t))),
         artifacts.map((a) => h('tr', {}, h('td', {}, `${a.nodeId}#${a.attempt}`), h('td', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); showArtifact(runId, a); } }, a.name)),
@@ -537,10 +539,11 @@ async function projectsPage() {
 
 async function projectPage(projectId) {
   const project = await api(`/projects/${projectId}`);
-  const [members, requirements, schedules, channels, workflows] = await Promise.all([
+  const [members, requirements, schedules, channels, workflows, tracker, syncLogs, repositories] = await Promise.all([
     api(`/projects/${projectId}/members`), api(`/projects/${projectId}/requirements`),
     api(`/projects/${projectId}/schedules`).catch(() => []), api(`/notifications?projectId=${projectId}`).catch(() => null),
-    api('/workflows').catch(() => []),
+    api('/workflows').catch(() => []), api(`/projects/${projectId}/tracker`).catch(() => null),
+    api(`/projects/${projectId}/tracker/logs`).catch(() => []), api('/repositories').catch(() => []),
   ]);
   const refresh = () => projectPage(projectId);
   const sopOptions = workflows.filter((w) => w.status === 'published').map((w) => w.id);
@@ -567,6 +570,20 @@ async function projectPage(projectId) {
     { name: 'events', label: '事件（逗号分隔，留空=全部）', placeholder: 'run.failed,run.waiting,run.succeeded' }],
   (v) => api('/notifications', { method: 'POST', body: { projectId, name: v.name, kind: v.kind, url: v.url, secret: v.secret || undefined, enabled: true,
     events: v.events.split(',').map((s) => s.trim()).filter(Boolean) } }).then(refresh));
+  const issueRepos = repositories.filter((r) => !r.projectId || r.projectId === projectId).map((r) => r.id);
+  const editTracker = () => prompted('外部需求同步', [
+    { name: 'issueRepositoryIds', label: `同步 Issue 的仓库（逗号分隔；可选：${issueRepos.join(', ') || '无'}）`, value: (tracker?.issueRepositoryIds || []).join(',') },
+    { name: 'tapdWorkspaceId', label: 'TAPD 项目 ID（workspace）', value: tracker?.tapdWorkspaceId || '' },
+    { name: 'tapdIterationId', label: 'TAPD 迭代 ID', value: tracker?.tapdIterationId || '' },
+    { name: 'autoSync', label: '定时同步', type: 'select', options: ['true', 'false'], value: String(tracker?.autoSync ?? true) },
+    { name: 'writeBack', label: '交付后回写 PR 链接', type: 'select', options: ['true', 'false'], value: String(tracker?.writeBack ?? true) }],
+  (v) => api(`/projects/${projectId}/tracker`, { method: 'PUT', body: { ...v, autoSync: v.autoSync === 'true', writeBack: v.writeBack === 'true',
+    issueRepositoryIds: v.issueRepositoryIds.split(',').map((x) => x.trim()).filter(Boolean) } }).then(refresh));
+  const syncNow = () => attempt(() => api(`/projects/${projectId}/tracker/sync`, { method: 'POST' }), refresh);
+  const importTapd = () => prompted('导入 TAPD 需求 / 缺陷 / 任务', [{ name: 'url', label: '粘贴详情链接（可带标题）', type: 'textarea', rows: 3 }],
+    (v) => api(`/projects/${projectId}/tracker/import-tapd`, { method: 'POST', body: v }).then(refresh));
+  const pushRequirement = (r) => prompted(`推送需求 #${r.number}`, [{ name: 'target', label: '目标', type: 'select', options: [...issueRepos, 'tapd'] }],
+    (v) => api(`/projects/${projectId}/requirements/${r.number}/external`, { method: 'POST', body: v }).then(refresh));
   const addMember = () => prompted('添加成员', [{ name: 'user', label: '用户名' },
     { name: 'role', label: '角色', type: 'select', options: ['viewer', 'developer', 'maintainer', 'owner'], value: 'developer' }],
   (v) => api(`/projects/${projectId}/members/${encodeURIComponent(v.user)}`, { method: 'PUT', body: { role: v.role } }).then(refresh));
@@ -575,9 +592,22 @@ async function projectPage(projectId) {
     h('h1', {}, project.name), h('p', { class: 'muted' }, project.description || ''),
     h('div', { class: 'row' }, h('h2', {}, '需求'), h('span', { class: 'spacer' }), h('button', { class: 'primary', onclick: newRequirement }, '新需求')),
     h('table', {}, h('tr', {}, ['#', '标题', '状态', '优先级', 'SOP', '最近运行', '操作'].map((t) => h('th', {}, t))),
-      requirements.map((r) => h('tr', {}, h('td', {}, r.number), h('td', {}, r.title), h('td', {}, badge(r.status)), h('td', {}, r.priority),
+      requirements.map((r) => h('tr', {}, h('td', {}, r.number), h('td', {}, r.title,
+        r.external ? h('div', { class: 'muted' }, h('a', { href: safeHref(r.external.url), target: '_blank', rel: 'noopener noreferrer' },
+          `${r.external.source} ${r.external.kind}${r.external.number ? ' #' + r.external.number : ' ' + r.external.externalId}`), ` · ${r.external.state || ''}`) : null),
+        h('td', {}, badge(r.status)), h('td', {}, r.priority),
         h('td', { class: 'mono' }, r.workflowId || '—'), h('td', {}, r.latestRunId ? h('a', { href: `#/runs/${r.latestRunId}`, class: 'mono' }, r.latestRunId.slice(0, 14)) : '—'),
-        h('td', {}, h('button', { onclick: () => startRequirement(r), disabled: ['closed', 'cancelled', 'done'].includes(r.status) }, '启动'))))),
+        h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => startRequirement(r), disabled: ['closed', 'cancelled', 'done'].includes(r.status) }, '启动'),
+          r.external ? null : h('button', { onclick: () => pushRequirement(r) }, '推送')))))),
+    h('div', { class: 'row' }, h('h2', {}, '外部需求同步'), h('span', { class: 'spacer' }),
+      h('button', { onclick: importTapd }, '导入 TAPD 链接'), h('button', { onclick: syncNow }, '立即同步'), h('button', { onclick: editTracker }, '设置')),
+    h('p', { class: 'muted' }, tracker && (tracker.issueRepositoryIds.length || tracker.tapdWorkspaceId)
+      ? `Issue 仓库：${tracker.issueRepositoryIds.join(', ') || '无'} · TAPD：${tracker.tapdWorkspaceId ? `${tracker.tapdWorkspaceId} / 迭代 ${tracker.tapdIterationId}` : '未配置'} · ${tracker.autoSync ? '定时同步' : '手动同步'}`
+      : '未配置：可从 GitHub / GitLab（工蜂）Issue 与 TAPD 迭代拉取需求。'),
+    syncLogs.length === 0 ? null : h('table', {}, h('tr', {}, ['时间', '来源', '结果', '新增', '更新', '移除', '说明'].map((t) => h('th', {}, t))),
+      syncLogs.slice(0, 8).map((l) => h('tr', {}, h('td', {}, time(l.at)), h('td', { class: 'mono' }, l.source),
+        h('td', {}, badge(l.status === 'ok' ? 'succeeded' : 'failed')), h('td', {}, l.created), h('td', {}, l.updated), h('td', {}, l.removed),
+        h('td', { class: 'muted' }, l.message)))),
     h('div', { class: 'row' }, h('h2', {}, '定时任务'), h('span', { class: 'spacer' }), h('button', { onclick: newSchedule }, '新建')),
     h('table', {}, h('tr', {}, ['名称', 'Cron', 'SOP', '下次', '上次', '操作'].map((t) => h('th', {}, t))),
       schedules.map((s) => h('tr', {}, h('td', {}, s.name, s.enabled ? null : h('span', { class: 'muted' }, '（停用）')), h('td', { class: 'mono' }, `${s.cron} ${s.zone}`), h('td', { class: 'mono' }, s.workflowId),

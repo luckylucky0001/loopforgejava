@@ -38,7 +38,33 @@ public record LoopForgeProperties(
         @DefaultValue List<ModelPrice> pricing,
         @Valid @DefaultValue Notifications notifications,
         @Valid @DefaultValue Knowledge knowledge,
-        String publicUrl) {
+        String publicUrl,
+        @Valid @DefaultValue Tapd tapd,
+        @Valid @DefaultValue Trackers trackers) {
+
+    /**
+     * TAPD open API account (https://open.tapd.cn): Basic authentication with the API user.
+     *
+     * @param webUrl where people open stories; links in requirements point there
+     */
+    public record Tapd(
+            @NotNull @DefaultValue("https://api.tapd.cn") java.net.URI apiUrl,
+            @DefaultValue("https://www.tapd.cn") String webUrl,
+            String apiUser,
+            String apiPassword) {
+        @Override
+        public String toString() {
+            return "Tapd[apiUrl=" + apiUrl + ", apiUser=" + apiUser + "]";
+        }
+    }
+
+    /**
+     * @param autoSync pull configured trackers periodically (one instance at a time)
+     * @param syncInterval how often
+     */
+    public record Trackers(
+            @DefaultValue("true") boolean autoSync,
+            @NotNull @DefaultValue("10m") Duration syncInterval) {}
 
     /**
      * @param defaultExecutor executor id used when neither role nor node chooses one

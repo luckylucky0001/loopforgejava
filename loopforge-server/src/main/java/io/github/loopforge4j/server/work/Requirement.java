@@ -29,6 +29,8 @@ public record Requirement(
         List<String> runIds,
         String latestRunId,
         List<PullRequest> deliveries,
+        String source,
+        ExternalRef external,
         String createdBy,
         Instant createdAt,
         Instant updatedAt) {
@@ -43,6 +45,7 @@ public record Requirement(
         repositoryIds = repositoryIds == null ? List.of() : List.copyOf(repositoryIds);
         runIds = runIds == null ? List.of() : List.copyOf(runIds);
         deliveries = deliveries == null ? List.of() : List.copyOf(deliveries);
+        source = source == null || source.isBlank() ? (external == null ? "local" : external.source()) : source;
     }
 
     Requirement with(String newStatus, List<String> newRunIds, String latest, List<PullRequest> newDeliveries) {
@@ -61,6 +64,55 @@ public record Requirement(
                 newRunIds,
                 latest,
                 newDeliveries,
+                source,
+                external,
+                createdBy,
+                createdAt,
+                updatedAt);
+    }
+
+    public Requirement withExternal(ExternalRef ref) {
+        return new Requirement(
+                id,
+                projectId,
+                number,
+                title,
+                description,
+                status,
+                priority,
+                assignee,
+                workflowId,
+                repositoryIds,
+                baseBranch,
+                runIds,
+                latestRunId,
+                deliveries,
+                ref == null ? source : ref.source(),
+                ref,
+                createdBy,
+                createdAt,
+                updatedAt);
+    }
+
+    /** Tracker content refreshed; local lifecycle, assignment and SOP stay as they are (upstream). */
+    public Requirement synced(String newTitle, String newDescription, ExternalRef ref) {
+        return new Requirement(
+                id,
+                projectId,
+                number,
+                newTitle,
+                newDescription,
+                status,
+                priority,
+                assignee,
+                workflowId,
+                repositoryIds,
+                baseBranch,
+                runIds,
+                latestRunId,
+                deliveries,
+                source,
+                ref,
                 createdBy,
                 createdAt,
                 updatedAt);

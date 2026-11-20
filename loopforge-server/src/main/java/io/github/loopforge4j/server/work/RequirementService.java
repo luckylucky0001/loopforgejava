@@ -35,12 +35,20 @@ public class RequirementService implements RunListener {
     private final org.springframework.beans.factory.ObjectProvider<RunEngine> engines;
 
     private final Clock clock;
+    /** Writes deliveries back to synced trackers; looked up lazily (it depends on this package). */
+    private final org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.server.tracker.TrackerService>
+            trackers;
 
     public RequirementService(
-            RequirementStore store, org.springframework.beans.factory.ObjectProvider<RunEngine> engines, Clock clock) {
+            RequirementStore store,
+            org.springframework.beans.factory.ObjectProvider<RunEngine> engines,
+            Clock clock,
+            org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.server.tracker.TrackerService>
+                    trackers) {
         this.store = store;
         this.engines = engines;
         this.clock = clock;
+        this.trackers = trackers;
     }
 
     public Requirement create(String projectId, Requirement body, String actor) {
@@ -59,6 +67,8 @@ public class RequirementService implements RunListener {
                 body.baseBranch(),
                 null,
                 null,
+                null,
+                "local",
                 null,
                 actor,
                 null,
@@ -85,6 +95,8 @@ public class RequirementService implements RunListener {
                                 current.runIds(),
                                 current.latestRunId(),
                                 current.deliveries(),
+                                current.source(),
+                                current.external(),
                                 current.createdBy(),
                                 current.createdAt(),
                                 null))
@@ -171,8 +183,15 @@ public class RequirementService implements RunListener {
                 List<PullRequest> deliveries = run.deliveries().isEmpty() ? requirement.deliveries() : run.deliveries();
                 if (!status.equals(requirement.status()) || !deliveries.equals(requirement.deliveries())) {
                     store.update(
-                            requirement.id(),
-                            current -> current.with(status, current.runIds(), current.latestRunId(), deliveries));
+                                    requirement.id(),
+                                    current ->
+                                            current.with(status, current.runIds(), current.latestRunId(), deliveries))
+                            .ifPresent(updated -> {
+                                var tracker = trackers.getIfAvailable();
+                                if (tracker != null) {
+                                    tracker.deliveriesChanged(updated);
+                                }
+                            });
                 }
             });
         } catch (RuntimeException e) {

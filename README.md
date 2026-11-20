@@ -20,7 +20,7 @@
 | 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止；bubblewrap 轻量沙箱（Linux）：主机只读、只能写本运行工作区、私有 /tmp、独立用户/PID 命名空间、看不到其他运行与服务端 HOME；Docker 沙箱：每个运行一个容器、资源限制、只读根文件系统、变量不上命令行 |
 | 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话；多实例部署：运行租约、心跳与过期接管、工作区主机绑定 |
 | 运维 | 遥测批量写入；保留策略（执行器遥测、终态运行）；Prometheus 指标：运行与节点结果、节点耗时、返工、门禁决策、token 与成本 |
-| 协作 | 账户与 Token、OIDC 单点登录、项目与成员角色、需求（自动工作分支与状态推进）、定时任务、Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理、分析、知识库） |
+| 协作 | 账户与 Token、OIDC 单点登录、项目与成员角色、需求（自动工作分支与状态推进；从 GitHub / GitLab（工蜂）Issue 与 TAPD 迭代同步、按链接导入 TAPD、推送到外部、交付后回写 PR 链接）、定时任务、Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理、分析、知识库） |
 | 平台 MCP | `/mcp` 把公开 API 作为 MCP 工具（按调用者本人的权限执行）；角色开启 `platformMcp` 后，Agent 拿到只读、限本项目、随运行结束失效的运行令牌；JDK-only stdio 桥 |
 | 团队知识库 | 接入上游知识库 MCP，按项目授权来源检索与阅读；角色开启 `knowledgeBase` 后获得只读检索工具与使用规范；Agent 写下的 `knowledge.md` 经人工审核后写回 |
 | 分析 | 运行概览（成功率、一次通过率、耗时分位、Token 与费用、PR）、趋势、按 SOP / 项目 / 执行器 / 模型拆分、失败聚类、运行时段热力；SOP 运营指标（节点级） |
@@ -171,6 +171,21 @@ loopforge:
 
 通知渠道的 `kind` 可选 `webhook`（通用 JSON + HMAC 签名）、`wecom`（企业微信群机器人 Markdown）、`feishu`（飞书 / Lark 自定义机器人，可加签）、`dingtalk`（钉钉自定义机器人 Markdown，可加签）、`slack`（Incoming Webhook）；平台返回的错误码（如 `errcode`）计为投递失败。
 
+### 外部需求同步（GitHub / GitLab（工蜂）/ TAPD）
+
+项目的「外部需求同步」设置（`PUT /api/v1/projects/{id}/tracker`）里选择要拉取 Issue 的代码仓库（GitHub，或 `loopforge.gitlab` 中配置的 GitLab / 工蜂主机，凭据同 `loopforge.git.https`），以及 TAPD 的项目与迭代：
+
+```yaml
+loopforge:
+  tapd:
+    api-user: ${TAPD_API_USER}          # TAPD 开放平台 API 账号
+    api-password: ${TAPD_API_PASSWORD}
+  trackers:
+    sync-interval: 10m                  # 定时同步（多实例时同一时间只有一个实例在拉取）
+```
+
+拉取时新的打开项成为需求（已关闭的旧项不导入），已同步的需求只刷新标题、描述与外部状态，状态、负责人、SOP 和运行记录归平台所有；TAPD 迭代里移除且还没开始的需求会被清理，按链接导入的需求保留。运行交付 PR 后，平台把 PR 链接作为评论回写到对应的 Issue / TAPD 条目（每个 PR 一次）。
+
 ### 多实例部署
 
 多个服务实例连接同一个 PostgreSQL 即可：每个运行由持有租约的实例执行，实例每 `lease-ttl/3` 续约并在 `engine_instances` 心跳；实例宕机后其他实例在 `lease-ttl`（默认 60 秒）内接管。工作区默认在本机磁盘：工作区主机在线时运行不会迁移；主机下线时，含仓库检出的运行会失败并提示重跑，其余运行在新主机上重建。若所有实例以相同路径挂载共享存储，设置 `loopforge.engine.shared-workspaces=true` 即可跨主机接管。
@@ -218,6 +233,8 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` | `/api/v1/runs/{id}/stream` | SSE 实时流（浏览器可用 `?access_token=`） |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
+| `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |
+| `POST` | `/api/v1/projects/{id}/requirements/{n}/external` | 把本地需求推送为 GitHub / GitLab Issue 或 TAPD 需求 |
 | `POST` | `/mcp` | 平台 MCP（无状态 Streamable HTTP）；`GET /api/v1/capabilities` 列出全部操作 |
 | `GET` | `/api/v1/analytics`、`/api/v1/workflow-metrics` | 分析报表与 SOP 运营指标（`projectId`、`workflowId`、`from`、`to`、`grain`、`zone`） |
 | `GET/PUT/POST` | `/api/v1/knowledge/settings`、`/check`、`/sources`、`/search`、`/document`、`/activity`、`/usage` | 知识库接入与检索 |

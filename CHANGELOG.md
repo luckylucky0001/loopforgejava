@@ -22,6 +22,13 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 9)
+- 外部需求同步：项目可从 GitHub / GitLab（工蜂）Issue 与 TAPD 迭代（需求、缺陷）拉取需求，按链接导入 TAPD 需求 / 缺陷 / 任务，把本地需求推送到外部，运行交付后把 PR 链接回写为评论；定时同步用数据库租约保证同一时间只有一个实例拉取。
+- 需求带 `source` 与 `external`（外部条目、链接、状态）；`(项目, 外部条目)` 唯一。
+
+### Fixed (迭代 9)
+- 控制台只把 http(s) 地址渲染为外部链接（外部系统返回的 PR / Issue 地址不能是 `javascript:`）。
+
 ### Added (迭代 8)
 - 群机器人通知：通知渠道 `kind` 支持 `wecom`、`feishu`、`dingtalk`、`slack`（原生消息格式、飞书/钉钉加签、平台错误码计为失败、`loopforge.public-url` 运行链接）。
 - bubblewrap 轻量沙箱（`loopforge.sandbox.bwrap`）：主机只读、只写本运行工作区、私有 /tmp、独立命名空间，隐藏其他运行与服务端 HOME；启动时检查可用性。
