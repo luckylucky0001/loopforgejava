@@ -133,6 +133,50 @@ class LocalSandboxTest {
     }
 
     @Test
+    void processRecordsAreRemovedAfterNormalExit() throws Exception {
+        sandbox.exec(CommandSpec.shell("echo hi", "rec", null), LineListener.NONE, Cancellation.create());
+        Path records = sandbox.workspace().resolve(".loopforge/procs");
+        assertThat(records).isEmptyDirectory();
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.LINUX)
+    void reclaimKillsGroupsLeftByACrashedEngine() throws Exception {
+        Process orphan = new ProcessBuilder("setsid", "sh", "-c", "sleep 60 & wait").start();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (orphan.descendants().findAny().isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        List<ProcessHandle> children = orphan.descendants().toList();
+        long start = orphan.info().startInstant().orElseThrow().toEpochMilli();
+        Path records = sandbox.workspace().resolve(".loopforge/procs");
+        Files.createDirectories(records);
+        // recorded by another engine (pid 1 is never this JVM)
+        Files.writeString(records.resolve(Long.toString(orphan.pid())), start + " 1 1");
+        // a recycled pid: alive, but with a different start time; must not be killed
+        Process unrelated = new ProcessBuilder("sleep", "60").start();
+        Files.writeString(records.resolve(Long.toString(unrelated.pid())), "1 1 1");
+        // a process that no longer exists
+        Files.writeString(records.resolve("999999"), "1 1 1");
+        try {
+            assertThat(provider.reclaim("run-1")).isEqualTo(1);
+            assertThat(orphan.waitFor(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(children).isNotEmpty().allSatisfy(child -> {
+                long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (child.isAlive() && System.nanoTime() < until) {
+                    Thread.onSpinWait();
+                }
+                assertThat(child.isAlive()).isFalse();
+            });
+            assertThat(unrelated.isAlive()).isTrue();
+            assertThat(records).isEmptyDirectory();
+        } finally {
+            unrelated.destroyForcibly();
+            orphan.destroyForcibly();
+        }
+    }
+
+    @Test
     void alreadyCancelledTokenDoesNotStartProcesses() {
         Cancellation cancellation = Cancellation.create();
         cancellation.cancel();

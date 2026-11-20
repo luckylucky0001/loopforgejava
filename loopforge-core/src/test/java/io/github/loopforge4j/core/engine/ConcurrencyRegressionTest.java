@@ -56,6 +56,7 @@ class ConcurrencyRegressionTest {
                         && f.engine.require(child).requireNode("work").status() == NodeStatus.RUNNING;
             });
             String childId = f.engine.require(parent.id()).requireNode("sub").childRunId();
+            f.awaitWorkspaceFile(childId, ".child-resumed");
 
             f.engine.pause(parent.id());
             f.awaitStatus(parent.id(), RunStatus.WAITING);
@@ -186,6 +187,8 @@ class ConcurrencyRegressionTest {
             Run run = f.start("fan");
             f.awaitNode(run.id(), "left", NodeStatus.RUNNING);
             f.awaitNode(run.id(), "right", NodeStatus.RUNNING);
+            f.awaitWorkspaceFile(run.id(), ".left");
+            f.awaitWorkspaceFile(run.id(), ".right");
             f.engine.pause(run.id());
             Run paused = f.awaitStatus(run.id(), RunStatus.WAITING);
             assertThat(paused.requireNode("left").paused()).isTrue();

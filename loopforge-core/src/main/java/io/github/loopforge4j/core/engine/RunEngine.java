@@ -507,6 +507,7 @@ public final class RunEngine implements AutoCloseable {
             if (scheduling(run.id())) {
                 continue;
             }
+            reclaimOrphanedProcesses(run);
             mutate(run.id(), c -> {
                 Run r = c.run();
                 if (r.status() == RunStatus.QUEUED) {
@@ -520,6 +521,25 @@ public final class RunEngine implements AutoCloseable {
             recovered.add(run.id());
         }
         return recovered;
+    }
+
+    /** Kills process groups a crashed predecessor engine left running for this run's workspace. */
+    private void reclaimOrphanedProcesses(Run run) {
+        sandboxProvider(run.workflow().sandboxProfileId()).ifPresent(provider -> {
+            try {
+                int killed = provider.reclaim(run.workspaceOwnerId());
+                if (killed > 0) {
+                    log.warn("run {}: terminated {} process group(s) left by a crashed engine", run.id(), killed);
+                    emit(
+                            run.id(),
+                            null,
+                            Telemetry.of("sandbox", "sandbox.reclaimed", "finish", "终止了上一个执行实例遗留的 " + killed + " 个进程组")
+                                    .withLevel("warn"));
+                }
+            } catch (IOException e) {
+                log.warn("run {}: cannot reclaim orphaned processes: {}", run.id(), e.toString());
+            }
+        });
     }
 
     /** Parks every active run so the next process can resume it, then stops all threads. */

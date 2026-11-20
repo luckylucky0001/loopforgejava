@@ -16,4 +16,14 @@ public interface SandboxProvider {
 
     /** Deletes the workspace; no-op when it does not exist. */
     void release(String workspaceId) throws IOException;
+
+    /**
+     * Terminates processes that a previous, crashed engine left running in the workspace. Called
+     * before interrupted runs are re-executed.
+     *
+     * @return number of process groups that were killed
+     */
+    default int reclaim(String workspaceId) throws IOException {
+        return 0;
+    }
 }

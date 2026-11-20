@@ -77,6 +77,20 @@ final class EngineFixture implements AutoCloseable {
         return engine.require(runId);
     }
 
+    /**
+     * Waits until a script of the run created {@code name} in its workspace. Waiting for the node to be
+     * marked running is not enough: the process may not have started yet when a test interrupts it.
+     */
+    void awaitWorkspaceFile(String runId, String name) {
+        await().atMost(Duration.ofSeconds(20))
+                .pollInterval(Duration.ofMillis(20))
+                .until(() -> {
+                    String root = engine.require(runId).workspaceRoot();
+                    return root != null
+                            && java.nio.file.Files.exists(Path.of(root).resolve(name));
+                });
+    }
+
     List<String> eventTypes(String runId) {
         return engine.events(runId, 0, 0).stream().map(e -> e.type()).toList();
     }

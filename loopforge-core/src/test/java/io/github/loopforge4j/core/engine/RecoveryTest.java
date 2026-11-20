@@ -37,6 +37,7 @@ class RecoveryTest {
             first.workflow(wf);
             runId = first.start("slow").id();
             first.awaitNode(runId, "work", NodeStatus.RUNNING);
+            first.awaitWorkspaceFile(runId, ".second");
         }
         Run parked = runs.find(runId).orElseThrow();
         assertThat(parked.status()).isEqualTo(RunStatus.RUNNING);

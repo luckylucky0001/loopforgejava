@@ -476,6 +476,7 @@ class RunEngineTest {
                 .build());
         Run run = f.start("slow");
         f.awaitNode(run.id(), "work", NodeStatus.RUNNING);
+        f.awaitWorkspaceFile(run.id(), ".resumed");
         f.engine.pause(run.id());
         Run paused = f.awaitStatus(run.id(), RunStatus.WAITING);
         assertThat(paused.pauseRequested()).isTrue();

@@ -55,7 +55,13 @@ public final class LocalSandbox implements Sandbox {
                 command.stdin(),
                 command.timeout() == null ? options.defaultTimeout() : command.timeout(),
                 stdout,
-                cancellation);
+                cancellation,
+                process -> ProcessRecords.record(processRecords(workspace), process));
+    }
+
+    /** Directory with one record per running process group (see {@link ProcessRecords}). */
+    static Path processRecords(Path workspace) {
+        return workspace.resolve(CONTROL_DIR).resolve("procs");
     }
 
     private Map<String, String> baseEnvironment(String label) throws IOException {

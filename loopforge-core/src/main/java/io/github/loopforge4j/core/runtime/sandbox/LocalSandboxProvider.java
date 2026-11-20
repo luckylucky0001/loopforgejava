@@ -33,6 +33,11 @@ public final class LocalSandboxProvider implements SandboxProvider {
     }
 
     @Override
+    public int reclaim(String workspaceId) throws IOException {
+        return ProcessRecords.reclaim(LocalSandbox.processRecords(workspaceOf(workspaceId)));
+    }
+
+    @Override
     public void release(String runId) throws IOException {
         Path workspace = workspaceOf(runId);
         if (!Files.exists(workspace)) {

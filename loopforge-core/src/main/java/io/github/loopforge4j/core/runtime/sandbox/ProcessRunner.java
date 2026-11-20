@@ -42,6 +42,19 @@ public final class ProcessRunner {
             LineListener stdout,
             Cancellation cancellation)
             throws IOException, CancelledException {
+        return run(argv, directory, environment, stdin, timeout, stdout, cancellation, ProcessTracker.NONE);
+    }
+
+    public static ExecResult run(
+            List<String> argv,
+            Path directory,
+            Map<String, String> environment,
+            String stdin,
+            Duration timeout,
+            LineListener stdout,
+            Cancellation cancellation,
+            ProcessTracker tracker)
+            throws IOException, CancelledException {
         cancellation.check();
         long started = System.nanoTime();
         List<String> command = argv;
@@ -59,6 +72,7 @@ public final class ProcessRunner {
             builder.redirectInput(ProcessBuilder.Redirect.from(nullDevice()));
         }
         Process process = builder.start();
+        Runnable untrack = tracker.started(process);
         Cancellation.Registration kill = cancellation.onCancel(() -> killTree(process));
         OutputBuffer tail = new OutputBuffer();
         Thread stdoutReader = Thread.ofVirtual()
@@ -80,10 +94,13 @@ public final class ProcessRunner {
             }
             if (!finished) {
                 log.warn("process {} exceeded timeout {}, killing", argv.getFirst(), timeout);
+                killTree(process);
+            } else {
+                // Background children must not outlive the command (they would also keep the pipes
+                // open). Signal only the group: Process.destroy* closes our stdout/stderr streams
+                // even after exit, which would drop output the readers have not drained yet.
+                reapBackground(process);
             }
-            // Also after a normal exit: background children of the command must not outlive it, and
-            // they would otherwise keep the output pipes open.
-            killTree(process);
             stdoutReader.join(DRAIN_GRACE);
             stderrReader.join(DRAIN_GRACE);
         } catch (InterruptedException e) {
@@ -92,12 +109,22 @@ public final class ProcessRunner {
             throw new CancelledException();
         } finally {
             kill.close();
+            untrack.run();
         }
         if (cancellation.cancelled()) {
             throw new CancelledException();
         }
         int exit = finished ? process.exitValue() : -1;
         return new ExecResult(exit, tail.toString(), !finished, Duration.ofNanos(System.nanoTime() - started));
+    }
+
+    /** Kills what is left of an exited command's group without touching its output streams. */
+    private static void reapBackground(Process process) {
+        if (SETSID != null) {
+            killGroup(process.pid());
+        } else {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+        }
     }
 
     /** Kills the command's process group (or, without setsid, its visible descendants). */
@@ -116,7 +143,7 @@ public final class ProcessRunner {
      * {@code kill -KILL -pgid}; the group id is the pid because setsid made the command its leader. No
      * {@code --}: dash's builtin kill rejects it.
      */
-    private static void killGroup(long pgid) {
+    static void killGroup(long pgid) {
         try {
             Process killer = new ProcessBuilder("/bin/sh", "-c", "kill -KILL -" + pgid + " 2>/dev/null")
                     .redirectOutput(ProcessBuilder.Redirect.DISCARD)
