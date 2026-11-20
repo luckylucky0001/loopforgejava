@@ -14,7 +14,7 @@ import java.time.Duration;
  * @param indexFile the entry page inside it (default {@code index.html})
  * @param spaFallback client-side routes fall back to the entry page
  * @param required recorded for parity; the build step's artifact contract already requires the entry
- * @param captureScreenshot recorded for parity; screenshots are not taken by this port
+ * @param captureScreenshot capture the entry page once the site is ready (needs a headless browser)
  * @param retentionSec how long the archived site is kept (at most 30 days)
  */
 public record PreviewContract(
@@ -63,7 +63,7 @@ public record PreviewContract(
 
     /** The archive settings this contract implies. */
     public PreviewSettings settings() {
-        return new PreviewSettings(sourcePath, indexFile, spaFallback);
+        return new PreviewSettings(sourcePath, indexFile, spaFallback, captureScreenshot);
     }
 
     private static boolean blank(String value) {

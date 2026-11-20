@@ -37,7 +37,9 @@ public class JdbcPreviewStore implements PreviewStore {
             Instant expiresAt,
             Instant lastAccessedAt,
             Instant createdAt,
-            Instant updatedAt) {
+            Instant updatedAt,
+            String screenshot,
+            String screenshotError) {
 
         public boolean serveable() {
             return READY.equals(status);
@@ -70,11 +72,21 @@ public class JdbcPreviewStore implements PreviewStore {
     private final TransactionTemplate tx;
     private final Clock clock;
 
-    public JdbcPreviewStore(JdbcClient jdbc, TransactionTemplate tx, Clock clock) {
+    private final org.springframework.context.ApplicationEventPublisher events;
+
+    public JdbcPreviewStore(
+            JdbcClient jdbc,
+            TransactionTemplate tx,
+            Clock clock,
+            org.springframework.context.ApplicationEventPublisher events) {
         this.jdbc = jdbc;
         this.tx = tx;
         this.clock = clock;
+        this.events = events;
     }
+
+    /** A site whose settings ask for a screenshot is ready. */
+    public record ScreenshotWanted(String runId) {}
 
     // ------------------------------------------------------------------ engine port
 
@@ -120,6 +132,9 @@ public class JdbcPreviewStore implements PreviewStore {
                         .update();
             }
         });
+        if (settings.screenshot() && screenshotPending(runId)) {
+            events.publishEvent(new ScreenshotWanted(runId));
+        }
         return true;
     }
 
@@ -202,7 +217,10 @@ public class JdbcPreviewStore implements PreviewStore {
     // ------------------------------------------------------------------ previews
 
     public Optional<Preview> find(String runId) {
-        return jdbc.sql("SELECT * FROM run_previews WHERE run_id = :run")
+        // the screenshot itself is read only when it is asked for
+        return jdbc.sql("SELECT run_id, node_id, status, site_path, index_file, spa, file_count, total_bytes,"
+                        + " error_text, backend_url, expires_at, last_accessed_at, created_at, updated_at,"
+                        + " screenshot_state, screenshot_error FROM run_previews WHERE run_id = :run")
                 .param("run", runId)
                 .query((rs, n) -> new Preview(
                         rs.getString("run_id"),
@@ -218,7 +236,43 @@ public class JdbcPreviewStore implements PreviewStore {
                         SqlTime.read(rs, "expires_at"),
                         SqlTime.read(rs, "last_accessed_at"),
                         SqlTime.read(rs, "created_at"),
-                        SqlTime.read(rs, "updated_at")))
+                        SqlTime.read(rs, "updated_at"),
+                        rs.getString("screenshot_state"),
+                        rs.getString("screenshot_error")))
+                .optional();
+    }
+
+    // ------------------------------------------------------------------ screenshots
+
+    /** Marks a screenshot as wanted; whoever gets {@code true} takes it. */
+    boolean screenshotPending(String runId) {
+        return jdbc.sql("UPDATE run_previews SET screenshot_state = 'pending', screenshot_error = NULL"
+                                + " WHERE run_id = :run AND status = :ready")
+                        .param("run", runId)
+                        .param("ready", READY)
+                        .update()
+                == 1;
+    }
+
+    void saveScreenshot(String runId, byte[] png) {
+        jdbc.sql("UPDATE run_previews SET screenshot = :png, screenshot_state = 'ready', screenshot_error = NULL"
+                        + " WHERE run_id = :run")
+                .param("png", png)
+                .param("run", runId)
+                .update();
+    }
+
+    void screenshotFailed(String runId, String reason) {
+        jdbc.sql("UPDATE run_previews SET screenshot_state = 'failed', screenshot_error = :reason WHERE run_id = :run")
+                .param("reason", clip(reason))
+                .param("run", runId)
+                .update();
+    }
+
+    public Optional<byte[]> screenshot(String runId) {
+        return jdbc.sql("SELECT screenshot FROM run_previews WHERE run_id = :run AND screenshot_state = 'ready'")
+                .param("run", runId)
+                .query((rs, n) -> rs.getBytes("screenshot"))
                 .optional();
     }
 

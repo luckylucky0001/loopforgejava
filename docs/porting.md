@@ -43,7 +43,7 @@
 | `internal/httpapi/assistant_schedule.go`、`assistant_tasks.go`、调度触发配置 | `server.work.ScheduleService`（`kind` = `assistant` / `dispatch`）、`AssistantService.runScheduled` | AI 定时任务（以最后保存人的身份与凭据、完全权限运行一轮助手对话）与按状态自动派发需求的 SOP |
 | `internal/domain` Dockerfile / Environment / SandboxProfile 与 `/api/dockerfiles`、`/api/environments`、`/api/sandboxes` | `core.domain.*Definition`、`core.runtime.sandbox.ProfileSandboxProvider`、`EnvironmentSandbox`、`server.sandbox.*` | 目录中的沙箱配置（local / native / docker）、环境（变量、PATH、每工作区一次的安装脚本）、按内容哈希构建并复用的 Dockerfile 镜像 |
 | `internal/httpapi/skillhub_client.go`、`skillhub_market.go` | `server.skillhub.*` | SkillHub 市场：浏览、安装与更新为目录技能（来源记录、匿名用户标识、跨主机跳转不带 API Key） |
-| `internal/domain/preview*.go`、`internal/preview/*`（归档、网关、会话、下载）、`internal/httpapi/run_preview.go`、runner 预览上传 | `core.domain.PreviewContract`、`core.preview.*`（`PreviewBuild`、`PreviewArchive`、`FrontendDetector`）、`core.engine.PreviewSteps`、`server.preview.*`、`runner.RemotePreviewStore` | 前端预览约定与自动追加的构建步骤、非前端跳过、构建后立即归档、会话链接（哈希令牌、滑动续期、撤销）、后端地址拦截、HTML / CSS / JS 路径改写与 History 适配、保留期过期、执行机器上传；另有可写构建命令的 `preview` 节点。站点存数据库（未移植 tar.zst 内容寻址存储与截图） |
+| `internal/domain/preview*.go`、`internal/preview/*`（归档、网关、会话、下载）、`internal/httpapi/run_preview.go`、runner 预览上传 | `core.domain.PreviewContract`、`core.preview.*`（`PreviewBuild`、`PreviewArchive`、`FrontendDetector`）、`core.engine.PreviewSteps`、`server.preview.*`、`runner.RemotePreviewStore` | 前端预览约定与自动追加的构建步骤、非前端跳过、构建后立即归档、会话链接（哈希令牌、滑动续期、撤销）、后端地址拦截、HTML / CSS / JS 路径改写与 History 适配、保留期过期、执行机器上传；另有可写构建命令的 `preview` 节点。站点与截图存数据库（未移植 tar.zst 内容寻址存储）；上游只声明了 `captureScreenshot`，这里由服务器上的无头浏览器实际截图 |
 | `internal/runeval/*`、`internal/domain/run_eval.go` | `core.eval.*`、`server.eval.*` | 运行评测：事实、加权维度、评测提示与结果约定、建议应用到当前 SOP / 角色 |
 | `internal/httpapi/clarify_jobs.go`、`clarify_session.go`、`issue_routes.go`（澄清） | `server.work.Clarification*`、`core.engine.Conversations.checkout` | AI 澄清：后台轮次、只读检出、续接会话、范围规则与轮数收敛、结论写入描述与回写原单 |
 | `internal/tracker/service.go`、`tapd_url.go` | `server.tracker`（`TrackerService`、`GitHubIssues`、`GitLabIssues`、`TapdClient`、`TapdLinks`） | 拉取、TAPD 链接导入、推送、交付回写、定时同步；直接调用 GitHub / GitLab / TAPD 开放 API |
@@ -116,4 +116,4 @@
 
 ## 尚未移植
 
-对话的浏览器工具、云端执行池的自动扩缩容、浏览器 MCP、macOS seatbelt 沙箱、企业微信智能机器人长连接、预览截图、工作区终端。排期见 [roadmap.md](roadmap.md)。
+对话的浏览器工具、云端执行池的自动扩缩容、浏览器 MCP、macOS seatbelt 沙箱、企业微信智能机器人长连接、工作区终端。排期见 [roadmap.md](roadmap.md)。

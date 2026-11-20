@@ -843,6 +843,11 @@ function designer(wf, catalog, onChange) {
             box.addEventListener('change', () => { n.preview = { ...(n.preview || {}), spa: box.checked }; changed(); });
             return h('label', { class: 'row' }, box, '单页应用（找不到的路由回退到入口文件）');
           })(),
+          (() => {
+            const shot = h('input', { type: 'checkbox', checked: !!n.preview?.screenshot });
+            shot.addEventListener('change', () => { n.preview = { ...(n.preview || {}), screenshot: shot.checked }; changed(); });
+            return h('label', { class: 'row' }, shot, '归档后截图（服务器用无头浏览器打开入口页，结果显示在运行页）');
+          })(),
           h('p', { class: 'muted' }, '站点用相对路径引用资源（例如 Vite 的 --base=./）；归档上限 2000 个文件、单文件 10 MB、合计 50 MB。')],
         sop: [field('子 SOP', select(n.sopWorkflowId, [['', '—'], ...catalog.workflows.filter((w) => w.id !== wf.id).map((w) => [w.id, `${w.name}（${w.id}）`])], (v) => { n.sopWorkflowId = v || undefined; }))],
       };
@@ -902,6 +907,8 @@ function designer(wf, catalog, onChange) {
     if (!c.enabled) return h('div', { class: 'panel' }, head, h('p', { class: 'muted' }, '勾选后，保存时在流程末尾追加「构建静态站点」步骤：用 AI 产出静态站点并归档，运行页即可打开预览；工作区没有前端工程时自动跳过。'));
     const spa = h('input', { type: 'checkbox', checked: !!c.spaFallback });
     spa.addEventListener('change', () => set({ spaFallback: spa.checked }));
+    const shot = h('input', { type: 'checkbox', checked: !!c.captureScreenshot });
+    shot.addEventListener('change', () => set({ captureScreenshot: shot.checked || undefined }));
     const days = Math.round((c.retentionSec || 30 * 86400) / 86400);
     return h('div', { class: 'panel' }, head,
       field('构建执行器', select(c.executorId || 'codebuddy', [...new Set(['codebuddy', ...catalog.executors.map((x) => x.id)])].map((id) => [id, (catalog.executors.find((x) => x.id === id)?.name) || id]), (v) => set({ executorId: v }))),
@@ -910,6 +917,7 @@ function designer(wf, catalog, onChange) {
         field('站点目录', bind(h('input', { value: c.sourcePath || 'dist' }), (v) => set({ sourcePath: v.trim() || 'dist' }))),
         field('入口文件', bind(h('input', { value: c.indexFile || 'index.html' }), (v) => set({ indexFile: v.trim() || 'index.html' })))),
       h('label', { class: 'row' }, spa, '单页应用（前端路由回退到入口文件）'),
+      h('label', { class: 'row' }, shot, '完成后截图（服务器上的无头浏览器打开入口页）'),
       field('保留天数（最多 30）', bind(h('input', { type: 'number', min: 1, max: 30, value: days }), (v) => set({ retentionSec: Math.min(30, Math.max(1, Number(v) || 30)) * 86400 }))));
   }
 
@@ -1836,10 +1844,29 @@ function previewPanel(run) {
       p.status === 'ready' ? h('div', { class: 'row' }, backend,
         h('button', { onclick: () => attempt(() => api(`${base}/preview/backend`, { method: 'PUT', body: { backendUrl: backend.value.trim() } }), (r) => { if (r.session) openLink(r.session); }) }, '保存为默认后端')) : null,
       p.status === 'ready' ? h('p', { class: 'muted' }, '页面里的接口请求会转到后端地址（路径与参数不变）；预览在隔离的源中运行，读不到控制台的登录信息。') : null,
+      p.status === 'ready' && p.screenshot ? previewShot(base, p, load) : null,
       linkBox].filter(Boolean));
+    if (p.screenshot === 'pending' && location.hash === page) setTimeout(() => { if (location.hash === page) load(); }, 2000);
   };
+  const page = location.hash;
   load();
   return panel;
+}
+
+/** The screenshot the server's headless browser took of the entry page. */
+function previewShot(base, p, reload) {
+  const retake = h('button', { onclick: () => attempt(() => api(`${base}/preview/screenshot`, { method: 'POST' }), reload) }, '重新截图');
+  if (p.screenshot === 'pending') return h('p', { class: 'muted' }, '正在截图…');
+  if (p.screenshot === 'failed') return h('div', { class: 'row' }, h('span', { class: 'error' }, p.screenshotError || '截图失败'), retake);
+  const box = h('div', { class: 'preview-shot' }, h('p', { class: 'muted' }, '加载截图…'));
+  fetch(`/api/v1${base}/preview/screenshot`, { headers: token() ? { Authorization: `Bearer ${token()}` } : {} })
+    .then(async (response) => {
+      if (!response.ok) throw new ApiError(response.status, null);
+      const url = URL.createObjectURL(await response.blob());
+      box.replaceChildren(h('a', { href: url, target: '_blank', rel: 'noopener' }, h('img', { src: url, alt: '预览截图' })), h('div', { class: 'row' }, h('span', { class: 'muted' }, '入口页截图（1280×800）'), retake));
+    })
+    .catch(() => box.replaceChildren(h('span', { class: 'muted' }, '截图暂不可用'), retake));
+  return box;
 }
 
 async function downloadBinary(path, filename) {

@@ -43,7 +43,35 @@ public record LoopForgeProperties(
         @Valid @DefaultValue Trackers trackers,
         @Valid @DefaultValue Assistant assistant,
         @Valid @DefaultValue Skillhub skillhub,
-        @Valid @DefaultValue Preview preview) {
+        @Valid @DefaultValue Preview preview,
+        @Valid @DefaultValue Browser browser) {
+
+    /**
+     * The headless browser behind preview screenshots (Chromium or Chrome).
+     *
+     * @param binary the browser; found on the usual paths (and {@code CHROME_BIN}) when empty
+     * @param noSandbox start it without its own sandbox; by default only when the server runs as root
+     * @param timeout limit for starting the browser and for each step
+     */
+    public record Browser(
+            @DefaultValue("true") boolean enabled,
+            Path binary,
+            Boolean noSandbox,
+            @NotNull @DefaultValue("30s") Duration timeout) {
+
+        /** The browser to use, if any. */
+        public java.util.Optional<io.github.loopforge4j.core.runtime.browser.CdpBrowser.Options> options() {
+            if (!enabled) {
+                return java.util.Optional.empty();
+            }
+            java.util.Optional<Path> found = binary != null
+                    ? java.util.Optional.of(binary).filter(java.nio.file.Files::isExecutable)
+                    : io.github.loopforge4j.core.runtime.browser.CdpBrowser.detect();
+            boolean root = "root".equals(System.getProperty("user.name"));
+            return found.map(b -> new io.github.loopforge4j.core.runtime.browser.CdpBrowser.Options(
+                    b, timeout, noSandbox != null ? noSandbox : root));
+        }
+    }
 
     /**
      * Frontend previews (upstream {@code AGENTFLOW_PREVIEW_*}).

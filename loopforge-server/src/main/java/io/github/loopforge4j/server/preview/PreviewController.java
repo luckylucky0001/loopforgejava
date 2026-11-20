@@ -77,13 +77,20 @@ public class PreviewController {
     private final AccessPolicy access;
     private final JdbcPreviewStore previews;
     private final PreviewService service;
+    private final PreviewScreenshots screenshots;
     private final Map<String, Boolean> routed = new ConcurrentHashMap<>();
 
-    public PreviewController(RunEngine engine, AccessPolicy access, JdbcPreviewStore previews, PreviewService service) {
+    public PreviewController(
+            RunEngine engine,
+            AccessPolicy access,
+            JdbcPreviewStore previews,
+            PreviewService service,
+            PreviewScreenshots screenshots) {
         this.engine = engine;
         this.access = access;
         this.previews = previews;
         this.service = service;
+        this.screenshots = screenshots;
     }
 
     private Run readable(String runId, Principal principal) {
@@ -128,6 +135,9 @@ public class PreviewController {
         if (p.error() != null) {
             out.put("error", p.error());
         }
+        // pending, ready or failed; the image is at .../preview/screenshot once ready
+        out.put("screenshot", p.screenshot());
+        out.put("screenshotError", p.screenshotError());
         out.values().removeIf(java.util.Objects::isNull);
         return out;
     }
@@ -154,6 +164,29 @@ public class PreviewController {
         readable(runId, principal);
         return view(
                 previews.find(runId).orElseThrow(() -> new PreviewService.PreviewException(404, "preview not found")));
+    }
+
+    @Operation(summary = "The screenshot of the preview's entry page (PNG), once taken")
+    @GetMapping(value = "/api/v1/runs/{runId}/preview/screenshot", produces = MediaType.IMAGE_PNG_VALUE)
+    ResponseEntity<byte[]> screenshot(@PathVariable String runId, Principal principal) {
+        readable(runId, principal);
+        byte[] png = previews.screenshot(runId)
+                .orElseThrow(() -> new PreviewService.PreviewException(404, "screenshot not found"));
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_PNG)
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Cache-Control", "private, no-cache")
+                .body(png);
+    }
+
+    @Operation(summary = "Take the preview screenshot again (for example after changing the backend address)")
+    @PostMapping("/api/v1/runs/{runId}/preview/screenshot")
+    ResponseEntity<Map<String, Object>> retakeScreenshot(@PathVariable String runId, Principal principal) {
+        access.requireOperateRun(principal, readable(runId, principal));
+        if (!screenshots.retake(runId)) {
+            throw new PreviewService.PreviewException(409, "preview is not ready");
+        }
+        return ResponseEntity.accepted().body(view(previews.find(runId).orElseThrow()));
     }
 
     /** Body of the session and backend requests. */

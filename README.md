@@ -111,6 +111,17 @@ loopforge:
 
 没有单独的预览源时，页面运行在不透明源里：读不到控制台的登录令牌，也不能借控制台身份调用 API；浏览器存储与 Cookie 用内存模拟。
 
+预览设置里勾选「归档后截图」（`preview.screenshot`，约定里是 `captureScreenshot`）后，站点归档完成时服务器会启动无头 Chromium，用一个只给自己的预览会话打开入口页并截图（1280×800），完成后撤销该会话；浏览器只能访问这个会话的站点，其他请求一律拦截。截图显示在运行页的「预览」面板，可以「重新截图」（例如改了后端地址之后）。服务器上需要 Chromium 或 Chrome：
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `loopforge.browser.enabled` | `true` | 关掉后不截图 |
+| `loopforge.browser.binary` | 自动查找 | 浏览器路径；默认找 `CHROME_BIN`、`/usr/bin/chromium`、`google-chrome` 与 Playwright 缓存 |
+| `loopforge.browser.no-sandbox` | 以 root 运行时为 `true` | 不启用浏览器自身的沙箱（容器内常见） |
+| `loopforge.browser.timeout` | `30s` | 启动与每一步的时限 |
+
+配置了单独的预览源时，服务器需要能访问 `loopforge.preview.public-url`。Docker 镜像不带浏览器，需要截图时在镜像里自行安装。
+
 ### MCP 市场与项目 / 个人 MCP
 
 「规则 / Skills / MCP → MCP 服务器」的「MCP 市场」列出可添加的远程 MCP（目前是 GitHub 官方 MCP）。项目维护者把条目添加到项目后，角色的 MCP 列表写市场 id（如 `github`）即可：每个运行用自己项目的那一份，没有安装的项目里自动略过。GitHub MCP 使用运行负责人在「设置」里配置的 GitHub Token（没有时用平台的），只发送给官方 HTTPS 端点；对话只使用发言人自己的 Token。
@@ -383,7 +394,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/sandboxes[/{id}]`、`/environments[/{id}]`、`/dockerfiles[/{id}]` | 沙箱配置（含是否可用、是否隔离）、环境与 Dockerfile（写入需要管理员） |
 | `GET/POST` | `/api/v1/skillhub/skills[/{slug}[/versions\|/files\|/file]]`、`/categories`、`/install`、`/update`、`/installed` | SkillHub 技能市场：搜索、详情、文件预览、安装与更新（管理员） |
 | `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
-| `GET/POST/PUT/DELETE` | `/api/v1/runs/{id}/preview[/session[/{sid}]\|/backend\|/download]`、`/preview/{令牌}/**` | 前端预览：状态、会话链接（可带后端地址、可撤销）、默认后端地址、zip 下载、删除；免登录的隔离访问 |
+| `GET/POST/PUT/DELETE` | `/api/v1/runs/{id}/preview[/session[/{sid}]\|/backend\|/download\|/screenshot]`、`/preview/{令牌}/**` | 前端预览：状态、会话链接（可带后端地址、可撤销）、默认后端地址、zip 下载、截图（PNG，`POST` 重新截图）、删除；免登录的隔离访问 |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
 | `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |
