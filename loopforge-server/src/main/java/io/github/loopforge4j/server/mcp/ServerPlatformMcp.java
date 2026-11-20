@@ -101,6 +101,41 @@ public class ServerPlatformMcp implements PlatformMcp {
         return new Binding(servers, rules, warnings);
     }
 
+    /**
+     * Servers for one conversation turn: the platform MCP acting for {@code userId} (the person
+     * speaking, never with administrator rights) and, when connected, the knowledge base. Tokens
+     * die with the turn.
+     */
+    public Binding bindConversation(String sessionId, String projectId, String userId, String sandboxProfileId) {
+        List<McpServerDefinition> servers = new ArrayList<>();
+        List<RuleDefinition> rules = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        String base = baseFor(sandboxProfileId);
+        String run = RunTokens.CONVERSATION_PREFIX + sessionId;
+        if (base == null) {
+            warnings.add(unreachable(PLATFORM_ID, sandboxProfileId));
+            return new Binding(servers, rules, warnings);
+        }
+        if (platformEnabled && userId != null) {
+            servers.add(server(
+                    PLATFORM_ID,
+                    "LoopForge 平台",
+                    "以本轮发言人的身份操作平台：需求、运行、SOP、项目、知识库与分析",
+                    base + PlatformMcpController.PATH,
+                    tokens.issue(RunTokens.Kind.CONVERSATION, run, projectId, null, "main-bot", userId, ttl)));
+        }
+        if (knowledge.ready()) {
+            servers.add(server(
+                    KNOWLEDGE_ID,
+                    "团队知识库",
+                    "团队知识库只读检索：kb_search / kb_fetch / kb_list_sources / kb_get_source",
+                    base + KnowledgeProxyController.PATH,
+                    tokens.issue(RunTokens.Kind.KNOWLEDGE, run, projectId, null, "main-bot", ttl)));
+            rules.add(KnowledgeService.usageRule());
+        }
+        return new Binding(servers, rules, warnings);
+    }
+
     /** The configured sandbox-facing URL, else loopback for agents that share the host network. */
     private String baseFor(String sandboxProfileId) {
         if (sandboxUrl != null) {

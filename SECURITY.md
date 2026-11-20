@@ -10,6 +10,7 @@
 - 有非管理员账户时保持 `loopforge.security.members-require-isolation=true`（默认）：成员只能编写和启动隔离沙箱（`loopforge.security.isolated-profiles`，默认 `docker`）中的 SOP，本地沙箱中的脚本能读到服务的 Token 与数据库。
 - 运行只能使用全局或本项目的 SOP、代码仓库和凭据；没有项目的运行只属于管理员。
 - 没有 Docker 的 Linux 主机可以用 `bwrap` 沙箱作为成员可用的隔离环境（加入 `isolated-profiles`）：进程只能看到系统目录（只读）、JDK 与自己的工作区，看不到 `/run`、`/var` 下的主机套接字、主目录与其他运行，但默认共享网络；不要把 `/run`、`/var` 或主目录加入 `read-only-paths`。
+- 平台助手以本轮发言人的身份操作平台（不含管理员权限，只在回复期间有效）；对话里粘贴或助手读到的外部内容可能诱导它执行操作，因此有影响的操作要求先确认，且它只能做发言人本来就能做的事。
 - 执行机器的 Token（`lfx_`）只能访问分配给这台机器的运行，不能调用普通 API；移除机器立即吊销。个人机器上的脚本以机器所有者的身份运行，只有所有者能把运行分配给它。
 - 启用 OIDC 时设置 `loopforge.public-url`（回调地址）；`link-by-email` 只在身份提供方确实验证邮箱时打开。
 - Webhook 默认不能指向回环、私有、链路本地（云元数据）、CGNAT 等内网地址；只有通知目标确实在内网时才设置 `loopforge.notifications.allow-private-targets=true`。

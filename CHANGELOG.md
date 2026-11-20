@@ -22,6 +22,9 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 11)
+- 平台助手（Main Bot）：个人与项目对话，每轮在对话专属的沙箱工作区里运行 CLI 并续接原生会话；助手通过平台 MCP 以本轮发言人的身份（无管理员权限、项目对话限本项目、只在回复期间有效）查需求、建需求、启动 SOP、审批；知识库接入时附使用规范；实时活动（SSE）、停止、删除即回收工作区；控制台「助手」页。
+
 ### Added (迭代 10)
 - 执行机器：运行可分配给个人机器或共享执行池（`runnerId`），机器只向服务端发起连接、在本机运行完整引擎；服务端排队、校验并转发变更给监听器，从不接管机器的运行。`loopforge-runner` 可执行 jar（镜像内附带、控制台可下载）、注册 / 心跳 / 在线状态、控制台页面与启动时选择机器。
 

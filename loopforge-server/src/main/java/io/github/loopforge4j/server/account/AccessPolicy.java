@@ -45,6 +45,17 @@ public class AccessPolicy {
         }
     }
 
+    /** The same rule for a sandbox profile chosen directly (conversation workspaces). */
+    public void requireIsolatedProfile(Principal principal, String profileId) {
+        if (!membersRequireIsolation || current(principal).admin()) {
+            return;
+        }
+        if (!isolatedProfiles.contains(profileId)) {
+            throw new AccessDeniedException(
+                    "sandbox profile '" + profileId + "' is not isolated; members may only use " + isolatedProfiles);
+        }
+    }
+
     public void requireIsolatedSandbox(Principal principal, String workflowId) {
         if (workflowId != null) {
             requireIsolatedSandbox(principal, catalog.workflow(workflowId).orElse(null));
@@ -131,6 +142,14 @@ public class AccessPolicy {
 
     /** Project roles of the caller: an agent views exactly its run's project. */
     public Map<String, ProjectRole> rolesOf(CurrentUser user) {
+        if (user.agent() != null && user.agent().delegated()) {
+            Map<String, ProjectRole> own = user.id() == null ? Map.of() : projects.rolesOf(user.id());
+            String project = user.agent().projectId();
+            if (project == null || project.isBlank()) {
+                return own;
+            }
+            return own.containsKey(project) ? Map.of(project, own.get(project)) : Map.of();
+        }
         if (user.agent() != null) {
             String project = user.agent().projectId();
             return project == null || project.isBlank() ? Map.of() : Map.of(project, ProjectRole.VIEWER);

@@ -167,7 +167,7 @@ function dag(workflow, statuses = {}, onSelect) {
 // ------------------------------------------------------------------ shell and routing
 
 const NAV = [
-  ['#/runs', '运行'], ['#/approvals', '待处理'], ['#/workflows', 'SOP'], ['#/agents', '角色'],
+  ['#/chat', '助手'], ['#/runs', '运行'], ['#/approvals', '待处理'], ['#/workflows', 'SOP'], ['#/agents', '角色'],
   ['#/assets/rules', '规则 / Skills / MCP'], ['#/repositories', '代码仓库'], ['#/projects', '项目'],
   ['#/analytics', '分析'], ['#/knowledge', '知识库'], ['#/runners', '执行机器'], ['#/executors', '执行器'], ['#/settings', '设置'],
 ];
@@ -205,6 +205,7 @@ const ROUTES = [
   [/^#\/projects\/([^/]+)$/, projectPage], [/^#\/projects$/, projectsPage],
   [/^#\/executors$/, executorsPage], [/^#\/settings$/, settingsPage], [/^#\/users$/, usersPage],
   [/^#\/analytics$/, analyticsPage], [/^#\/knowledge$/, knowledgePage], [/^#\/runners$/, runnersPage],
+  [/^#\/chat\/([^/]+)$/, chatPage], [/^#\/chat$/, () => chatPage(null)],
 ];
 
 const SSO_ERRORS = {
@@ -964,6 +965,75 @@ async function runnersPage() {
           h('td', {}, (m.executors || []).join(', ') || '—'), h('td', {}, m.capacity || '—'), h('td', { class: 'mono' }, m.version || '—'), h('td', {}, time(m.lastSeenAt)),
           h('td', {}, h('button', { class: 'danger', onclick: () => confirm(`移除 ${m.name}？它的 Token 立即失效。`) && attempt(() => api(`/runners/${m.id}`, { method: 'DELETE' }), refresh) }, '移除'))))),
   ]);
+}
+
+// ------------------------------------------------------------------ assistant (Main Bot)
+
+function chatMessage(m) {
+  const who = m.role === 'user' ? m.author : 'LoopForge 助手';
+  return h('div', { class: `msg ${m.role}` },
+    h('div', { class: 'msg-meta muted' }, `${who} · ${time(m.createdAt)}${m.tokens ? ` · ${num(m.tokens)} Token` : ''}`),
+    h('div', { class: 'msg-body' }, m.content),
+    (m.activity || []).length ? h('details', {}, h('summary', {}, `过程（${m.activity.length}）`), h('div', { class: 'log' }, m.activity.map((a) => h('div', {}, a)))) : null);
+}
+
+async function chatPage(id) {
+  const [sessions, projects] = await Promise.all([api('/assistant/sessions'), api('/projects').catch(() => [])]);
+  const current = id ? await api(`/assistant/sessions/${encodeURIComponent(id)}`) : sessions[0] || null;
+  if (!id && current) { location.hash = `#/chat/${current.id}`; return; }
+  const create = () => prompted('新对话', [
+    { name: 'title', label: '标题', value: '新对话' },
+    { name: 'projectId', label: '项目（空 = 个人对话，只有自己可见）', type: 'select', options: ['', ...projects.map((p) => p.id)] },
+    { name: 'sandboxProfileId', label: '工作区沙箱（空 = 默认）', placeholder: 'docker' }],
+  (v) => api('/assistant/sessions', { method: 'POST', body: { title: v.title, projectId: v.projectId || undefined,
+    sandboxProfileId: v.sandboxProfileId || undefined } }).then((s) => { location.hash = `#/chat/${s.id}`; return s; }));
+  const list = h('div', { class: 'chat-list' }, h('button', { class: 'primary', onclick: create }, '新对话'),
+    sessions.map((s) => h('a', { href: `#/chat/${s.id}`, class: current && s.id === current.id ? 'chat-item active' : 'chat-item' },
+      h('div', {}, s.title), h('div', { class: 'muted' }, `${s.projectId || '个人'}${s.status !== 'idle' ? ' · 回复中' : ''}`))));
+  if (!current) {
+    shell([h('h1', {}, '助手'), h('div', { class: 'chat' }, list,
+      h('div', { class: 'panel' }, h('p', {}, '助手可以查需求、建需求、启动 SOP、看运行和产物，也可以在对话专属的工作区里看代码、改代码。它以你的身份操作平台，没有管理员权限。'),
+        h('p', { class: 'muted' }, '新建一个对话开始。')))]);
+    return;
+  }
+  const messages = await api(`/assistant/sessions/${current.id}/messages`);
+  const feed = h('div', { class: 'chat-feed' }, messages.map(chatMessage));
+  const live = h('div', { class: 'log live' });
+  const input = h('textarea', { rows: 3, placeholder: '说点什么…（Ctrl+Enter 发送）' });
+  let generating = current.status !== 'idle';
+  const sendButton = h('button', { class: 'primary' }, '发送');
+  const stopButton = h('button', { class: 'danger' }, '停止');
+  const sync = () => {
+    sendButton.disabled = generating;
+    stopButton.disabled = !generating;
+    live.hidden = !generating;
+  };
+  const send = () => {
+    const content = input.value.trim();
+    if (!content || generating) return;
+    attempt(() => api(`/assistant/sessions/${current.id}/messages`, { method: 'POST', body: { content } }), () => {
+      input.value = '';
+      generating = true;
+      live.replaceChildren();
+      sync();
+    });
+  };
+  sendButton.addEventListener('click', send);
+  stopButton.addEventListener('click', () => attempt(() => api(`/assistant/sessions/${current.id}/cancel`, { method: 'POST' })));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); });
+  const remove = () => confirm('删除这个对话和它的工作区？') && attempt(() => api(`/assistant/sessions/${current.id}`, { method: 'DELETE' }), () => { location.hash = '#/chat'; });
+  shell([h('div', { class: 'chat' }, list, h('div', {},
+    h('div', { class: 'row' }, h('h1', {}, current.title), h('span', { class: 'spacer' }),
+      h('span', { class: 'muted' }, `${current.projectId ? `项目 ${current.projectId}` : '个人对话'} · 沙箱 ${current.sandboxProfileId} · ${num(current.totalTokens)} Token · ${usd(current.costUsd)}`),
+      h('button', { class: 'danger', onclick: remove }, '删除')),
+    feed, live,
+    h('div', { class: 'panel mt' }, input, h('div', { class: 'row mt' }, h('span', { class: 'spacer' }), stopButton, sendButton))))]);
+  sync();
+  feed.scrollTop = feed.scrollHeight;
+  stream = new EventSource(`/api/v1/assistant/sessions/${current.id}/stream?access_token=${encodeURIComponent(token())}`);
+  stream.addEventListener('activity', (e) => { live.append(h('div', {}, JSON.parse(e.data))); live.scrollTop = live.scrollHeight; });
+  stream.addEventListener('message', (e) => { feed.append(chatMessage(JSON.parse(e.data))); feed.scrollTop = feed.scrollHeight; });
+  stream.addEventListener('status', (e) => { generating = JSON.parse(e.data).status !== 'idle'; if (!generating) live.replaceChildren(); sync(); });
 }
 
 route();

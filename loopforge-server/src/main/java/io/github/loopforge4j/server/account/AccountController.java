@@ -106,7 +106,7 @@ class AccountController {
         if (user.service()) {
             return Map.of("username", user.username(), "role", user.role(), "service", true, "projects", List.of());
         }
-        if (user.agent() != null) {
+        if (user.agent() != null && !user.agent().delegated()) {
             return Map.of(
                     "username", user.username(),
                     "service", false,
@@ -114,9 +114,15 @@ class AccountController {
                     "projects", access.rolesOf(user));
         }
         return Map.of(
-                "user", users.byId(user.id()).orElseThrow(),
-                "service", false,
-                "projects", projects.rolesOf(user.id()));
+                "user",
+                users.byId(user.id()).orElseThrow(),
+                "service",
+                false,
+                // the conversation assistant acting for the user sees the roles it may use
+                "assistant",
+                user.agent() != null,
+                "projects",
+                access.rolesOf(user));
     }
 
     @PostMapping("/me/password")

@@ -104,6 +104,11 @@ class IsolationPolicyTest {
                 post(member, "/api/v1/runs", Map.of("workflowId", "local-sop", "projectId", "p"));
         assertThat(denied.getStatusCode().value()).isEqualTo(403);
         assertThat(String.valueOf(denied.getBody().get("detail"))).contains("isolated profiles [docker]");
+        // the same for a conversation workspace: the assistant's commands would run as the server
+        assertThat(post(member, "/api/v1/assistant/sessions", Map.of("projectId", "p"))
+                        .getStatusCode()
+                        .value())
+                .isEqualTo(403);
         put(
                 member,
                 "/api/v1/workflows/p-local",

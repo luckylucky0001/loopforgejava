@@ -33,7 +33,7 @@ public record CurrentUser(String id, String username, Role role, boolean service
 
     /** Agents only read; the API rejects their mutating requests before any controller runs. */
     public boolean readOnly() {
-        return agent != null;
+        return agent != null && !agent.delegated();
     }
 
     @Override
@@ -44,5 +44,23 @@ public record CurrentUser(String id, String username, Role role, boolean service
     /**
      * @param projectId the run's project; {@code null} grants no project at all
      */
-    public record AgentGrant(String runId, String projectId, String nodeId, String agentId) {}
+    public record AgentGrant(String runId, String projectId, String nodeId, String agentId, boolean delegated) {
+
+        public AgentGrant(String runId, String projectId, String nodeId, String agentId) {
+            this(runId, projectId, nodeId, agentId, false);
+        }
+    }
+
+    /**
+     * The conversation assistant acting for {@code user} during one turn: the user's own project
+     * roles (only the session's project for a project conversation), never administrator rights.
+     */
+    public static CurrentUser assistantFor(User user, String sessionId, String projectId) {
+        return new CurrentUser(
+                user.id(),
+                user.username(),
+                Role.MEMBER,
+                false,
+                new AgentGrant("conv:" + sessionId, projectId, null, "main-bot", true));
+    }
 }

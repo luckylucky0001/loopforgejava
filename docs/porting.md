@@ -39,6 +39,7 @@
 | `internal/domain/notification*.go`、`internal/notification` | `server.work.Notifier`、`NotificationChannel`、`BotMessages` | Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人；未移植企业微信智能机器人长连接（卡片内审批）与 AI 运行报告 |
 | `internal/runtime/sandbox_process.go`（bwrap） | `core.runtime.sandbox.BwrapSandboxProvider` | 已移植（Linux bwrap；macOS seatbelt 未移植） |
 | `internal/runner`、`cmd/agentflow-runner`、`internal/repo/run_admission.go`（runner 桶） | `loopforge-runner`（`RunnerAgent`、`RemoteRunStore`、`RemoteCatalogStore`）、`server.runner`、`RunEngine.runnerId` | 个人机器与共享执行池；机器本身运行完整引擎 |
+| `chatbot/`、`internal/httpapi/assistant*.go`、`internal/runtime/conversation*.go`（Main Bot 与对话工作区） | `core.engine.Conversations`、`server.assistant` | 个人 / 项目对话、持久工作区、CLI 会话续接、平台 MCP 代表发言人、实时活动、停止；未移植群协作、浏览器工具、对话内自动登记 PR |
 | `internal/auth`（企业身份） | `server.account.OidcService`、`OidcClient`、`OidcController` | 标准 OIDC 授权码 + PKCE（JDK 实现，RS256/ES256） |
 | `web/`（React 控制台） | `static/console`（原生 ES 模块） | 重写，不含上游前端代码与素材 |
 | `internal/mcpserver`、`internal/application/operations.go`、`cmd/agentflow-mcp` | `server.mcp.PlatformMcpController`、`PlatformOperations`、`core.mcp.PlatformMcpBridge` | 已移植（操作清单对应本移植的 API） |
@@ -83,4 +84,4 @@
 
 ## 尚未移植
 
-Chat/Main Bot 与会话工作区、需求 AI 澄清与多泳道、云端执行池的自动扩缩容、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、Agent CLI 的模型网关与个人凭据、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。
+对话的群协作与浏览器工具、对话内自动登记 PR、需求 AI 澄清与多泳道、云端执行池的自动扩缩容、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、Agent CLI 的模型网关与个人凭据、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。

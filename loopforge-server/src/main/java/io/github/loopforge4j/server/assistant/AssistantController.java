@@ -1,0 +1,75 @@
+package io.github.loopforge4j.server.assistant;
+
+import jakarta.validation.constraints.Size;
+import java.security.Principal;
+import java.util.List;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+/** Conversations with the platform assistant. */
+@RestController
+@RequestMapping("/api/v1/assistant/sessions")
+public class AssistantController {
+
+    private final AssistantService assistant;
+    private final AssistantStreams streams;
+
+    public AssistantController(AssistantService assistant, AssistantStreams streams) {
+        this.assistant = assistant;
+        this.streams = streams;
+    }
+
+    @GetMapping
+    List<AssistantSession> list(Principal principal) {
+        return assistant.list(principal);
+    }
+
+    @PostMapping
+    ResponseEntity<AssistantSession> create(@RequestBody AssistantService.NewSession body, Principal principal) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(assistant.create(body, principal));
+    }
+
+    @GetMapping("/{id}")
+    AssistantSession get(@PathVariable String id, Principal principal) {
+        return assistant.get(id, principal);
+    }
+
+    @DeleteMapping("/{id}")
+    ResponseEntity<Void> delete(@PathVariable String id, Principal principal) {
+        assistant.delete(id, principal);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/messages")
+    List<AssistantMessage> messages(@PathVariable String id, Principal principal) {
+        return assistant.messages(id, principal);
+    }
+
+    record Say(@Size(max = 20_000) String content) {}
+
+    @PostMapping("/{id}/messages")
+    ResponseEntity<AssistantMessage> send(@PathVariable String id, @RequestBody Say body, Principal principal) {
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(assistant.send(id, body.content(), principal));
+    }
+
+    @PostMapping("/{id}/cancel")
+    ResponseEntity<Void> cancel(@PathVariable String id, Principal principal) {
+        assistant.cancel(id, principal);
+        return ResponseEntity.accepted().build();
+    }
+
+    @GetMapping(path = "/{id}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    SseEmitter stream(@PathVariable String id, Principal principal) {
+        assistant.get(id, principal);
+        return streams.subscribe(id);
+    }
+}

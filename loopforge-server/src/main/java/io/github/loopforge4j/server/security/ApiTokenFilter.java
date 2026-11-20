@@ -19,19 +19,22 @@ import org.springframework.web.filter.OncePerRequestFilter;
  */
 class ApiTokenFilter extends OncePerRequestFilter {
 
-    private static final Pattern STREAM = Pattern.compile("^/api/v1/runs/[^/]+/stream$");
+    private static final Pattern STREAM = Pattern.compile("^/api/v1/(runs/[^/]+|assistant/sessions/[^/]+)/stream$");
 
     private final ApiTokens tokens;
     private final io.github.loopforge4j.server.account.TokenStore accountTokens;
     private final io.github.loopforge4j.server.mcp.RunTokens runTokens;
+    private final io.github.loopforge4j.server.account.UserStore users;
 
     ApiTokenFilter(
             ApiTokens tokens,
             io.github.loopforge4j.server.account.TokenStore accountTokens,
-            io.github.loopforge4j.server.mcp.RunTokens runTokens) {
+            io.github.loopforge4j.server.mcp.RunTokens runTokens,
+            io.github.loopforge4j.server.account.UserStore users) {
         this.tokens = tokens;
         this.accountTokens = accountTokens;
         this.runTokens = runTokens;
+        this.users = users;
     }
 
     @Override
@@ -47,6 +50,20 @@ class ApiTokenFilter extends OncePerRequestFilter {
                     .map(c -> io.github.loopforge4j.server.account.CurrentUser.agent(
                             new io.github.loopforge4j.server.account.CurrentUser.AgentGrant(
                                     c.runId(), c.projectId(), c.nodeId(), c.agentId())));
+            if (principal.isEmpty()) {
+                // the conversation assistant acts for the person speaking, while the turn runs
+                principal = runTokens
+                        .verify(token, io.github.loopforge4j.server.mcp.RunTokens.Kind.CONVERSATION)
+                        .flatMap(c -> users.byId(c.subject())
+                                .filter(u -> !u.disabled())
+                                .map(u -> io.github.loopforge4j.server.account.CurrentUser.assistantFor(
+                                        u,
+                                        c.runId()
+                                                .substring(
+                                                        io.github.loopforge4j.server.mcp.RunTokens.CONVERSATION_PREFIX
+                                                                .length()),
+                                        c.projectId())));
+            }
         } else if (tokens.authenticate(token).isPresent()) {
             principal = Optional.of(io.github.loopforge4j.server.account.CurrentUser.SERVICE);
         }

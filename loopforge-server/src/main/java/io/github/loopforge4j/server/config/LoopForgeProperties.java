@@ -40,7 +40,24 @@ public record LoopForgeProperties(
         @Valid @DefaultValue Knowledge knowledge,
         String publicUrl,
         @Valid @DefaultValue Tapd tapd,
-        @Valid @DefaultValue Trackers trackers) {
+        @Valid @DefaultValue Trackers trackers,
+        @Valid @DefaultValue Assistant assistant) {
+
+    /**
+     * The conversation assistant (upstream Main Bot).
+     *
+     * @param sandboxProfile workspace profile of new conversations (members still need an isolated
+     *     one)
+     * @param executor executor of the assistant, the engine default when empty
+     * @param turnTimeout limit for one turn
+     * @param history messages replayed when no CLI session can be continued
+     */
+    public record Assistant(
+            @DefaultValue("true") boolean enabled,
+            @DefaultValue("local") String sandboxProfile,
+            String executor,
+            @NotNull @DefaultValue("30m") Duration turnTimeout,
+            @DefaultValue("30") int history) {}
 
     /**
      * TAPD open API account (https://open.tapd.cn): Basic authentication with the API user.

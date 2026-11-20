@@ -100,3 +100,19 @@ svg.share-bar { width: 70px; height: 8px; }
 .share-track { fill: var(--bg); } .share-fill { fill: var(--series-1); }
 details > summary { cursor: pointer; color: var(--muted); margin: 6px 0; }
 input.grow { flex: 1; min-width: 240px; }
+
+/* assistant */
+.chat { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
+.chat-list { display: grid; gap: 6px; }
+.chat-item { display: block; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.chat-item.active { border-color: var(--accent); background: var(--accent-soft); }
+.chat-item .muted { font-size: 12px; }
+.chat-feed { max-height: 62vh; overflow: auto; display: grid; gap: 10px; padding: 4px 2px; }
+.msg { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel); }
+.msg.user { background: var(--accent-soft); border-color: transparent; margin-left: 12%; }
+.msg.assistant { margin-right: 6%; }
+.msg.error { border-color: var(--err); color: var(--err); }
+.msg-meta { font-size: 12px; margin-bottom: 4px; }
+.msg-body { white-space: pre-wrap; word-break: break-word; }
+.log.live { margin-top: 8px; max-height: 180px; }
+@media (max-width: 900px) { .chat { grid-template-columns: 1fr; } }

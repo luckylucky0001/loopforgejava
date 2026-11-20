@@ -25,6 +25,7 @@ class SecurityConfiguration {
             ApiTokens tokens,
             io.github.loopforge4j.server.account.TokenStore accountTokens,
             io.github.loopforge4j.server.mcp.RunTokens runTokens,
+            io.github.loopforge4j.server.account.UserStore users,
             LoopForgeProperties properties)
             throws Exception {
         boolean publicDocs = properties.security().publicDocs();
@@ -82,7 +83,8 @@ class SecurityConfiguration {
                     auth.anyRequest().authenticated();
                 })
                 .addFilterBefore(
-                        new ApiTokenFilter(tokens, accountTokens, runTokens), AnonymousAuthenticationFilter.class)
+                        new ApiTokenFilter(tokens, accountTokens, runTokens, users),
+                        AnonymousAuthenticationFilter.class)
                 .addFilterBefore(
                         new RequestSizeLimitFilter(
                                 properties.security().maxRequestSize().toBytes()),

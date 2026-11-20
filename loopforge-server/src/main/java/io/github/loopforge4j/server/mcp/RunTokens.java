@@ -34,13 +34,19 @@ public class RunTokens {
     /** What a token is good for; a knowledge token never authenticates API calls. */
     public enum Kind {
         PLATFORM,
-        KNOWLEDGE
+        KNOWLEDGE,
+        /** The conversation assistant acting for the person speaking (never with administrator rights). */
+        CONVERSATION
     }
+
+    /** Conversation tokens name {@code conv:<session id>} instead of a run. */
+    public static final String CONVERSATION_PREFIX = "conv:";
 
     /**
      * @param expiresAt epoch seconds
      */
-    public record Claims(Kind kind, String runId, String projectId, String nodeId, String agentId, long expiresAt) {}
+    public record Claims(
+            Kind kind, String runId, String projectId, String nodeId, String agentId, long expiresAt, String subject) {}
 
     private final JdbcClient jdbc;
     private final RunStore runs;
@@ -58,13 +64,22 @@ public class RunTokens {
     }
 
     public String issue(Kind kind, String runId, String projectId, String nodeId, String agentId, Duration ttl) {
+        return issue(kind, runId, projectId, nodeId, agentId, null, ttl);
+    }
+
+    /**
+     * @param subject the account a conversation token acts for
+     */
+    public String issue(
+            Kind kind, String runId, String projectId, String nodeId, String agentId, String subject, Duration ttl) {
         Claims claims = new Claims(
                 kind,
                 runId,
                 projectId,
                 nodeId,
                 agentId,
-                clock.instant().plus(ttl).getEpochSecond());
+                clock.instant().plus(ttl).getEpochSecond(),
+                subject);
         String body = PREFIX + B64.encodeToString(Json.write(claims).getBytes(StandardCharsets.UTF_8));
         return body + "." + sign(body);
     }
@@ -97,12 +112,30 @@ public class RunTokens {
                 || claims.expiresAt() <= clock.instant().getEpochSecond()) {
             return Optional.empty();
         }
+        if (claims.runId().startsWith(CONVERSATION_PREFIX)) {
+            // a conversation token lives as long as the turn it was issued for
+            return (claims.kind() == Kind.CONVERSATION || claims.kind() == Kind.KNOWLEDGE)
+                            && generating(claims.runId().substring(CONVERSATION_PREFIX.length()))
+                    ? Optional.of(claims)
+                    : Optional.empty();
+        }
+        if (claims.kind() == Kind.CONVERSATION) {
+            return Optional.empty();
+        }
         // a settled or deleted run revokes every token issued for it
         Optional<Run> run = runs.find(claims.runId());
         if (run.isEmpty() || run.get().status().terminal()) {
             return Optional.empty();
         }
         return Optional.of(claims);
+    }
+
+    private boolean generating(String sessionId) {
+        return jdbc.sql("SELECT COUNT(*) FROM assistant_sessions WHERE id = :id AND status = 'generating'")
+                        .param("id", sessionId)
+                        .query(Long.class)
+                        .single()
+                > 0;
     }
 
     private String sign(String body) {

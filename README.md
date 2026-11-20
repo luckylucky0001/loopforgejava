@@ -21,6 +21,7 @@
 | 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话；多实例部署：运行租约、心跳与过期接管、工作区主机绑定 |
 | 运维 | 遥测批量写入；保留策略（执行器遥测、终态运行）；Prometheus 指标：运行与节点结果、节点耗时、返工、门禁决策、token 与成本 |
 | 协作 | 账户与 Token、OIDC 单点登录、项目与成员角色、需求（自动工作分支与状态推进；从 GitHub / GitLab（工蜂）Issue 与 TAPD 迭代同步、按链接导入 TAPD、推送到外部、交付后回写 PR 链接）、定时任务、Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人通知；Web 控制台（运行视图与实时事件、待处理收件箱、SOP 设计器、项目管理、分析、知识库） |
+| 平台助手（Main Bot） | 个人或项目对话：助手是一个 CLI Agent，每个对话有一个持久的沙箱工作区并续接 CLI 会话；以本轮发言人的身份（无管理员权限）通过平台 MCP 查需求、建需求、启动 SOP、审批节点，接入知识库时先检索；实时显示工具调用，可随时停止 |
 | 执行机器 | 个人机器与共享执行池（upstream runner）：机器只向服务端发起 HTTPS 连接，认领分配给它的运行，用本机已登录的 CLI 与凭据执行；人工审批、取消等在控制台操作，机器在下一个调度周期内响应；PR 核验由服务端用自己的 API 凭据完成 |
 | 平台 MCP | `/mcp` 把公开 API 作为 MCP 工具（按调用者本人的权限执行）；角色开启 `platformMcp` 后，Agent 拿到只读、限本项目、随运行结束失效的运行令牌；JDK-only stdio 桥 |
 | 团队知识库 | 接入上游知识库 MCP，按项目授权来源检索与阅读；角色开启 `knowledgeBase` 后获得只读检索工具与使用规范；Agent 写下的 `knowledge.md` 经人工审核后写回 |
@@ -172,6 +173,18 @@ loopforge:
 
 通知渠道的 `kind` 可选 `webhook`（通用 JSON + HMAC 签名）、`wecom`（企业微信群机器人 Markdown）、`feishu`（飞书 / Lark 自定义机器人，可加签）、`dingtalk`（钉钉自定义机器人 Markdown，可加签）、`slack`（Incoming Webhook）；平台返回的错误码（如 `errcode`）计为投递失败。
 
+### 平台助手（对话）
+
+控制台「助手」里新建个人或项目对话。每一轮由默认执行器（或 `loopforge.assistant.executor`）在对话专属的工作区里运行，下一轮续接同一个 CLI 会话；助手拿到的平台 MCP 凭据代表本轮发言人（项目对话只限该项目），只在这一轮回复期间有效，永远没有管理员权限。工作区沙箱默认 `loopforge.assistant.sandbox-profile=local`，成员仍受隔离沙箱要求约束（为成员开放请设为 `docker` 或 `bwrap`）。
+
+```yaml
+loopforge:
+  assistant:
+    sandbox-profile: docker
+    executor: claude
+    turn-timeout: 30m
+```
+
 ### 执行机器（个人机器 / 共享执行池）
 
 在控制台「执行机器 → 注册」得到一次性显示的 Token，然后在装好并登录了 Claude Code / Codex 等 CLI 的机器上运行（容器镜像自带程序，可在同一页下载；也可以自己构建 `loopforge-runner/target/loopforge-runner-*-all.jar`）：
@@ -246,6 +259,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
 | `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |
 | `POST` | `/api/v1/projects/{id}/requirements/{n}/external` | 把本地需求推送为 GitHub / GitLab Issue 或 TAPD 需求 |
+| `GET/POST/DELETE` | `/api/v1/assistant/sessions[/{id}[/messages\|/cancel\|/stream]]` | 平台助手对话、发言、停止与实时事件（SSE） |
 | `GET/POST/DELETE` | `/api/v1/runners[/{id}]`、`/api/v1/runners/agent.jar` | 执行机器的注册、列表、移除与程序下载 |
 | `*` | `/api/v1/runner-api/**` | 执行机器调用的接口（机器 Token 认证，只能访问分配给它的运行） |
 | `POST` | `/mcp` | 平台 MCP（无状态 Streamable HTTP）；`GET /api/v1/capabilities` 列出全部操作 |

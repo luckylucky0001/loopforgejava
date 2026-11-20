@@ -277,6 +277,13 @@ public final class RunEngine implements AutoCloseable {
         return new Builder();
     }
 
+    private final Conversations conversations = new Conversations(this);
+
+    /** Conversation turns (Main Bot) on this engine's executors and sandboxes. */
+    public Conversations conversations() {
+        return conversations;
+    }
+
     /** Whether this engine executes the run: its runner, or the server for unassigned runs. */
     boolean executes(Run run) {
         return java.util.Objects.equals(run.context().runnerId(), runnerId);
