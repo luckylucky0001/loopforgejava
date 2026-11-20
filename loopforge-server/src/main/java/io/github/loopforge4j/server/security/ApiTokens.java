@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -66,32 +68,66 @@ public class ApiTokens {
     private static String generatedToken(Path file) {
         try {
             if (Files.exists(file)) {
-                return Files.readString(file, StandardCharsets.UTF_8).strip();
+                return readExisting(file);
             }
             Path parent = file.toAbsolutePath().getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
+            Files.createDirectories(parent);
             byte[] random = new byte[32];
             new SecureRandom().nextBytes(random);
             String token = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
+            Path temp = createPrivateTempFile(parent);
             try {
-                Files.createFile(
-                        file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-            } catch (UnsupportedOperationException e) {
-                Files.createFile(file);
+                Files.writeString(temp, token + "\n", StandardCharsets.UTF_8);
+                // A hard link publishes the complete file atomically and never replaces an existing one,
+                // so concurrent starters agree on one token and nobody reads a half-written file.
+                Files.createLink(file, temp);
             } catch (FileAlreadyExistsException e) {
-                return Files.readString(file, StandardCharsets.UTF_8).strip();
+                return readExisting(file);
+            } catch (UnsupportedOperationException e) {
+                Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE);
+            } finally {
+                Files.deleteIfExists(temp);
             }
-            Files.writeString(file, token + "\n", StandardCharsets.UTF_8);
             log.warn(
-                    "No loopforge.security.api-tokens configured; generated an API token in {} (owner-only)."
+                    "No loopforge.security.api-tokens configured; generated an API token in {}."
                             + " Configure LOOPFORGE_SECURITY_APITOKENS for production.",
                     file.toAbsolutePath());
             return token;
         } catch (IOException e) {
             throw new UncheckedIOException("cannot create API token file " + file, e);
         }
+    }
+
+    private static Path createPrivateTempFile(Path directory) throws IOException {
+        try {
+            return Files.createTempFile(
+                    directory,
+                    ".api-token",
+                    ".tmp",
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        } catch (UnsupportedOperationException e) {
+            log.warn("file system has no POSIX permissions; restrict access to {} manually", directory);
+            return Files.createTempFile(directory, ".api-token", ".tmp");
+        }
+    }
+
+    private static String readExisting(Path file) throws IOException {
+        String token = Files.readString(file, StandardCharsets.UTF_8).strip();
+        if (token.length() < MIN_LENGTH) {
+            throw new IllegalStateException(
+                    "API token file " + file.toAbsolutePath() + " holds no valid token (at least " + MIN_LENGTH
+                            + " characters); delete it to generate a new one");
+        }
+        try {
+            var permissions = Files.getPosixFilePermissions(file);
+            if (permissions.contains(PosixFilePermission.GROUP_READ)
+                    || permissions.contains(PosixFilePermission.OTHERS_READ)) {
+                log.warn("API token file {} is readable by other users; run chmod 600 on it", file.toAbsolutePath());
+            }
+        } catch (UnsupportedOperationException e) {
+            // not a POSIX file system
+        }
+        return token;
     }
 
     static byte[] sha256(String value) {

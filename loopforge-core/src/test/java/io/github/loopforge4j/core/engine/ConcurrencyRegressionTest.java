@@ -255,6 +255,81 @@ class ConcurrencyRegressionTest {
         }
     }
 
+    /** A node whose writes the store keeps rejecting backs off and is failed, instead of hot-looping. */
+    @Test
+    void nodeWhoseWritesAreRejectedBacksOffAndFails() {
+        RejectingRunStore runs = new RejectingRunStore("boom");
+        try (EngineFixture f = new EngineFixture(root, runs, false)) {
+            f.workflow(WorkflowDefinition.builder("wf")
+                    .node(WorkflowNode.builder("boom", SCRIPT)
+                            .script("echo never")
+                            .build())
+                    .build());
+            Run run = f.start("wf");
+            Run failed = f.awaitStatus(run.id(), RunStatus.FAILED);
+            assertThat(failed.requireNode("boom").error()).contains("反复崩溃").contains("StoreException");
+            assertThat(runs.rejected.get()).isBetween(5, 7);
+        }
+    }
+
+    /** Rejects every write that records an event for one node, like a database column that is too small. */
+    static final class RejectingRunStore implements RunStore {
+        final AtomicInteger rejected = new AtomicInteger();
+        private final String nodeId;
+        private final InMemoryRunStore delegate = new InMemoryRunStore();
+
+        RejectingRunStore(String nodeId) {
+            this.nodeId = nodeId;
+        }
+
+        @Override
+        public Optional<Run> update(String runId, RunMutator mutator) {
+            return delegate.update(runId, c -> {
+                boolean write = mutator.apply(c);
+                if (c.pendingEvents().stream().anyMatch(e -> nodeId.equals(e.nodeId()))) {
+                    rejected.incrementAndGet();
+                    throw new io.github.loopforge4j.core.store.StoreException("run store write failed", null);
+                }
+                return write;
+            });
+        }
+
+        @Override
+        public List<RunEvent> appendEvents(String runId, List<RunEvent> events) {
+            return delegate.appendEvents(runId, events);
+        }
+
+        @Override
+        public void insert(Run run, List<RunEvent> initialEvents) {
+            delegate.insert(run, initialEvents);
+        }
+
+        @Override
+        public Optional<Run> find(String runId) {
+            return delegate.find(runId);
+        }
+
+        @Override
+        public List<Run> list(RunQuery query) {
+            return delegate.list(query);
+        }
+
+        @Override
+        public List<RunEvent> events(String runId, long afterSequence, int limit) {
+            return delegate.events(runId, afterSequence, limit);
+        }
+
+        @Override
+        public List<Artifact> artifacts(String runId) {
+            return delegate.artifacts(runId);
+        }
+
+        @Override
+        public Optional<Artifact> artifact(String runId, String artifactId) {
+            return delegate.artifact(runId, artifactId);
+        }
+    }
+
     private static Run failedReviewRun(String id) {
         WorkflowDefinition wf = WorkflowDefinition.builder("review")
                 .node(WorkflowNode.builder("build", SCRIPT).script("echo built").build())

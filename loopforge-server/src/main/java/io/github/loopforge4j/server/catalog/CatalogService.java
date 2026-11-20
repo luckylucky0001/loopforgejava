@@ -7,6 +7,7 @@ import io.github.loopforge4j.core.store.CatalogStore;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Catalog use cases: validated writes and bundle import. */
 @Service
@@ -24,6 +25,7 @@ public class CatalogService {
     }
 
     public AgentDefinition saveAgent(AgentDefinition agent) {
+        WorkflowValidator.validateAgent(agent);
         return store.saveAgent(agent);
     }
 
@@ -33,7 +35,10 @@ public class CatalogService {
      *
      * @return ids that were written
      */
+    @Transactional
     public List<String> importBundle(CatalogBundle bundle, boolean overwrite) {
+        // validate everything first: an invalid item must not leave a half-imported bundle behind
+        bundle.agents().forEach(WorkflowValidator::validateAgent);
         bundle.workflows().forEach(WorkflowValidator::validate);
         List<String> written = new ArrayList<>();
         for (AgentDefinition agent : bundle.agents()) {

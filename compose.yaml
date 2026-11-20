@@ -28,12 +28,15 @@ services:
       SPRING_DATASOURCE_USERNAME: loopforge
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       LOOPFORGE_SECURITY_APITOKENS: ${LOOPFORGE_API_TOKEN:?set LOOPFORGE_API_TOKEN (32+ chars)}
-      LOOPFORGE_DEMOCATALOG: "true"
+      # the prod profile starts with an empty catalog; set to true for a demo stack
+      LOOPFORGE_DEMOCATALOG: ${LOOPFORGE_DEMOCATALOG:-false}
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
       - loopforge-data:/data
     restart: unless-stopped
+    # graceful shutdown parks running SOPs for the next start; Docker's 10 s default would SIGKILL first
+    stop_grace_period: 60s
 
 volumes:
   postgres-data:

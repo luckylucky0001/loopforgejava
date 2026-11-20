@@ -86,4 +86,39 @@ class WorkflowValidatorTest {
         assertThat(WorkflowValidator.safeRelativePath("a/../b.md")).isTrue();
         assertThat(WorkflowValidator.safeRelativePath("a/../../b.md")).isFalse();
     }
+
+    @Test
+    void enforcesIdentifierAndLengthLimits() {
+        String longId = "a".repeat(201);
+        WorkflowDefinition wf = WorkflowDefinition.builder(longId)
+                .name("名".repeat(501))
+                .node(WorkflowNode.builder("ok", SCRIPT).script("true").build())
+                .node(WorkflowNode.builder("has space", SCRIPT).script("true").build())
+                .node(WorkflowNode.builder("ref", AGENT).agent("bad id").build())
+                .build();
+        assertThat(WorkflowValidator.problems(wf))
+                .anyMatch(p -> p.startsWith("workflow id") && p.contains("200 characters"))
+                .anyMatch(p -> p.contains("workflow name must be at most 500"))
+                .anyMatch(p -> p.startsWith("node id 'has space'"))
+                .anyMatch(p -> p.contains("references an invalid id 'bad id'"));
+        assertThat(WorkflowValidator.problems(WorkflowDefinition.builder("a".repeat(200))
+                        .node(WorkflowNode.builder("n", SCRIPT).script("true").build())
+                        .build()))
+                .isEmpty();
+    }
+
+    @Test
+    void validatesAgents() {
+        assertThat(WorkflowValidator.agentProblems(io.github.loopforge4j.core.domain.AgentDefinition.builder("")
+                        .build()))
+                .contains("agent id is required");
+        assertThat(WorkflowValidator.agentProblems(io.github.loopforge4j.core.domain.AgentDefinition.builder("dev")
+                        .artifacts(java.util.List.of(new ArtifactContract("x", "../escape.md", null, true)))
+                        .build()))
+                .anyMatch(p -> p.contains("invalid artifact contract"));
+        assertThat(WorkflowValidator.agentProblems(io.github.loopforge4j.core.domain.AgentDefinition.builder("dev")
+                        .prompt("p")
+                        .build()))
+                .isEmpty();
+    }
 }

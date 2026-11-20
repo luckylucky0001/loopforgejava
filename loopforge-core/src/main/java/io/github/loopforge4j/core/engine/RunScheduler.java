@@ -33,6 +33,13 @@ final class RunScheduler {
     private final int generation;
     private final Semaphore wake = new Semaphore(0);
     private final Map<String, Cancellation> inflight = new ConcurrentHashMap<>();
+    /** Nodes whose execution thread crashed (e.g. the store rejected a write): relaunch with backoff. */
+    private final Map<String, Backoff> crashed = new ConcurrentHashMap<>();
+
+    private static final int CRASHES_BEFORE_FAILING = 5;
+
+    private record Backoff(int crashes, long notBeforeNanos) {}
+
     private volatile boolean shuttingDown;
 
     RunScheduler(RunEngine engine, String runId, int generation) {
@@ -129,11 +136,22 @@ final class RunScheduler {
                 await();
                 continue;
             }
-            List<WorkflowNode> ready = WorkflowGraph.readyNodes(run).stream()
+            long now = System.nanoTime();
+            List<WorkflowNode> candidates = WorkflowGraph.readyNodes(run).stream()
                     .filter(n -> !inflight.containsKey(n.id()))
+                    .toList();
+            List<WorkflowNode> ready = candidates.stream()
+                    .filter(n -> {
+                        Backoff backoff = crashed.get(n.id());
+                        return backoff == null || backoff.notBeforeNanos() <= now;
+                    })
                     .toList();
             if (!ready.isEmpty()) {
                 ready.forEach(this::launch);
+                continue;
+            }
+            if (!candidates.isEmpty()) {
+                await(); // only backed-off nodes are ready; never hot-loop on a crashing node
                 continue;
             }
             if (inflight.isEmpty()) {
@@ -153,13 +171,37 @@ final class RunScheduler {
         Thread.ofVirtual().name("node-" + runId + "-" + node.id()).start(() -> {
             try {
                 engine.nodeRunner().execute(runId, generation, node, cancellation);
+                crashed.remove(node.id());
             } catch (RuntimeException | Error e) {
-                log.error("node {} of run {} crashed", node.id(), runId, e);
+                onNodeCrash(node, e);
             } finally {
                 inflight.remove(node.id(), cancellation);
                 wake();
             }
         });
+    }
+
+    private void onNodeCrash(WorkflowNode node, Throwable error) {
+        Backoff previous = crashed.get(node.id());
+        int crashes = previous == null ? 1 : previous.crashes() + 1;
+        long delayMillis = Math.min(60_000L, 200L << Math.min(crashes, 9));
+        crashed.put(node.id(), new Backoff(crashes, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(delayMillis)));
+        if (crashes == 1 || crashes % 10 == 0) {
+            log.error(
+                    "node {} of run {} crashed ({} time(s)); retrying in {} ms",
+                    node.id(),
+                    runId,
+                    crashes,
+                    delayMillis,
+                    error);
+        }
+        if (crashes >= CRASHES_BEFORE_FAILING) {
+            try {
+                engine.failCrashedNode(runId, generation, node, crashes, error);
+            } catch (RuntimeException e) {
+                log.debug("cannot mark crashed node {} failed: {}", node.id(), e.toString());
+            }
+        }
     }
 
     /** Cancels every in-flight node and waits until their threads have finished. */

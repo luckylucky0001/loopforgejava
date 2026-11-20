@@ -100,6 +100,10 @@ public final class RunEngine implements AutoCloseable {
     public Run start(String workflowId, String input, ExecutionContext context) {
         WorkflowDefinition workflow = catalog.workflow(workflowId)
                 .orElseThrow(() -> new RunNotFoundException("workflow '" + workflowId + "' not found"));
+        if (workflow.status() != io.github.loopforge4j.core.domain.WorkflowStatus.PUBLISHED) {
+            throw new RunStateException("workflow '" + workflowId + "' is "
+                    + workflow.status().wire() + "; publish it before starting runs");
+        }
         return start(workflow, input, context);
     }
 
@@ -521,6 +525,27 @@ public final class RunEngine implements AutoCloseable {
             recovered.add(run.id());
         }
         return recovered;
+    }
+
+    /** A node whose thread keeps crashing is failed instead of being relaunched forever. */
+    void failCrashedNode(String runId, int generation, WorkflowNode node, int crashes, Throwable error) {
+        mutateQuietly(runId, c -> {
+            Run r = c.run();
+            NodeRun nr = r.requireNode(node.id());
+            if (r.generation() != generation
+                    || nr.status() == NodeStatus.SUCCEEDED
+                    || nr.status() == NodeStatus.FAILED) {
+                return false;
+            }
+            String message = "节点执行反复崩溃（" + crashes + " 次）：" + error.getClass().getSimpleName()
+                    + (error instanceof io.github.loopforge4j.core.store.StoreException
+                            ? "：" + error.getMessage()
+                            : "");
+            nr.error(message);
+            nr.finish(NodeStatus.FAILED, c.now());
+            c.event(null, "node.crashed", message);
+            return true;
+        });
     }
 
     /** Kills process groups a crashed predecessor engine left running for this run's workspace. */

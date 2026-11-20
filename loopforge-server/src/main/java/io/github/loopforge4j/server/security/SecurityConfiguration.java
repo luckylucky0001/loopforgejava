@@ -33,7 +33,8 @@ class SecurityConfiguration {
                     // The original REQUEST dispatch was authorized; SSE completion re-enters as ASYNC.
                     auth.dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR)
                             .permitAll();
-                    auth.requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info")
+                    // info and prometheus need a token; only liveness/readiness probes are public
+                    auth.requestMatchers("/actuator/health", "/actuator/health/**")
                             .permitAll();
                     if (publicDocs) {
                         auth.requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**")
@@ -43,6 +44,10 @@ class SecurityConfiguration {
                     auth.anyRequest().authenticated();
                 })
                 .addFilterBefore(new ApiTokenFilter(tokens), AnonymousAuthenticationFilter.class)
+                .addFilterBefore(
+                        new RequestSizeLimitFilter(
+                                properties.security().maxRequestSize().toBytes()),
+                        org.springframework.security.web.header.HeaderWriterFilter.class)
                 .exceptionHandling(e -> e.authenticationEntryPoint((request, response, ex) -> {
                     response.setStatus(HttpStatus.UNAUTHORIZED.value());
                     response.setHeader("WWW-Authenticate", "Bearer");

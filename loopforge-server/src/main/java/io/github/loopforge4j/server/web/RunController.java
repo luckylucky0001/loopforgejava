@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Set;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,8 +29,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Runs: start, inspect and steer SOP executions (upstream {@code runsHandlers}). */
+// No class-level @Validated: Spring MVC's built-in method validation then turns @Min/@Max violations
+// on parameters into 400 problems instead of unhandled ConstraintViolationExceptions (500).
 @Tag(name = "Runs")
-@Validated
 @RestController
 @RequestMapping("/api/v1/runs")
 class RunController {

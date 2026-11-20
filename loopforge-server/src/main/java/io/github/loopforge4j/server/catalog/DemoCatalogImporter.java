@@ -16,8 +16,9 @@ import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
 
 /**
- * Opt-in import of the bundled demo catalog ({@code classpath:catalog/*.json}). Insert-if-absent:
- * existing definitions are never overwritten. Disable with {@code loopforge.demo-catalog=false}.
+ * Opt-in import of the bundled demo catalog ({@code classpath:catalog/*.json}) on the first start
+ * only, i.e. while the catalog is empty. Definitions an operator later edits or deletes therefore
+ * stay that way across restarts. Disable with {@code loopforge.demo-catalog=false}.
  */
 @Component
 @Order(10)
@@ -26,16 +27,25 @@ class DemoCatalogImporter implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DemoCatalogImporter.class);
 
     private final CatalogService catalog;
+    private final io.github.loopforge4j.core.store.CatalogStore store;
     private final LoopForgeProperties properties;
 
-    DemoCatalogImporter(CatalogService catalog, LoopForgeProperties properties) {
+    DemoCatalogImporter(
+            CatalogService catalog,
+            io.github.loopforge4j.core.store.CatalogStore store,
+            LoopForgeProperties properties) {
         this.catalog = catalog;
+        this.store = store;
         this.properties = properties;
     }
 
     @Override
     public void run(ApplicationArguments args) throws IOException {
         if (!properties.demoCatalog()) {
+            return;
+        }
+        if (!store.workflows().isEmpty() || !store.agents().isEmpty()) {
+            log.debug("catalog is not empty; skipping the demo catalog");
             return;
         }
         Resource[] resources = new PathMatchingResourcePatternResolver().getResources("classpath:catalog/*.json");

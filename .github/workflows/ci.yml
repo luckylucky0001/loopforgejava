@@ -64,6 +64,7 @@ jobs:
         env:
           LOOPFORGE_API_TOKEN: ci-smoke-token-0123456789-abcdefghij
           POSTGRES_PASSWORD: ci-postgres-password
+          LOOPFORGE_DEMOCATALOG: "true"
         run: docker compose up -d --build --wait --wait-timeout 180
       - name: Smoke test the running image
         run: scripts/smoke-test.sh http://localhost:8090 ci-smoke-token-0123456789-abcdefghij

@@ -10,6 +10,7 @@ import io.github.loopforge4j.core.store.RunMutator;
 import io.github.loopforge4j.core.store.RunQuery;
 import io.github.loopforge4j.core.store.RunStore;
 import io.github.loopforge4j.core.store.StaleRunException;
+import io.github.loopforge4j.core.store.StoreException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.locks.ReentrantLock;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -51,7 +53,7 @@ public class JdbcRunStore implements RunStore {
         ReentrantLock lock = locks.forRun(run.id());
         lock.lock();
         try {
-            tx.executeWithoutResult(status -> {
+            executeWithoutResult(status -> {
                 jdbc.sql("""
                         INSERT INTO runs (id, workflow_id, status, parent_run_id, revision, payload, created_at, updated_at)
                         VALUES (:id, :workflowId, :status, :parent, 1, :payload, :createdAt, :updatedAt)""")
@@ -128,7 +130,7 @@ public class JdbcRunStore implements RunStore {
                 }
                 run.revision(expected + 1);
                 run.updatedAt(clock.instant());
-                Boolean committed = tx.execute(status -> {
+                Boolean committed = execute(status -> {
                     int rows = jdbc.sql("""
                             UPDATE runs SET payload = :payload, status = :status, revision = :next, updated_at = :updatedAt
                             WHERE id = :id AND revision = :expected""")
@@ -161,10 +163,27 @@ public class JdbcRunStore implements RunStore {
         ReentrantLock lock = locks.forRun(runId);
         lock.lock();
         try {
-            return tx.execute(status -> insertEvents(runId, events));
+            return execute(status -> insertEvents(runId, events));
         } finally {
             lock.unlock();
         }
+    }
+
+    /** Runs a write transaction; driver and SQL details never leave the adapter (they reach node errors). */
+    private <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
+        try {
+            return tx.execute(action);
+        } catch (DataAccessException e) {
+            throw new StoreException("run store write failed", e);
+        }
+    }
+
+    private void executeWithoutResult(
+            java.util.function.Consumer<org.springframework.transaction.TransactionStatus> action) {
+        execute(status -> {
+            action.accept(status);
+            return null;
+        });
     }
 
     private List<RunEvent> insertEvents(String runId, List<RunEvent> events) {

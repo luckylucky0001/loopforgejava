@@ -14,7 +14,10 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.SmartLifecycle;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
@@ -23,23 +26,39 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * bursts are coalesced (upstream "slow clients receive the newest state").
  */
 @Component
-class RunStreamBroadcaster implements RunListener {
+class RunStreamBroadcaster implements RunListener, SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(RunStreamBroadcaster.class);
     private static final Duration HEARTBEAT = Duration.ofSeconds(15);
     private static final Duration TIMEOUT = Duration.ofMinutes(30);
+    static final int MAX_PER_RUN = 32;
+    static final int MAX_TOTAL = 1_000;
 
     private final RunStore runs;
     private final Map<String, Set<Subscription>> subscriptions = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger total = new java.util.concurrent.atomic.AtomicInteger();
+    private volatile boolean running;
 
     RunStreamBroadcaster(RunStore runs) {
         this.runs = runs;
     }
 
     SseEmitter subscribe(String runId, long afterSequence) {
+        if (!running) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "server is shutting down");
+        }
+        Set<Subscription> forRun = subscriptions.computeIfAbsent(runId, k -> ConcurrentHashMap.newKeySet());
+        // every subscriber reads the store on each change; bound the fan-out so streams cannot starve
+        // the engine's connection pool
+        if (forRun.size() >= MAX_PER_RUN || total.incrementAndGet() > MAX_TOTAL) {
+            if (forRun.size() < MAX_PER_RUN) {
+                total.decrementAndGet();
+            }
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "too many open streams");
+        }
         SseEmitter emitter = new SseEmitter(TIMEOUT.toMillis());
         Subscription subscription = new Subscription(runId, emitter, afterSequence);
-        subscriptions.computeIfAbsent(runId, k -> ConcurrentHashMap.newKeySet()).add(subscription);
+        forRun.add(subscription);
         emitter.onCompletion(subscription::close);
         emitter.onTimeout(subscription::close);
         emitter.onError(e -> subscription.close());
@@ -57,6 +76,27 @@ class RunStreamBroadcaster implements RunListener {
         signal(runId);
     }
 
+    /**
+     * Completes every stream before the web server's graceful shutdown starts (this lifecycle has a
+     * higher phase), otherwise open streams hold shutdown until its timeout and the engine never
+     * gets to park its runs.
+     */
+    @Override
+    public void start() {
+        running = true;
+    }
+
+    @Override
+    public void stop() {
+        running = false;
+        subscriptions.values().forEach(set -> List.copyOf(set).forEach(Subscription::shutdown));
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running;
+    }
+
     int subscriberCount(String runId) {
         return subscriptions.getOrDefault(runId, Set.of()).size();
     }
@@ -72,7 +112,8 @@ class RunStreamBroadcaster implements RunListener {
         private final String runId;
         private final SseEmitter emitter;
         private final Semaphore dirty = new Semaphore(1);
-        private volatile boolean closed;
+        private final java.util.concurrent.atomic.AtomicBoolean closed =
+                new java.util.concurrent.atomic.AtomicBoolean();
         private long lastSequence;
         private long lastRevision = -1;
 
@@ -88,8 +129,20 @@ class RunStreamBroadcaster implements RunListener {
             }
         }
 
+        void shutdown() {
+            close();
+            try {
+                emitter.complete();
+            } catch (IllegalStateException e) {
+                // already completed
+            }
+        }
+
         void close() {
-            closed = true;
+            if (!closed.compareAndSet(false, true)) {
+                return;
+            }
+            total.decrementAndGet();
             Set<Subscription> set = subscriptions.get(runId);
             if (set != null) {
                 set.remove(this);
@@ -102,13 +155,13 @@ class RunStreamBroadcaster implements RunListener {
 
         void pump() {
             try {
-                while (!closed) {
+                while (!closed.get()) {
                     if (!dirty.tryAcquire(HEARTBEAT.toMillis(), TimeUnit.MILLISECONDS)) {
                         emitter.send(SseEmitter.event().comment("heartbeat"));
                         continue;
                     }
                     dirty.drainPermits();
-                    if (closed || !flush()) {
+                    if (closed.get() || !flush()) {
                         break;
                     }
                 }

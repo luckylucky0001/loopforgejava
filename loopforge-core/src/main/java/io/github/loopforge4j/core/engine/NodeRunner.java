@@ -791,6 +791,12 @@ final class NodeRunner {
                 .workflow(node.sopWorkflowId())
                 .orElseThrow(
                         () -> new NodeFailure(FailureKind.CONFIGURATION, "SOP 流程 '" + node.sopWorkflowId() + "' 不存在"));
+        if (childWorkflow.status() != io.github.loopforge4j.core.domain.WorkflowStatus.PUBLISHED) {
+            throw new NodeFailure(
+                    FailureKind.CONFIGURATION,
+                    "SOP 流程 '" + childWorkflow.id() + "' 未发布（"
+                            + childWorkflow.status().wire() + "）");
+        }
         Run parent = currentRun(runId);
         guardCycle(parent, childWorkflow.id());
         String childId = parent.requireNode(node.id()).childRunId();
