@@ -32,7 +32,7 @@ const svg = (tag, attrs = {}, ...children) => {
 };
 
 const token = () => localStorage.getItem(TOKEN_KEY);
-const badge = (status) => h('span', { class: `badge s-${status}` }, status ?? '—');
+const badge = (status, label) => h('span', { class: `badge s-${status}` }, label ?? status ?? '—');
 const time = (value) => (value ? new Date(value).toLocaleString() : '—');
 const json = (value) => JSON.stringify(value, null, 2);
 /** Links that come from external systems: only http(s), never javascript: or data: URLs. */
@@ -440,6 +440,7 @@ async function runPage(runId) {
       artifacts.length ? h('div', { class: 'panel' }, h('h2', {}, '产物'), h('table', {}, h('tr', {}, ['节点', '名称', '路径', '大小'].map((t) => h('th', {}, t))),
         artifacts.map((a) => h('tr', {}, h('td', {}, `${a.nodeId}#${a.attempt}`), h('td', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); showArtifact(runId, a); } }, a.name)),
           h('td', { class: 'mono' }, a.path), h('td', {}, a.size))))) : null,
+      active ? null : evalPanel(runId),
       h('h2', {}, '事件'), log,
     ]);
     const append = (event) => {
@@ -1375,6 +1376,61 @@ async function chatPage(id) {
   stream.addEventListener('activity', (e) => { live.append(h('div', {}, String(sseData(e)))); live.scrollTop = live.scrollHeight; });
   stream.addEventListener('message', (e) => { feed.append(chatMessage(sseData(e))); feed.scrollTop = feed.scrollHeight; });
   stream.addEventListener('status', (e) => { generating = sseData(e).status !== 'idle'; if (!generating) live.replaceChildren(); sync(); });
+}
+
+// ------------------------------------------------------------------ run evaluation
+
+const EVAL_DIMENSIONS = { control: '控制流健康', latency: '耗时与等待', tools: '工具浪费', tokens: 'Token 效率', recovery: '错误恢复', delivery: '交付完整' };
+const REC_STATUS = { pending: '待应用', applied: '已应用', failed: '应用失败' };
+
+/** The quality evaluation of a settled run: score, dimensions, findings and recommendations to apply. */
+function evalPanel(runId) {
+  const panel = h('div', { class: 'panel' }, h('h2', {}, '质量评测'), h('p', { class: 'muted' }, '加载中…'));
+  const base = `/runs/${encodeURIComponent(runId)}`;
+  const page = location.hash;
+  const poll = () => setTimeout(() => { if (location.hash === page) load(); }, 2000);
+  const start = () => attempt(() => api(`${base}/eval`, { method: 'POST' }), () => load());
+  const load = async () => {
+    let ev;
+    try { ev = await api(`${base}/eval`); } catch (error) { panel.replaceChildren(h('h2', {}, '质量评测'), errorBox(error)); return; }
+    const head = h('div', { class: 'row' }, h('h2', {}, '质量评测'), h('span', { class: 'spacer' }),
+      ev.status === 'running' ? h('span', { class: 'muted' }, '评测中…') : h('button', { onclick: start }, ev.status ? '重新评测' : '评测这次运行'));
+    if (!ev.status) {
+      panel.replaceChildren(head, h('p', { class: 'muted' }, '用 AI 按控制流、耗时、工具、Token、错误恢复和交付六个维度给这次运行打分，并给出可以直接应用到 SOP 或角色的改进建议（使用你的凭据）。'));
+      return;
+    }
+    if (ev.status === 'running') { panel.replaceChildren(head, h('p', { class: 'muted' }, `由 ${ev.requestedBy} 发起 · ${time(ev.createdAt)}`)); poll(); return; }
+    if (ev.status === 'failed') { panel.replaceChildren(head, h('div', { class: 'error' }, ev.error || '评测失败')); return; }
+    const chosen = new Set();
+    const recs = (ev.recommendations || []).map((r) => {
+      const box = h('input', { type: 'checkbox', disabled: r.status === 'applied' });
+      box.addEventListener('change', () => { if (box.checked) chosen.add(r.id); else chosen.delete(r.id); });
+      return h('label', { class: 'rec' }, box, h('div', {},
+        h('strong', {}, r.title || r.action), ' ', badge(r.status === 'applied' ? 'succeeded' : r.status === 'failed' ? 'failed' : 'pending', REC_STATUS[r.status] || r.status),
+        h('span', { class: 'muted' }, ` ${r.target === 'agent' ? `角色 ${r.targetId || ''}` : `SOP 节点 ${r.nodeId || ''}`} · ${r.action}`),
+        r.rationale ? h('div', { class: 'muted' }, r.rationale) : null,
+        Object.keys(r.set || {}).length ? h('div', { class: 'mono' }, json(r.set)) : null,
+        r.gate ? h('div', { class: 'mono' }, `门禁 ${r.gate.id}：${(r.gate.commands || []).join(' && ')}`) : null,
+        r.text ? h('div', { class: 'msg-body' }, r.text) : null,
+        r.applyError ? h('div', { class: 'error' }, r.applyError) : null));
+    });
+    const apply = () => chosen.size === 0 ? alert('先选择要应用的建议')
+      : attempt(() => api(`${base}/eval/apply`, { method: 'POST', body: { evalId: ev.id, recommendationIds: [...chosen] } }), () => load());
+    panel.replaceChildren(head,
+      h('div', { class: 'row' }, h('span', { class: 'score' }, String(ev.score)), badge(ev.passed ? 'succeeded' : 'failed', ev.passed ? '达标' : '未达标'),
+        h('span', { class: 'muted' }, `准入线 ${ev.threshold} · ${ev.requestedBy} · ${time(ev.finishedAt)} · ${num(ev.totalTokens)} Token`)),
+      h('p', {}, ev.summary),
+      h('table', {}, h('tr', {}, ['维度', '得分', ''].map((t) => h('th', {}, t))),
+        Object.keys(EVAL_DIMENSIONS).filter((k) => k in (ev.dimensions || {})).map((k) => [k, ev.dimensions[k]]).map(([k, v]) => h('tr', {}, h('td', {}, EVAL_DIMENSIONS[k] || k), h('td', { class: 'mono' }, String(v)),
+          h('td', {}, h('meter', { min: 0, max: 100, low: 50, high: 70, optimum: 100, value: v }))))),
+      (ev.findings || []).length ? h('div', {}, h('h3', {}, '发现'), h('ul', {}, ev.findings.map((f) => h('li', {}, badge(f.severity === 'error' ? 'failed' : f.severity === 'warn' ? 'waiting' : 'pending', { error: '严重', warn: '警告', info: '提示' }[f.severity] || f.severity),
+        ` ${f.nodeId ? `[${f.nodeId}] ` : ''}${f.message}`, f.evidence ? h('span', { class: 'muted' }, ` · ${f.evidence}`) : null)))) : null,
+      recs.length ? h('div', {}, h('h3', {}, '改进建议'), ...recs,
+        h('div', { class: 'row mt' }, h('span', { class: 'muted' }, '应用到当前的 SOP 或角色（不改这次运行）；改 SOP 需要项目维护者，改角色需要管理员，每次修改都留有历史版本。'),
+          h('span', { class: 'spacer' }), h('button', { class: 'primary', onclick: apply }, '应用所选'))) : null);
+  };
+  load();
+  return panel;
 }
 
 // ------------------------------------------------------------------ requirement clarification

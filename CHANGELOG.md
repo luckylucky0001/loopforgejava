@@ -22,6 +22,9 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 16)
+- 运行质量评测（`/api/v1/runs/{id}/eval`）：按六个加权维度给已结束的运行打分，列出发现与可应用的改进建议（节点重试 / 返工 / 失败策略 / 超时、角色门禁、角色提示词），应用到当前 SOP 或角色并留历史版本；控制台评测面板。
+
 ### Added (迭代 15)
 - 定时任务类型 `assistant`（AI 任务：以最后保存人的身份、凭据与完全权限运行一轮助手对话）与 `dispatch`（按状态与优先级自动启动需求的 SOP，每次上限、跳过运行中的需求）；执行记录包含全部运行、AI 回复与对话。
 - 定时任务以最后保存它的账户执行（`runAs`），定时运行的个人凭据随之解析。

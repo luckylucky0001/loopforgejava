@@ -79,6 +79,10 @@ loopforge:
       model: sonnet
 ```
 
+### 运行质量评测
+
+已结束的运行页面有「质量评测」：AI 根据这次运行的事实（每个节点的尝试、返工、耗时、Token、重复失败的工具、反复出现的错误、A→B→A 打回）按控制流、耗时、工具、Token、错误恢复、交付六个加权维度打分（准入线 70），列出发现，并给出受限的改进建议：调整节点的尝试 / 返工 / 失败策略 / 超时，给角色加或删门禁，给角色提示词追加一段话。建议只应用到当前的 SOP 或角色（不改这次运行），改 SOP 需要项目维护者、改角色需要管理员，每次修改都留有历史版本。评测使用发起人的凭据。
+
 ### 定时任务
 
 项目页「定时任务」有三种类型，都按 cron（可指定时区）触发，也可「立即运行」，每次触发都记入执行记录：
@@ -283,6 +287,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` | `/api/v1/runs/{id}/stream` | SSE 实时流（浏览器可用 `?access_token=`） |
 | `GET` | `/api/v1/runs/{id}/logs`、`/logs.txt` | 日志分页（`nodeId`、`after` / `before` 游标）与文本下载（含脚本输出，最多 20,000 行） |
 | `DELETE` | `/api/v1/runs/{id}` | 删除已结束的运行（含子运行、事件、产物与工作区；项目维护者） |
+| `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
 | `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |

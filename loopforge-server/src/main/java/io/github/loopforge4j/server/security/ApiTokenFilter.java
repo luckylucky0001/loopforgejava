@@ -20,7 +20,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 class ApiTokenFilter extends OncePerRequestFilter {
 
     private static final Pattern STREAM = Pattern.compile("^/api/v1/(runs/[^/]+|assistant/sessions/[^/]+"
-            + "|projects/[^/]+/requirements/\\d+/clarification)/stream$");
+            + "|projects/[^/]+/requirements/\\d+/clarification|runs/[^/]+/eval)/stream$");
 
     private final ApiTokens tokens;
     private final io.github.loopforge4j.server.account.TokenStore accountTokens;

@@ -146,3 +146,8 @@ input.grow { flex: 1; min-width: 240px; }
 /* revision history */
 .revision-view { max-height: 40vh; overflow: auto; margin-top: 10px; }
 dialog { max-width: min(920px, 92vw); }
+
+/* run evaluation */
+.score { font-size: 28px; font-weight: 700; }
+.rec { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
+meter { width: 160px; }
