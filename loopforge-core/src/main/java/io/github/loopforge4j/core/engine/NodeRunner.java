@@ -367,7 +367,7 @@ final class NodeRunner {
         String manifest = ArtifactSupport.materializeInputs(
                 sandbox.workspace(), run, node, engine.runs().artifacts(runId));
         String gatePath = GateResults.path(node.id(), attempt);
-        EventSink sink = engine.sink(runId, node.id());
+        EventSink sink = sessionRecordingSink(engine.sink(runId, node.id()), runId, generation, attempt, node.id());
         AgentCall call = new AgentCall(
                 runId,
                 generation,
@@ -654,6 +654,33 @@ final class NodeRunner {
             r.addUsage(result.usage(), result.toolCalls());
             return true;
         });
+    }
+
+    /**
+     * Persists the native CLI session id as soon as the stream reports it (upstream records it from
+     * telemetry too). An invocation interrupted by pause, shutdown or a crash can then be resumed
+     * with {@code --resume} instead of starting over.
+     */
+    private EventSink sessionRecordingSink(
+            EventSink delegate, String runId, int generation, int attempt, String nodeId) {
+        java.util.concurrent.atomic.AtomicReference<String> recorded =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        return telemetry -> {
+            delegate.emit(telemetry);
+            String session = telemetry.sessionId();
+            if (session == null || session.isBlank() || session.equals(recorded.getAndSet(session))) {
+                return;
+            }
+            engine.mutateQuietly(runId, c -> {
+                Run r = c.run();
+                NodeRun nr = r.requireNode(nodeId);
+                if (!owns(r, nr, generation, attempt, false) || session.equals(nr.sessionId())) {
+                    return false;
+                }
+                nr.sessionId(session);
+                return true;
+            });
+        };
     }
 
     private void recordGateResult(String runId, int generation, String nodeId, GateResult result) {

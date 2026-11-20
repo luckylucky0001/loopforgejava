@@ -22,3 +22,12 @@
 - JDK 21 虚拟线程在 `synchronized`/`Object.wait` 上钉住载体线程。
 - 停机排空超时长于关闭等待，且中断标志会在存储写入前被重新设置。
 - 父运行取消时，子运行仍在使用共享工作区就被删除。
+
+### Fixed (深入回归)
+- 引擎被 `kill -9` 后，节点的进程组继续运行，恢复后与重新执行的节点并行写同一工作区；现在记录进程组并在恢复前终止遗留进程（校验启动时间防止 PID 复用）。
+- 正常退出后终止进程组时调用 `Process.destroyForcibly()` 会关闭输出管道，高负载下丢失命令输出。
+- CLI 会话 ID 只在调用结束时保存，暂停/停机/崩溃中断的 Agent 无法 `--resume`；现在流中一出现会话 ID 就保存。
+- 若干测试在脚本创建标记文件前就中断节点，导致 CI 偶发失败。
+
+### Added
+- CI 冒烟测试：以 Compose 启动镜像 + PostgreSQL（`prod` profile），通过 HTTP 跑完 welcome SOP（`scripts/smoke-test.sh`）。
