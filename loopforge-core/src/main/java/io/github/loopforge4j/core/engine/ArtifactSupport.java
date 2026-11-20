@@ -182,14 +182,11 @@ final class ArtifactSupport {
                     + segment(artifact.name()) + extension(artifact.mediaType());
             Path target = workspace.resolve(rel);
             Files.createDirectories(target.getParent());
-            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-                if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new IOException("artifact input path is not a regular file: " + target);
-                }
-                makeWritable(target);
+            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("artifact input path is not a regular file: " + target);
             }
-            Files.writeString(target, artifact.content() == null ? "" : artifact.content(), StandardCharsets.UTF_8);
-            makeReadOnly(target);
+            writeReadOnly(target, artifact.content() == null ? "" : artifact.content());
             manifest.append("## ")
                     .append(artifact.nodeId())
                     .append(" / ")
@@ -205,19 +202,32 @@ final class ArtifactSupport {
         return manifest.toString().strip();
     }
 
+    /**
+     * Parallel branches with a common upstream node materialize the same inputs into the shared
+     * workspace at the same time, and an earlier write left the file read-only. Writing a temp file and
+     * renaming it over the target is atomic and needs only directory permissions, so concurrent
+     * writers never see a partial file or a permission error.
+     */
+    private static void writeReadOnly(Path target, String content) throws IOException {
+        Path temp = Files.createTempFile(target.getParent(), "." + target.getFileName(), ".tmp");
+        try {
+            Files.writeString(temp, content, StandardCharsets.UTF_8);
+            makeReadOnly(temp);
+            Files.move(
+                    temp,
+                    target,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+    }
+
     private static void makeReadOnly(Path file) {
         try {
             Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("r--r--r--"));
         } catch (IOException | UnsupportedOperationException e) {
             file.toFile().setReadOnly();
-        }
-    }
-
-    private static void makeWritable(Path file) {
-        try {
-            Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
-        } catch (IOException | UnsupportedOperationException e) {
-            file.toFile().setWritable(true);
         }
     }
 
