@@ -23,8 +23,9 @@ spring:
       enabled: true
   servlet:
     multipart:
-      # page feedback: five images of at most 5 MB each
-      max-file-size: 5MB
+      # page feedback: five images of at most 5 MB each; the parser allows a little more so that a
+      # slightly larger image gets a clear answer from the controller instead of a cut connection
+      max-file-size: 6MB
       max-request-size: 27MB
   lifecycle:
     timeout-per-shutdown-phase: 30s

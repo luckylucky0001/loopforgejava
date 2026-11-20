@@ -76,6 +76,13 @@ class PageFeedbackIntegrationTest {
         return client((String) login.get("token"));
     }
 
+    /** A PNG header followed by zeros, {@code size} bytes in all. */
+    static byte[] png(int size) {
+        byte[] data = new byte[size];
+        System.arraycopy(PNG, 0, data, 0, PNG.length);
+        return data;
+    }
+
     static ByteArrayResource file(byte[] data, String name) {
         return new ByteArrayResource(data) {
             @Override
@@ -161,10 +168,10 @@ class PageFeedbackIntegrationTest {
                         .getStatusCode()
                         .value())
                 .isEqualTo(400);
-        assertThat(submit(hank, Map.of("title", "t"), List.of(file(new byte[5 * 1024 * 1024 + 1], "big.png")))
-                        .getStatusCode()
-                        .value())
-                .isIn(400, 413);
+        ResponseEntity<String> big =
+                submit(hank, Map.of("title", "t"), List.of(file(png(5 * 1024 * 1024 + 1), "big.png")));
+        assertThat(big.getStatusCode().value()).as(big.getBody()).isEqualTo(400);
+        assertThat(big.getBody()).contains("超过 5MB");
         // the service token has no account to file feedback under
         assertThat(submit(service, Map.of("title", "t"), List.of())
                         .getStatusCode()
