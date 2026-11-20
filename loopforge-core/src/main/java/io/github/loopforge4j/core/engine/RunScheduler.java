@@ -41,6 +41,7 @@ final class RunScheduler {
     private record Backoff(int crashes, long notBeforeNanos) {}
 
     private volatile boolean shuttingDown;
+    private volatile boolean abandoned;
 
     RunScheduler(RunEngine engine, String runId, int generation) {
         this.engine = engine;
@@ -50,6 +51,16 @@ final class RunScheduler {
 
     String runId() {
         return runId;
+    }
+
+    int generation() {
+        return generation;
+    }
+
+    /** Another instance took the run over: stop the nodes without touching the run's state. */
+    void abandon() {
+        abandoned = true;
+        wake();
     }
 
     void start(ExecutorService threads) {
@@ -94,6 +105,11 @@ final class RunScheduler {
 
     private void loop() {
         while (true) {
+            if (abandoned) {
+                stopNodes();
+                engine.retire(this);
+                return;
+            }
             if (shuttingDown) {
                 stopNodes();
                 engine.parkForResume(runId, generation);

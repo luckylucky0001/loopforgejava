@@ -36,6 +36,7 @@ import io.github.loopforge4j.core.store.RunStore;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -86,6 +87,8 @@ public final class RunEngine implements AutoCloseable {
     private final Map<String, RunScheduler> schedulers = new HashMap<>();
     private final NodeRunner nodeRunner;
     private final GitCredentialProvider gitCredentials;
+    private final LeaseKeeper leases;
+    private final TelemetryBuffer telemetry;
     private final java.util.function.UnaryOperator<String> mcpSecrets;
     private final java.nio.file.Path gateMcpJava;
     private final DeliveryProvider delivery;
@@ -114,6 +117,92 @@ public final class RunEngine implements AutoCloseable {
         if (sandboxes.isEmpty()) {
             throw new IllegalArgumentException("at least one sandbox provider is required");
         }
+        this.telemetry = new TelemetryBuffer(
+                runs,
+                builder.telemetryFlushInterval == null ? Duration.ofMillis(200) : builder.telemetryFlushInterval,
+                (runId, stored) -> listeners.forEach(l -> safely(() -> l.eventsAppended(runId, stored))));
+        this.leases = new LeaseKeeper(
+                this,
+                builder.instances == null
+                        ? new io.github.loopforge4j.core.store.InMemoryInstanceRegistry()
+                        : builder.instances);
+        this.leases.start(builder.claimOrphans);
+    }
+
+    /**
+     * Event categories retention may drop: high-volume executor telemetry. Lifecycle, verification,
+     * orchestration, artifact, sandbox and usage events form the audit trail and are kept.
+     */
+    public static final Set<String> TELEMETRY_CATEGORIES =
+            Set.of("output", "tool", "process", "hook", "runtime", "script", "reasoning");
+
+    /** Outcome of {@link #applyRetention}. */
+    public record RetentionResult(int prunedEvents, int deletedRuns) {}
+
+    /**
+     * Applies the retention policy: drops executor telemetry older than {@code telemetryAge} and
+     * deletes terminal runs (with events, artifacts and local workspace) not touched for {@code
+     * runAge}. A zero or negative age disables that part.
+     */
+    public RetentionResult applyRetention(Duration telemetryAge, Duration runAge) {
+        Instant now = clock.instant();
+        int pruned = 0;
+        if (telemetryAge != null && telemetryAge.isPositive()) {
+            telemetry.flushAll();
+            pruned = runs.pruneEvents(now.minus(telemetryAge), TELEMETRY_CATEGORIES);
+        }
+        int deleted = 0;
+        if (runAge != null && runAge.isPositive()) {
+            for (String id : runs.terminalRunsBefore(now.minus(runAge), 500)) {
+                Run run = runs.find(id).orElse(null);
+                if (run == null || !run.status().terminal() || scheduling(id)) {
+                    continue;
+                }
+                if (id.equals(run.workspaceOwnerId()) && !run.workspaceReleased() && !foreignWorkspace(run)) {
+                    sandboxProvider(run.workflow().sandboxProfileId()).ifPresent(provider -> {
+                        try {
+                            provider.release(id);
+                        } catch (IOException e) {
+                            log.warn("run {}: cannot delete workspace during retention: {}", id, e.toString());
+                        }
+                    });
+                }
+                if (runs.delete(id)) {
+                    deleted++;
+                }
+            }
+        }
+        if (pruned > 0 || deleted > 0) {
+            log.info("retention: pruned {} telemetry event(s), deleted {} run(s)", pruned, deleted);
+        }
+        return new RetentionResult(pruned, deleted);
+    }
+
+    /** Number of runs this instance currently executes. */
+    public int activeRunCount() {
+        schedulerLock.lock();
+        try {
+            return schedulers.size();
+        } finally {
+            schedulerLock.unlock();
+        }
+    }
+
+    /** Snapshot of the schedulers of this instance. */
+    Map<String, RunScheduler> localSchedulers() {
+        schedulerLock.lock();
+        try {
+            return Map.copyOf(schedulers);
+        } finally {
+            schedulerLock.unlock();
+        }
+    }
+
+    /** Whether the run's lease is held by another live engine instance. */
+    public boolean ownedElsewhere(String runId) {
+        return runs.find(runId)
+                .map(r -> leases.heldElsewhere(r, clock.instant()))
+                .orElse(false);
     }
 
     public static Builder builder() {
@@ -293,6 +382,7 @@ public final class RunEngine implements AutoCloseable {
 
     public List<RunEvent> events(String runId, long afterSequence, int limit) {
         require(runId);
+        telemetry.flush(runId);
         return runs.events(runId, afterSequence, limit);
     }
 
@@ -641,7 +731,9 @@ public final class RunEngine implements AutoCloseable {
         cancelChildren(liveChildren(run));
         if (settledNow[0]) {
             onTerminal(runId);
-        } else if (run.status() == RunStatus.RUNNING && !interruptScheduler(runId)) {
+        } else if (run.status() == RunStatus.RUNNING
+                && !interruptScheduler(runId)
+                && !leases.heldElsewhere(run, clock.instant())) {
             // no scheduler of this engine owns the run (it crashed or never started): settle it here,
             // unless a scheduler took over in the meantime (generation changed)
             settleCancelled(runId, run.generation(), true);
@@ -658,19 +750,50 @@ public final class RunEngine implements AutoCloseable {
      * @return ids of the recovered runs
      */
     public List<String> recoverInterruptedRuns() {
+        return claimOrphanedRuns();
+    }
+
+    /**
+     * Takes over active runs that no live instance owns: an expired lease, a dead owner process on
+     * this host, or no owner at all. Runs bound to a workspace on another live host stay there; a
+     * run whose workspace host is gone fails when the workspace held a repository checkout (its
+     * uncommitted changes went with the host), otherwise it continues here on a fresh workspace.
+     *
+     * @return ids of the runs this instance now executes
+     */
+    public List<String> claimOrphanedRuns() {
         List<String> recovered = new ArrayList<>();
         for (Run run : runs.list(RunQuery.withStatus(Set.of(RunStatus.RUNNING, RunStatus.QUEUED)))) {
-            if (scheduling(run.id())) {
+            if (closed || scheduling(run.id())) {
                 continue;
             }
-            reclaimOrphanedProcesses(run);
+            Instant now = clock.instant();
+            if (leases.heldElsewhere(run, now)) {
+                continue;
+            }
+            if (foreignWorkspace(run) && leases.hostAlive(run.workspaceHost(), now)) {
+                continue;
+            }
+            if (foreignWorkspace(run) && workspaceLost(run)) {
+                failLostWorkspace(run);
+                continue;
+            }
+            if (!foreignWorkspace(run)) {
+                reclaimOrphanedProcesses(run);
+            }
             mutate(run.id(), c -> {
                 Run r = c.run();
                 if (r.status() == RunStatus.QUEUED) {
                     r.status(RunStatus.RUNNING);
                 }
                 parkInFlightNodes(r, "实例重启，等待恢复");
-                c.event(null, "run.recovered", "执行实例重启后恢复调度");
+                String previous = r.ownerInstanceId();
+                c.event(
+                        null,
+                        "run.recovered",
+                        previous == null || previous.equals(settings.instanceId())
+                                ? "执行实例重启后恢复调度"
+                                : "接管了执行实例 " + previous + " 的过期租约");
                 return true;
             });
             ensureScheduler(run.id());
@@ -739,6 +862,9 @@ public final class RunEngine implements AutoCloseable {
         } catch (InterruptedException e) {
             threads.shutdownNow();
             Thread.currentThread().interrupt();
+        } finally {
+            telemetry.close();
+            leases.stop();
         }
     }
 
@@ -761,14 +887,31 @@ public final class RunEngine implements AutoCloseable {
                 if (r.status() != RunStatus.RUNNING) {
                     return false;
                 }
+                if (leases.heldElsewhere(r, c.now())) {
+                    // another live instance executes it and picks up the change within a tick
+                    return false;
+                }
+                if (foreignWorkspace(r)) {
+                    if (leases.hostAlive(r.workspaceHost(), c.now()) || workspaceLost(r)) {
+                        return false;
+                    }
+                    // the bound host is gone and held no checkout: continue on a fresh workspace here
+                    r.workspaceHost(settings.workspaceHost());
+                    r.workspaceRoot(null);
+                    r.repositoriesPrepared(false);
+                    c.event(null, "run.workspace.rebound", "工作区所在机器已下线，改在 " + settings.workspaceHost() + " 上继续");
+                }
                 // No scheduler of this engine runs the run, so a node still marked running was left by a
                 // crashed or stopped scheduler: continue it instead of failing it as orphaned.
                 parkInFlightNodes(r, "调度器重启，等待恢复");
                 r.generation(r.generation() + 1);
                 r.ownerInstanceId(settings.instanceId());
+                r.leaseUntil(c.now().plus(settings.leaseTtl()));
                 return true;
             });
-            if (claimed.isEmpty() || claimed.get().status() != RunStatus.RUNNING) {
+            if (claimed.isEmpty()
+                    || claimed.get().status() != RunStatus.RUNNING
+                    || !settings.instanceId().equals(claimed.get().ownerInstanceId())) {
                 return;
             }
             RunScheduler scheduler = new RunScheduler(this, runId, claimed.get().generation());
@@ -791,9 +934,68 @@ public final class RunEngine implements AutoCloseable {
             }
             schedulers.remove(scheduler.runId(), scheduler);
             schedulerCrashes.remove(scheduler.runId());
-            return true;
         } finally {
             schedulerLock.unlock();
+        }
+        releaseLease(scheduler.runId(), scheduler.generation());
+        return true;
+    }
+
+    /** A settled run (waiting, paused, terminal) has no owner; any instance may continue it. */
+    private void releaseLease(String runId, int generation) {
+        try {
+            runs.update(runId, c -> {
+                Run r = c.run();
+                if (r.status() == RunStatus.RUNNING
+                        || r.generation() != generation
+                        || !settings.instanceId().equals(r.ownerInstanceId())) {
+                    return false;
+                }
+                r.releaseLease();
+                return true;
+            });
+        } catch (RuntimeException e) {
+            log.warn("run {}: cannot release lease: {}", runId, e.toString());
+        }
+    }
+
+    private boolean foreignWorkspace(Run run) {
+        return !settings.sharedWorkspaces()
+                && run.workspaceHost() != null
+                && !run.workspaceHost().equals(settings.workspaceHost())
+                && run.workspaceRoot() != null
+                && !run.workspaceReleased();
+    }
+
+    /** The foreign workspace held a repository checkout whose changes are gone with the host. */
+    private static boolean workspaceLost(Run run) {
+        return !run.repositories().isEmpty() && run.repositoriesPrepared();
+    }
+
+    private void failLostWorkspace(Run run) {
+        String message = "工作区所在机器 " + run.workspaceHost() + " 已下线，之前节点的代码改动随之丢失，请从头重跑";
+        boolean[] failed = {false};
+        mutateQuietly(run.id(), c -> {
+            Run r = c.run();
+            failed[0] = false;
+            if (r.status() != RunStatus.RUNNING && r.status() != RunStatus.QUEUED || leases.heldElsewhere(r, c.now())) {
+                return false;
+            }
+            for (NodeRun nr : r.nodeRuns()) {
+                if (nr.status() == NodeStatus.RUNNING) {
+                    nr.error(message);
+                    nr.finish(NodeStatus.FAILED, c.now());
+                }
+            }
+            r.status(RunStatus.FAILED);
+            r.releaseLease();
+            c.event(null, "run.workspace_lost", message);
+            c.event(null, "run.failed", message);
+            failed[0] = true;
+            return true;
+        });
+        if (failed[0]) {
+            log.warn("run {} failed: {}", run.id(), message);
         }
     }
 
@@ -1000,6 +1202,8 @@ public final class RunEngine implements AutoCloseable {
                 return false;
             }
             parkInFlightNodes(r, "执行实例退出，等待恢复");
+            // released at once: another instance (or this one after a restart) continues immediately
+            r.releaseLease();
             c.event(null, "run.parked", "执行实例正在退出，已挂起等待接管");
             return true;
         });
@@ -1139,10 +1343,11 @@ public final class RunEngine implements AutoCloseable {
                         FailureKind.CONFIGURATION,
                         "sandbox profile '" + run.workflow().sandboxProfileId() + "' is not available"));
         Sandbox sandbox = provider.acquire(run.workspaceOwnerId());
-        if (run.workspaceRoot() == null || run.workspaceReleased()) {
+        if (run.workspaceRoot() == null || run.workspaceReleased() || run.workspaceHost() == null) {
             mutateQuietly(run.id(), c -> {
                 c.run().workspaceRoot(sandbox.workspace().toString());
                 c.run().workspaceReleased(false);
+                c.run().workspaceHost(settings.workspaceHost());
                 return true;
             });
             emit(
@@ -1330,14 +1535,12 @@ public final class RunEngine implements AutoCloseable {
         attributes.values().removeIf(Objects::isNull);
         RunEvent event = new RunEvent(
                 0, runId, nodeId, t.category(), t.name(), t.level(), t.message(), attributes, clock.instant());
-        List<RunEvent> stored = runs.appendEvents(runId, List.of(event));
-        if (!stored.isEmpty()) {
-            listeners.forEach(l -> safely(() -> l.eventsAppended(runId, stored)));
-        }
+        telemetry.add(runId, event);
     }
 
     /** Applies a mutation and notifies listeners; throws when the run does not exist. */
     Run mutate(String runId, RunMutator mutator) {
+        telemetry.flush(runId);
         Run run = runs.update(runId, mutator)
                 .orElseThrow(() -> new RunNotFoundException("run '" + runId + "' not found"));
         notifyChanged(run);
@@ -1346,6 +1549,7 @@ public final class RunEngine implements AutoCloseable {
 
     /** Like {@link #mutate} but tolerates a run that disappeared. */
     Optional<Run> mutateQuietly(String runId, RunMutator mutator) {
+        telemetry.flush(runId);
         Optional<Run> run = runs.update(runId, mutator);
         run.ifPresent(this::notifyChanged);
         return run;
@@ -1463,6 +1667,9 @@ public final class RunEngine implements AutoCloseable {
         private EngineSettings settings;
         private Clock clock;
         private GitCredentialProvider gitCredentials;
+        private io.github.loopforge4j.core.store.InstanceRegistry instances;
+        private boolean claimOrphans;
+        private Duration telemetryFlushInterval;
         private java.util.function.UnaryOperator<String> mcpSecrets;
         private java.nio.file.Path gateMcpJava;
         private DeliveryProvider delivery;
@@ -1478,6 +1685,24 @@ public final class RunEngine implements AutoCloseable {
         /** {@code java} launcher for the gate MCP server as seen inside the sandbox. */
         public Builder gateMcpJava(java.nio.file.Path value) {
             this.gateMcpJava = value;
+            return this;
+        }
+
+        /** Shared registry of engine instances (multi-instance deployments use a database one). */
+        public Builder instances(io.github.loopforge4j.core.store.InstanceRegistry value) {
+            this.instances = value;
+            return this;
+        }
+
+        /** How long telemetry is batched before it is written; zero writes every event at once. */
+        public Builder telemetryFlushInterval(Duration value) {
+            this.telemetryFlushInterval = value;
+            return this;
+        }
+
+        /** Periodically take over runs whose owner stopped renewing its lease. */
+        public Builder claimOrphans(boolean value) {
+            this.claimOrphans = value;
             return this;
         }
 

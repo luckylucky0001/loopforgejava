@@ -16,6 +16,8 @@
 
 - 迭代 3 — 隔离与执行面：门禁 MCP 服务 `submit_gate_result`（仅依赖 JDK 的 jar，独立 JVM）；规则 / Skills / MCP 服务器目录与 API，`${secret:NAME}` 由 `loopforge.mcp.secrets` 解析；角色物化（系统指令、SKILL.md 与 Claude 插件、Hook 脚本与观测、严格 MCP 白名单）接入 Claude Code、CodeBuddy、Codex；Hooks 观测事件 `hook.started/finished`；OpenCode、Cursor、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode 执行器；Docker 沙箱（`loopforge.sandbox.docker.*`，工作流 `sandboxProfileId: docker`）。
 
+- 迭代 4 — 多实例与运维：运行租约（存储内原子声明、心跳续约、结算与停机释放）、实例注册表与接管循环、同机已退出进程立即接管、失去租约即停止本地执行；工作区主机绑定与"主机下线且有仓库检出"时失败；遥测批量写入；保留策略（`loopforge.retention.telemetry/runs`）；Micrometer 指标（`loopforge.runs.*`、`loopforge.nodes.*`、`loopforge.node.duration`、`loopforge.gate.*`、`loopforge.tokens`、`loopforge.cost.usd`）。
+
 ### Fixed (并发审查)
 - 暂停后继续父运行会重复启动子 SOP 并遗留旧子运行。
 - 自动打回会清除待处理的取消/暂停；取消待处理时其他人工操作也会清除它。

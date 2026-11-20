@@ -4,7 +4,7 @@
 
 > 本项目为独立的社区移植，**与腾讯无隶属、赞助或背书关系**。上游以 MIT 许可发布，本仓库同样采用 MIT，并完整保留上游版权与许可声明，详见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-当前版本 0.1.0-SNAPSHOT：已完成引擎核心与 REST/SSE 服务（迭代 1）、Git 仓库交付（迭代 2）、MCP / Skills / Hooks / 全部 10 种 CLI / Docker 沙箱（迭代 3）；后续迭代见 [路线图](docs/roadmap.md)。
+当前版本 0.1.0-SNAPSHOT：已完成引擎核心与 REST/SSE 服务（迭代 1）、Git 仓库交付（迭代 2）、MCP / Skills / Hooks / 全部 10 种 CLI / Docker 沙箱（迭代 3）、多实例租约与运维（迭代 4）；后续迭代见 [路线图](docs/roadmap.md)。
 
 ## 已实现
 
@@ -18,7 +18,8 @@
 | MCP / Skills / Hooks | 门禁 MCP 工具 `submit_gate_result`；规则、Skills（SKILL.md 树）、MCP 服务器目录，按角色白名单物化为各 CLI 的原生配置；Hooks 编译为原生 Hook 配置并上报执行事件；MCP 密钥用 `${secret:NAME}` 引用 |
 | Git 交付 | 仓库目录；运行检出到独立工作分支（多仓库、继续/新建/只读模式）；凭据经 credential helper 注入；`executionScope=repositories` 的脚本与门禁；`mode=mr` 门禁核验 PR 覆盖最新提交；GitHub PR 记录与合并检测 |
 | 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止；Docker 沙箱：每个运行一个容器、资源限制、只读根文件系统、变量不上命令行 |
-| 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话（当前为单实例部署） |
+| 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话；多实例部署：运行租约、心跳与过期接管、工作区主机绑定 |
+| 运维 | 遥测批量写入；保留策略（执行器遥测、终态运行）；Prometheus 指标：运行与节点结果、节点耗时、返工、门禁决策、token 与成本 |
 | 服务 | Spring Boot 4.1 / Java 21 虚拟线程；REST + SSE（支持 `Last-Event-ID` 续传）；RFC 9457 错误；Bearer Token；Flyway；H2（开发）/ PostgreSQL（生产）；OpenAPI；Actuator 健康探针与 Prometheus 指标 |
 
 ## 快速开始
@@ -109,6 +110,20 @@ loopforge:
 ```
 
 角色通过 `rules`、`skills`、`mcpServers`、`hooks` 绑定资产；每次调用都会把它们编译成对应 CLI 的原生配置（只包含白名单内容，不读取仓库或用户级 CLI 配置）。Agent 用 MCP 工具 `submit_gate_result` 提交节点终态。
+
+### 多实例部署
+
+多个服务实例连接同一个 PostgreSQL 即可：每个运行由持有租约的实例执行，实例每 `lease-ttl/3` 续约并在 `engine_instances` 心跳；实例宕机后其他实例在 `lease-ttl`（默认 60 秒）内接管。工作区默认在本机磁盘：工作区主机在线时运行不会迁移；主机下线时，含仓库检出的运行会失败并提示重跑，其余运行在新主机上重建。若所有实例以相同路径挂载共享存储，设置 `loopforge.engine.shared-workspaces=true` 即可跨主机接管。
+
+```yaml
+loopforge:
+  engine:
+    lease-ttl: 60s
+    claim-interval: 10s
+  retention:
+    telemetry: 30d      # 执行器输出/工具/进程/Hook 事件；生命周期与门禁审计事件保留
+    runs: 180d          # 删除终态运行（含事件、产物与工作区）；默认 0 = 永久保留
+```
 
 ### 生产部署（PostgreSQL）
 

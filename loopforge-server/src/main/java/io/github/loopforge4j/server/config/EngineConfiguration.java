@@ -137,6 +137,7 @@ class EngineConfiguration {
             GitCredentialProvider gitCredentials,
             DeliveryProvider delivery,
             java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.DockerSandboxProvider> docker,
+            io.github.loopforge4j.core.store.InstanceRegistry instances,
             LoopForgeProperties properties,
             Clock clock,
             List<RunListener> listeners) {
@@ -146,14 +147,20 @@ class EngineConfiguration {
                 engine.defaultExecutor(),
                 engine.nodeTimeout(),
                 engine.schedulerTick(),
-                engine.releaseWorkspaceOnFinish());
+                engine.releaseWorkspaceOnFinish(),
+                engine.leaseTtl(),
+                engine.claimInterval(),
+                engine.workspaceHost(),
+                engine.sharedWorkspaces());
         RunEngine.Builder builder = RunEngine.builder()
                 .runStore(runStore)
                 .catalogStore(catalogStore)
                 .executors(executors)
                 .sandbox(sandbox);
         docker.ifPresent(builder::sandbox);
-        RunEngine runEngine = builder.gitCredentials(gitCredentials)
+        RunEngine runEngine = builder.instances(instances)
+                .claimOrphans(engine.recoverOnStartup())
+                .gitCredentials(gitCredentials)
                 .mcpSecrets(properties.mcp().secrets()::get)
                 .delivery(delivery)
                 .settings(settings)

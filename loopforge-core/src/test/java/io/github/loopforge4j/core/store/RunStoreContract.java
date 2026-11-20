@@ -198,4 +198,54 @@ public abstract class RunStoreContract {
                 .containsExactly(a.id());
         assertThat(store().list(new RunQuery(Set.of(), null, "nobody", 10))).isEmpty();
     }
+
+    @org.junit.jupiter.api.Test
+    void retentionFindsDeletesAndPrunes() {
+        RunStore store = store();
+        Run done = newRun("wf");
+        Run active = newRun("wf");
+        store.insert(done, List.of());
+        store.insert(active, List.of());
+        store.update(done.id(), c -> {
+            c.run().status(io.github.loopforge4j.core.domain.RunStatus.SUCCEEDED);
+            c.event(null, "run.succeeded", "ok");
+            return true;
+        });
+        java.time.Instant old = java.time.Instant.now().minus(java.time.Duration.ofDays(40));
+        store.appendEvents(
+                done.id(),
+                List.of(
+                        new io.github.loopforge4j.core.domain.RunEvent(
+                                0, done.id(), "a", "output", "agent.output", "info", "chunk", java.util.Map.of(), old),
+                        new io.github.loopforge4j.core.domain.RunEvent(
+                                0, done.id(), "a", "lifecycle", "node.note", "info", "keep", java.util.Map.of(), old),
+                        new io.github.loopforge4j.core.domain.RunEvent(
+                                0,
+                                done.id(),
+                                "a",
+                                "output",
+                                "agent.output",
+                                "info",
+                                "fresh",
+                                java.util.Map.of(),
+                                java.time.Instant.now())));
+
+        assertThat(store.pruneEvents(
+                        java.time.Instant.now().minus(java.time.Duration.ofDays(30)), java.util.Set.of("output")))
+                .isEqualTo(1);
+        assertThat(store.events(done.id(), 0, 100))
+                .extracting(io.github.loopforge4j.core.domain.RunEvent::message)
+                .contains("keep", "fresh")
+                .doesNotContain("chunk");
+
+        java.time.Instant later = java.time.Instant.now().plusSeconds(5);
+        assertThat(store.terminalRunsBefore(later, 10)).contains(done.id()).doesNotContain(active.id());
+        assertThat(store.terminalRunsBefore(java.time.Instant.now().minusSeconds(3600), 10))
+                .doesNotContain(done.id());
+        assertThat(store.delete(done.id())).isTrue();
+        assertThat(store.delete(done.id())).isFalse();
+        assertThat(store.find(done.id())).isEmpty();
+        assertThat(store.events(done.id(), 0, 100)).isEmpty();
+        assertThat(store.find(active.id())).isPresent();
+    }
 }

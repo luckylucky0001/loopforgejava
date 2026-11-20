@@ -65,6 +65,14 @@
 
 `executionScope=repositories` 的脚本和命令门禁在每个仓库目录各执行一次并注入 `LOOPFORGE_REPOSITORY_*`、`LOOPFORGE_WORK_BRANCH` 等变量。`mode=mr` 门禁对每个推送了新提交的可写仓库调用 `DeliveryProvider`，要求存在从工作分支到基线、覆盖最新推送提交的 PR；平台不可查询时转人工确认。找到的 PR 记录在运行的 `deliveries` 中，成功的运行由定时任务刷新合并状态。
 
+## 多实例
+
+每个 RUNNING 运行最多有一个调度器：`ensureScheduler` 在一次存储更新里检查租约（`ownerInstanceId`、`leaseUntil`）、递增 generation 并写入自己的租约，乐观并发保证两个实例不会同时声明成功。`LeaseKeeper` 每 TTL/3 心跳实例注册表并续约本实例的所有运行；续约时发现 owner 或 generation 已变（被接管），本地调度器放弃运行并终止节点进程——generation 栅栏本来就拒绝它的迟到写入，这一步避免两个实例在同一工作区里各跑一个 CLI。
+
+运行结算（等待人工、暂停、终态）时释放租约；之后任何实例上的人工操作都能重新声明。优雅停机挂起节点并立即释放租约。接管循环（默认 10 秒）查找没有存活 owner 的 RUNNING/QUEUED 运行：租约过期，或注册表显示 owner 与本机同 host 但其 pid（按启动时间校验）已不存在。运行记录 `workspaceHost`：主机存活时只由它继续；主机下线且工作区里有仓库检出时运行失败（未推送的改动随主机丢失，与上游一致），否则在本机重建工作区。
+
+遥测（CLI 输出、工具调用等）按运行缓冲，每 200 ms 或满 200 条写一次；任何状态变更和事件读取之前先刷新该运行的缓冲，事件序号因此与发生顺序一致。
+
 ## 角色物化
 
 每次 CLI 调用前，`AgentMaterializer` 把角色编译到工作区：

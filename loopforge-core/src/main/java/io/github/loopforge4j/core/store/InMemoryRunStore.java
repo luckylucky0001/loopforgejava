@@ -138,4 +138,46 @@ public final class InMemoryRunStore implements RunStore {
                 .filter(a -> a.id().equals(artifactId))
                 .findFirst();
     }
+
+    @Override
+    public List<String> terminalRunsBefore(java.time.Instant before, int limit) {
+        return runs.values().stream()
+                .map(raw -> Json.read(raw, Run.class))
+                .filter(r -> r.status().terminal()
+                        && r.updatedAt() != null
+                        && r.updatedAt().isBefore(before))
+                .sorted(java.util.Comparator.comparing(Run::updatedAt))
+                .limit(limit)
+                .map(Run::id)
+                .toList();
+    }
+
+    @Override
+    public boolean delete(String runId) {
+        writeLock.lock();
+        try {
+            events.remove(runId);
+            artifacts.remove(runId);
+            return runs.remove(runId) != null;
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    @Override
+    public int pruneEvents(java.time.Instant before, java.util.Set<String> categories) {
+        writeLock.lock();
+        try {
+            int removed = 0;
+            for (List<RunEvent> list : events.values()) {
+                int size = list.size();
+                list.removeIf(
+                        e -> categories.contains(e.category()) && e.timestamp().isBefore(before));
+                removed += size - list.size();
+            }
+            return removed;
+        } finally {
+            writeLock.unlock();
+        }
+    }
 }

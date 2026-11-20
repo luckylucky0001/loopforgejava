@@ -41,6 +41,8 @@ public final class Run {
     private java.util.List<PullRequest> deliveries = new java.util.ArrayList<>();
     private boolean workspaceReleased;
     private String ownerInstanceId;
+    private Instant leaseUntil;
+    private String workspaceHost;
     private int generation;
     private Instant createdAt;
     private Instant updatedAt;
@@ -203,6 +205,30 @@ public final class Run {
     /** Run whose workspace this run uses: child SOP runs work in their root run's checkout. */
     public String workspaceOwnerId() {
         return context.workspaceRunId() == null || context.workspaceRunId().isBlank() ? id : context.workspaceRunId();
+    }
+
+    /** End of the owner's execution lease; another instance may take the run over afterwards. */
+    public Instant leaseUntil() {
+        return leaseUntil;
+    }
+
+    public void leaseUntil(Instant value) {
+        this.leaseUntil = value;
+    }
+
+    /** Host whose file system holds the workspace (upstream workspace host binding). */
+    public String workspaceHost() {
+        return workspaceHost;
+    }
+
+    public void workspaceHost(String value) {
+        this.workspaceHost = value;
+    }
+
+    /** Clears the execution lease so any instance may continue the run. */
+    public void releaseLease() {
+        this.ownerInstanceId = null;
+        this.leaseUntil = null;
     }
 
     public String ownerInstanceId() {

@@ -298,4 +298,41 @@ public class JdbcRunStore implements RunStore {
                 rs.getString("content"),
                 Timestamps.read(rs, "created_at"));
     }
+
+    @Override
+    public List<String> terminalRunsBefore(java.time.Instant before, int limit) {
+        return jdbc.sql("SELECT id FROM runs WHERE status IN ('succeeded', 'failed', 'cancelled')"
+                        + " AND updated_at < :before ORDER BY updated_at LIMIT :limit")
+                .param("before", Timestamps.of(before))
+                .param("limit", limit)
+                .query(String.class)
+                .list();
+    }
+
+    @Override
+    public boolean delete(String runId) {
+        ReentrantLock lock = locks.forRun(runId);
+        lock.lock();
+        try {
+            // events and artifacts cascade
+            return execute(status -> jdbc.sql("DELETE FROM runs WHERE id = :id")
+                            .param("id", runId)
+                            .update())
+                    > 0;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public int pruneEvents(java.time.Instant before, java.util.Set<String> categories) {
+        if (categories.isEmpty()) {
+            return 0;
+        }
+        return execute(
+                status -> jdbc.sql("DELETE FROM run_events WHERE created_at < :before AND category IN (:categories)")
+                        .param("before", Timestamps.of(before))
+                        .param("categories", List.copyOf(categories))
+                        .update());
+    }
 }

@@ -43,4 +43,25 @@ public interface RunStore {
     List<Artifact> artifacts(String runId);
 
     Optional<Artifact> artifact(String runId, String artifactId);
+
+    /**
+     * Ids of terminal runs last updated before {@code before}, oldest first (retention). Stores
+     * without retention support return nothing.
+     */
+    default List<String> terminalRunsBefore(java.time.Instant before, int limit) {
+        return List.of();
+    }
+
+    /** Deletes a run together with its events and artifacts; returns whether it existed. */
+    default boolean delete(String runId) {
+        return false;
+    }
+
+    /**
+     * Deletes events of the given categories created before {@code before} (telemetry retention);
+     * returns the number of deleted events.
+     */
+    default int pruneEvents(java.time.Instant before, java.util.Set<String> categories) {
+        return 0;
+    }
 }

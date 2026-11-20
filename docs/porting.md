@@ -27,6 +27,8 @@
 | `internal/runtime/provider_claude.go`、`provider_codebuddy.go`、`provider_codex.go`（物化部分） | `CliAgentExecutor.addCompiledArgs`、`CodexMcpArgs` | 已移植 |
 | `internal/runtime/agent_cli.go`、`agent_cli_stream.go`、`agent_cli_zcode.go`、`provider_agentcli.go` | `AgentCliExecutor`、`AgentCliTranslators`、`ClaudeStream` | 已移植（模型网关与个人凭据渲染除外） |
 | `internal/runtime/sandbox_docker.go` | `core.runtime.sandbox.DockerSandbox*` | 每运行一个容器；镜像构建与环境定义未移植 |
+| `internal/engine/run_recovery.go`（租约、接管、工作区主机绑定）、`internal/repo/run_admission.go`（租约 SQL） | `core.engine.LeaseKeeper`、`RunEngine.claimOrphanedRuns`、`server.persistence.JdbcInstanceRegistry` | 已移植（排队准入/桶限流未移植） |
+| `internal/observability`（遥测批量）、分析统计 | `core.engine.TelemetryBuffer`、`server.ops.RunMetrics` | 指标以 Micrometer 暴露 |
 | `internal/domain/assets.go`（rules/skills/mcp） | `core.domain.RuleDefinition`、`SkillDefinition`、`McpServerDefinition` | 文本文件（二进制 skill 文件、市场来源未移植） |
 
 ## 有意的差异
@@ -49,11 +51,11 @@
 | 节点超时 | 无 | 可选 `timeoutSeconds` + 全局默认 | 防止卡死的 CLI 占用调度 |
 | 进程组 | `Setpgid` + `kill(-pgid)` | `setsid` + `kill -KILL -pgid` | 等价；JVM 无法直接 setpgid |
 | 取消期间的人工操作 | 部分操作会清除取消/暂停标志 | 取消待处理时拒绝操作；结束暂停时释放所有暂停分支 | 修复并发审查发现的竞态 |
-| 多实例 | 运行租约 + 心跳 + 接管 | 单实例（尚未移植租约） | 列入路线图迭代 4 |
+| 多实例 | 运行租约 + 心跳 + 接管 | 同样的租约模型；另外用实例注册表里的 pid 检测同机已退出的进程，单实例重启无需等待 TTL | 崩溃后立即恢复 |
 | Git 凭据 | 按负责人账户解析 | 部署级配置（`loopforge.git.https` 列表、SSH 私钥文件） | 账户体系在迭代 5；`GitCredentialProvider` 端口已按运行解析 |
 | 本地仓库路径 | 允许 | 默认拒绝 `file:`/本地路径与 `http://`，需 `loopforge.git.allow-local-remotes` | 防止运行读取服务器任意目录、凭据明文传输 |
 | 克隆 URL 内嵌凭据 | 允许 | 拒绝 | 凭据只能来自服务端配置 |
 
 ## 尚未移植
 
-Web UI 与 Chat/Main Bot、会话工作区、GitLab/工蜂 MR 交付、执行机器（runner）与云端池、平台 MCP 与知识库 MCP、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、账户/项目/需求/Issue、定时任务、通知与 Bot、分析与成本定价、预览构建、多实例租约。排期见 [roadmap.md](roadmap.md)。
+Web UI 与 Chat/Main Bot、会话工作区、GitLab/工蜂 MR 交付、执行机器（runner）与云端池、平台 MCP 与知识库 MCP、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、账户/项目/需求/Issue、定时任务、通知与 Bot、成本定价表与分析看板、预览构建、运行排队准入与限流桶。排期见 [roadmap.md](roadmap.md)。

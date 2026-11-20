@@ -31,19 +31,30 @@ public record LoopForgeProperties(
         @DefaultValue Map<String, Map<String, String>> credentials,
         @Valid @DefaultValue Git git,
         @Valid @DefaultValue GitHub github,
-        @Valid @DefaultValue Mcp mcp) {
+        @Valid @DefaultValue Mcp mcp,
+        @Valid @DefaultValue Retention retention) {
 
     /**
      * @param defaultExecutor executor id used when neither role nor node chooses one
      * @param nodeTimeout limit for one agent invocation or script
      * @param releaseWorkspaceOnFinish delete workspaces of succeeded and cancelled runs
+     * @param leaseTtl how long a run's execution lease survives without heartbeat; another instance
+     *     takes over a run at most this long after its owner died
+     * @param claimInterval how often orphaned runs are looked for
+     * @param workspaceHost name of the file system holding workspaces (host name by default)
+     * @param sharedWorkspaces every instance mounts the workspace root at the same path, so runs may
+     *     move between hosts
      */
     public record Engine(
             @NotBlank @DefaultValue("claude") String defaultExecutor,
             @NotNull @DefaultValue("2h") Duration nodeTimeout,
             @NotNull @DefaultValue("500ms") Duration schedulerTick,
             @DefaultValue("true") boolean releaseWorkspaceOnFinish,
-            @DefaultValue("true") boolean recoverOnStartup) {}
+            @DefaultValue("true") boolean recoverOnStartup,
+            @NotNull @DefaultValue("60s") Duration leaseTtl,
+            @NotNull @DefaultValue("10s") Duration claimInterval,
+            String workspaceHost,
+            @DefaultValue("false") boolean sharedWorkspaces) {}
 
     /**
      * @param passthroughEnv host variables forwarded to processes; never list secrets here
@@ -134,6 +145,18 @@ public record LoopForgeProperties(
             return "Mcp[secrets=" + secrets.keySet() + "]";
         }
     }
+
+    /**
+     * @param telemetry age after which executor telemetry (output, tool, process, hook events) is
+     *     deleted; the lifecycle and gate audit trail is kept. Zero keeps everything.
+     * @param runs age after which terminal runs are deleted with their events, artifacts and
+     *     workspace. Zero (default) keeps runs forever.
+     * @param interval how often the policy is applied
+     */
+    public record Retention(
+            @NotNull @DefaultValue("30d") Duration telemetry,
+            @NotNull @DefaultValue("0s") Duration runs,
+            @NotNull @DefaultValue("1h") Duration interval) {}
 
     /** Replaces the launch command of a built-in executor (e.g. an absolute binary path). */
     public record ExecutorOverride(String binary, List<String> args, String model, String effort) {}

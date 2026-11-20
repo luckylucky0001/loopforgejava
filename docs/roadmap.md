@@ -30,11 +30,14 @@
 - [x] 其余 7 种 Agent CLI：OpenCode、Cursor、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode（原生流翻译为 Claude stream-json，MCP 配置写入私有 HOME）
 - [x] Docker 沙箱：每个运行一个容器、工作区同路径挂载、资源限制、只读根文件系统、`no-new-privileges`、变量按名传递不上命令行、标记进程终止
 
-## 迭代 4 — 多实例与运维
+## 迭代 4 — 多实例与运维（已完成）
 
-- 运行租约（owner + lease_until + 心跳）与跨实例接管
-- 遥测批量写入、事件保留策略、运行归档
-- Micrometer 指标（节点耗时、门禁通过率、返工率、token 成本）与 OpenTelemetry 追踪
+- [x] 运行租约：`ownerInstanceId + leaseUntil`，在存储里原子声明，心跳每 TTL/3 续约；结算（等待/暂停/终态）与优雅停机立即释放
+- [x] 实例注册表（`engine_instances`）与接管循环：租约过期或同机进程已退出即接管；失去租约的实例停止本地节点
+- [x] 工作区主机绑定：工作区所在主机存活时不迁移；主机下线且含仓库检出的运行失败并说明原因，否则在新主机重建；`shared-workspaces` 支持共享存储
+- [x] 遥测批量写入（每运行缓冲，状态变更与读取前先刷新，保持事件顺序）
+- [x] 保留策略：按天清理执行器遥测（保留审计事件），按期删除终态运行及其工作区
+- [x] Micrometer 指标：运行/节点结果、节点耗时直方图、返工、门禁决策与检查、token 与成本、活动运行数
 
 ## 迭代 5 — 协作
 
