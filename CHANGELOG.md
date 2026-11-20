@@ -22,6 +22,9 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 17)
+- SkillHub 技能市场（`loopforge.skillhub.*`，`/api/v1/skillhub/*`）：搜索与预览，管理员安装 / 更新技能（记录来源，跳过二进制、超限与越界文件），控制台入口。
+
 ### Security（迭代 10–14 独立审查）
 - 助手对话只允许发起人发言（项目成员可查看）；对话令牌绑定到当前这一轮，并且只能经平台 MCP 使用，不能直接调用 API、保存定时任务或通知、在执行机器上启动运行。此前项目查看者可以在别人的对话里发言，并借持久的工作区与令牌获得对方的权限。
 - 需求澄清每轮重新克隆仓库、清空 git 私有 HOME，克隆后删除 SSH 私钥；此前分析 Agent 能读到平台的部署私钥，并能通过检出目录里的 git 配置在下一轮带凭据执行命令。

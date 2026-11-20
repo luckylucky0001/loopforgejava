@@ -41,7 +41,36 @@ public record LoopForgeProperties(
         String publicUrl,
         @Valid @DefaultValue Tapd tapd,
         @Valid @DefaultValue Trackers trackers,
-        @Valid @DefaultValue Assistant assistant) {
+        @Valid @DefaultValue Assistant assistant,
+        @Valid @DefaultValue Skillhub skillhub) {
+
+    /**
+     * The SkillHub skills market (upstream {@code SKILLHUB_BASE_URL} / {@code SKILLHUB_API_KEY}).
+     *
+     * @param baseUrl market URL; the market is off when empty
+     * @param apiKey sent as {@code X-API-Key}, only to the market's own host
+     * @param maxFiles files a package may hold
+     * @param maxFileSize larger files are skipped
+     * @param maxPackageSize a package larger than this is refused
+     */
+    public record Skillhub(
+            String baseUrl,
+            String apiKey,
+            @NotNull @DefaultValue("15s") Duration timeout,
+            @NotNull @DefaultValue("60s") Duration downloadTimeout,
+            @DefaultValue("200") int maxFiles,
+            @NotNull @DefaultValue("1MB") org.springframework.util.unit.DataSize maxFileSize,
+            @NotNull @DefaultValue("8MB") org.springframework.util.unit.DataSize maxPackageSize) {
+
+        public boolean configured() {
+            return baseUrl != null && !baseUrl.isBlank();
+        }
+
+        @Override
+        public String toString() {
+            return "Skillhub[baseUrl=" + baseUrl + ", apiKey=" + (apiKey == null ? "none" : "***") + "]";
+        }
+    }
 
     /**
      * The conversation assistant (upstream Main Bot).

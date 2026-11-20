@@ -800,6 +800,42 @@ async function assetsPage(kind) {
     h('a', { class: k === kind ? 'btn current' : 'btn', href: `#/assets/${k}` }, label)));
   await listPage(kind, KINDS[kind].title, kind === 'rules' ? ['id', 'name', 'priority'] : kind === 'skills' ? ['id', 'name', 'description'] : ['id', 'name', 'transport', 'command']);
   document.querySelector('main').prepend(tabs);
+  if (kind === 'skills') {
+    const status = await api('/skillhub/status').catch(() => ({ configured: false }));
+    if (status.configured) {
+      const installed = await api('/skillhub/installed').catch(() => []);
+      document.querySelector('main h1')?.after(h('button', { onclick: () => skillMarket(installed) }, '从 SkillHub 安装'));
+      if (installed.length) {
+        document.querySelector('main').append(h('h2', {}, '来自 SkillHub'), h('table', {}, h('tr', {}, ['技能', '来源', '版本', '更新', ''].map((t) => h('th', {}, t))),
+          installed.map((s) => h('tr', {}, h('td', { class: 'mono' }, s.skillId), h('td', { class: 'mono' }, `${s.namespace || ''}/${s.slug}`),
+            h('td', { class: 'mono' }, s.version), h('td', {}, time(s.updatedAt)),
+            h('td', {}, me?.user?.role === 'admin' || me?.service ? h('button', { onclick: () => prompted(`更新 ${s.skillId}`, [{ name: 'version', label: '版本（留空 = 最新）' }],
+              (v) => api('/skillhub/update', { method: 'POST', body: { skillId: s.skillId, version: v.version || undefined } }).then(() => assetsPage('skills'))) }, '更新') : null)))));
+      }
+    }
+  }
+}
+
+/** Search the SkillHub market and install a skill (administrators). */
+function skillMarket(installed) {
+  const keyword = h('input', { placeholder: '搜索技能' });
+  const results = h('div', { class: 'market' });
+  const search = () => attempt(() => api(`/skillhub/skills?pageSize=20&keyword=${encodeURIComponent(keyword.value.trim())}`), (page) => {
+    const skills = page.skills || [];
+    results.replaceChildren(...(skills.length ? skills.map((s) => {
+      const ns = s.namespace?.handle || '';
+      const done = installed.find((x) => x.slug === s.slug && (x.namespace || '') === ns);
+      return h('div', { class: 'market-item' }, h('div', {}, h('strong', {}, s.name || s.slug), h('span', { class: 'muted mono' }, ` ${ns ? ns + '/' : ''}${s.slug} · v${s.version || '?'}`),
+        h('div', { class: 'muted' }, s.description_zh || s.description || ''), h('div', { class: 'muted' }, `下载 ${num(s.downloads || 0)} · 收藏 ${num(s.stars || 0)}${s.verified ? ' · 已认证' : ''}`)),
+      done ? h('span', { class: 'muted' }, `已安装为 ${done.skillId}`) : h('button', { onclick: () => prompted(`安装 ${s.name || s.slug}`, [
+        { name: 'id', label: '技能 id', value: s.slug }, { name: 'version', label: '版本（留空 = 最新）' }],
+      (v) => api('/skillhub/install', { method: 'POST', body: { slug: s.slug, namespace: ns || undefined, id: v.id, version: v.version || undefined } })
+        .then((r) => { if (r.skipped?.length) alert(`已安装，跳过：\n${r.skipped.join('\n')}`); location.hash = `#/assets/skills/${encodeURIComponent(r.skill.id)}`; return r; })) }, '安装'));
+    }) : [h('p', { class: 'muted' }, '没有找到技能')]));
+  });
+  keyword.addEventListener('keydown', (e) => { if (e.key === 'Enter') search(); });
+  modal('SkillHub 技能市场', h('div', {}, h('div', { class: 'row' }, keyword, h('button', { class: 'primary', onclick: search }, '搜索')), results), () => null);
+  search();
 }
 
 async function definitionPage(kind, id) {
