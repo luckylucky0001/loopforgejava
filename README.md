@@ -79,6 +79,16 @@ loopforge:
       model: sonnet
 ```
 
+### 沙箱环境
+
+除了部署配置的 `local` / `docker` / `bwrap`，管理员可以在「沙箱环境」里定义更多沙箱配置供 SOP 选择（`sandboxProfileId`）：
+
+- **沙箱配置**：驱动 `local`（服务器进程）、`native`（bubblewrap 隔离）或 `docker`（需要启用 `loopforge.sandbox.docker`），可选 Dockerfile、环境、只读根文件系统与额外变量；`native` 与 `docker` 视为隔离环境，成员可用。
+- **环境**：每条命令都带上的变量、放到 `PATH` 最前面的工作区相对目录，以及每个工作区第一次执行命令前运行一次的安装脚本。
+- **Dockerfile**：Dockerfile 与构建上下文文件；第一次使用时构建镜像 `loopforge-env/<id>:<内容哈希>`，内容不变就复用。
+
+仍被引用的环境、Dockerfile 和沙箱配置不能删除。执行机器只支持它本机配置的沙箱。
+
 ### SkillHub 技能市场
 
 配置 `loopforge.skillhub.base-url`（与可选的 `api-key`，只发送给市场自己的主机）后，「规则 / Skills / MCP → Skills」可以搜索市场并安装技能（管理员）：指定版本或最新版本的 `SKILL.md` 与文本文件写入技能目录，二进制文件、超限文件与越界路径会被跳过并列出；已安装的技能可以更新到其他版本。市场只看到调用者的匿名标识。
@@ -291,6 +301,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` | `/api/v1/runs/{id}/stream` | SSE 实时流（浏览器可用 `?access_token=`） |
 | `GET` | `/api/v1/runs/{id}/logs`、`/logs.txt` | 日志分页（`nodeId`、`after` / `before` 游标）与文本下载（含脚本输出，最多 20,000 行） |
 | `DELETE` | `/api/v1/runs/{id}` | 删除已结束的运行（含子运行、事件、产物与工作区；项目维护者） |
+| `GET/PUT/DELETE` | `/api/v1/sandboxes[/{id}]`、`/environments[/{id}]`、`/dockerfiles[/{id}]` | 沙箱配置（含是否可用、是否隔离）、环境与 Dockerfile（写入需要管理员） |
 | `GET/POST` | `/api/v1/skillhub/skills[/{slug}[/versions\|/files\|/file]]`、`/categories`、`/install`、`/update`、`/installed` | SkillHub 技能市场：搜索、详情、文件预览、安装与更新（管理员） |
 | `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |

@@ -37,6 +37,7 @@
 | `internal/repo/revisions*`、`internal/httpapi`（revisions / publish / clone / logs / schedule-job-executions） | `server.persistence.DefinitionRevision*`、`RevisionSummary`、`web.WorkflowController`、`RunController`、`work.ScheduleExecution*` | SOP 与角色历史版本（保留 100 个、作者、变化摘要）与恢复、发布与复制、运行日志分页与下载、删除已结束运行、定时任务执行记录（保留 200 条） |
 | `internal/repo` 个人配置（执行器凭据、Git 连接）、`internal/runtime/agent_cli.go`（凭据映射） | `server.account.PersonalCredentials*`、`CredentialCipher`、`core.runtime.executor.PersonalCredentialVariables` | 个人模型凭据与 Git Token：加密保存、按负责人（运行发起人、定时任务创建人、发言人、澄清发起人）解析，执行器凭据整体替代平台凭据 |
 | `internal/httpapi/assistant_schedule.go`、`assistant_tasks.go`、调度触发配置 | `server.work.ScheduleService`（`kind` = `assistant` / `dispatch`）、`AssistantService.runScheduled` | AI 定时任务（以最后保存人的身份与凭据、完全权限运行一轮助手对话）与按状态自动派发需求的 SOP |
+| `internal/domain` Dockerfile / Environment / SandboxProfile 与 `/api/dockerfiles`、`/api/environments`、`/api/sandboxes` | `core.domain.*Definition`、`core.runtime.sandbox.ProfileSandboxProvider`、`EnvironmentSandbox`、`server.sandbox.*` | 目录中的沙箱配置（local / native / docker）、环境（变量、PATH、每工作区一次的安装脚本）、按内容哈希构建并复用的 Dockerfile 镜像 |
 | `internal/httpapi/skillhub_client.go`、`skillhub_market.go` | `server.skillhub.*` | SkillHub 市场：浏览、安装与更新为目录技能（来源记录、匿名用户标识、跨主机跳转不带 API Key） |
 | `internal/runeval/*`、`internal/domain/run_eval.go` | `core.eval.*`、`server.eval.*` | 运行评测：事实、加权维度、评测提示与结果约定、建议应用到当前 SOP / 角色 |
 | `internal/httpapi/clarify_jobs.go`、`clarify_session.go`、`issue_routes.go`（澄清） | `server.work.Clarification*`、`core.engine.Conversations.checkout` | AI 澄清：后台轮次、只读检出、续接会话、范围规则与轮数收敛、结论写入描述与回写原单 |
@@ -96,4 +97,4 @@
 
 ## 尚未移植
 
-对话的群协作与浏览器工具、对话内自动登记 PR、需求多泳道、云端执行池的自动扩缩容、浏览器 MCP、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、企业微信智能机器人长连接与 AI 运行报告、业务域报表、预览构建。排期见 [roadmap.md](roadmap.md)。
+对话的群协作与浏览器工具、对话内自动登记 PR、需求多泳道、云端执行池的自动扩缩容、浏览器 MCP、macOS seatbelt 沙箱、企业微信智能机器人长连接与 AI 运行报告、业务域报表、预览构建。排期见 [roadmap.md](roadmap.md)。

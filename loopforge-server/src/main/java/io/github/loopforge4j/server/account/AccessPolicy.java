@@ -39,7 +39,7 @@ public class AccessPolicy {
         if (!membersRequireIsolation || current(principal).admin() || workflow == null) {
             return;
         }
-        if (!isolatedProfiles.contains(workflow.sandboxProfileId())) {
+        if (!isolated(workflow.sandboxProfileId())) {
             throw new AccessDeniedException("SOP '" + workflow.id() + "' uses sandbox profile '"
                     + workflow.sandboxProfileId() + "'; members may only use isolated profiles " + isolatedProfiles);
         }
@@ -50,10 +50,20 @@ public class AccessPolicy {
         if (!membersRequireIsolation || current(principal).admin()) {
             return;
         }
-        if (!isolatedProfiles.contains(profileId)) {
+        if (!isolated(profileId)) {
             throw new AccessDeniedException(
                     "sandbox profile '" + profileId + "' is not isolated; members may only use " + isolatedProfiles);
         }
+    }
+
+    /** Configured as isolated, or a catalog profile whose driver isolates (native, docker). */
+    private boolean isolated(String profileId) {
+        return isolatedProfiles.contains(profileId)
+                || profileId != null
+                        && !io.github.loopforge4j.core.domain.SandboxProfileDefinition.BUILT_IN.contains(profileId)
+                        && catalog.asset(io.github.loopforge4j.core.domain.AssetKind.SANDBOX, profileId)
+                                .map(io.github.loopforge4j.core.domain.SandboxProfileDefinition::isolated)
+                                .orElse(false);
     }
 
     public void requireIsolatedSandbox(Principal principal, String workflowId) {

@@ -15,6 +15,13 @@ public record AssetKind<T extends CatalogAsset>(String wire, Class<T> type) {
     public static final AssetKind<McpServerDefinition> MCP_SERVER =
             new AssetKind<>("mcp-server", McpServerDefinition.class);
 
+    public static final AssetKind<DockerfileDefinition> DOCKERFILE =
+            new AssetKind<>("dockerfile", DockerfileDefinition.class);
+    public static final AssetKind<EnvironmentDefinition> ENVIRONMENT =
+            new AssetKind<>("environment", EnvironmentDefinition.class);
+    public static final AssetKind<SandboxProfileDefinition> SANDBOX =
+            new AssetKind<>("sandbox", SandboxProfileDefinition.class);
+
     public static List<AssetKind<?>> all() {
         return List.of(RULE, SKILL, MCP_SERVER);
     }

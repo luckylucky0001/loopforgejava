@@ -87,6 +87,7 @@ public final class RunEngine implements AutoCloseable {
     private final Map<String, RunScheduler> schedulers = new HashMap<>();
     private final NodeRunner nodeRunner;
     private final GitCredentialProvider gitCredentials;
+    private final java.util.function.Function<String, Optional<SandboxProvider>> sandboxProfiles;
     private final LeaseKeeper leases;
     private final AdmissionPolicy admission;
     private final io.github.loopforge4j.core.pricing.TokenPricing pricing;
@@ -112,6 +113,7 @@ public final class RunEngine implements AutoCloseable {
         this.clock = builder.clock == null ? Clock.systemUTC() : builder.clock;
         this.nodeRunner = new NodeRunner(this);
         this.gitCredentials = builder.gitCredentials == null ? GitCredentialProvider.NONE : builder.gitCredentials;
+        this.sandboxProfiles = builder.sandboxProfiles;
         this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
         this.platformMcp =
                 builder.platformMcp == null ? io.github.loopforge4j.core.mcp.PlatformMcp.NONE : builder.platformMcp;
@@ -1544,7 +1546,9 @@ public final class RunEngine implements AutoCloseable {
     }
 
     Optional<SandboxProvider> sandboxProvider(String profileId) {
-        return sandboxes.stream().filter(p -> p.supports(profileId)).findFirst();
+        Optional<SandboxProvider> builtIn =
+                sandboxes.stream().filter(p -> p.supports(profileId)).findFirst();
+        return builtIn.isPresent() ? builtIn : sandboxProfiles.apply(profileId);
     }
 
     /** Sandbox of the run's workspace; records the workspace root on first use. */
@@ -2014,6 +2018,14 @@ public final class RunEngine implements AutoCloseable {
 
         public Builder executors(ExecutorRegistry value) {
             this.executors = value;
+            return this;
+        }
+
+        private java.util.function.Function<String, Optional<SandboxProvider>> sandboxProfiles = id -> Optional.empty();
+
+        /** Profiles defined at runtime (the catalog), consulted after the configured providers. */
+        public Builder sandboxProfiles(java.util.function.Function<String, Optional<SandboxProvider>> value) {
+            this.sandboxProfiles = value;
             return this;
         }
 

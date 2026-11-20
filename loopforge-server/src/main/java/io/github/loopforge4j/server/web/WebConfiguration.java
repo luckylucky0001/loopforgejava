@@ -38,6 +38,9 @@ class WebConfiguration implements WebMvcConfigurer {
                         "/api/v1/rules/**",
                         "/api/v1/skills/**",
                         "/api/v1/mcp-servers/**",
+                        "/api/v1/dockerfiles/**",
+                        "/api/v1/environments/**",
+                        "/api/v1/sandboxes/**",
                         "/api/v1/catalog/import");
     }
 

@@ -151,12 +151,34 @@ public final class WorkflowValidator {
     }
 
     /** Validates a rule, skill or MCP server definition. */
+    private static final java.util.regex.Pattern ENV_NAME =
+            java.util.regex.Pattern.compile("^[A-Za-z_][A-Za-z0-9_]{0,127}$");
+
+    /** A relative path that stays below its root: no absolute path, no {@code ..}, no control characters. */
+    static boolean strictRelativePath(String path) {
+        if (path == null || path.isBlank() || path.length() > 300 || path.startsWith("/") || path.contains("\\")) {
+            return false;
+        }
+        if (path.chars().anyMatch(c -> c < 0x20 || c == 0x7f)) {
+            return false;
+        }
+        for (String segment : path.split("/")) {
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static List<String> assetProblems(io.github.loopforge4j.core.domain.CatalogAsset asset) {
         List<String> problems = new ArrayList<>();
         String kind = switch (asset) {
             case io.github.loopforge4j.core.domain.RuleDefinition r -> "rule";
             case io.github.loopforge4j.core.domain.SkillDefinition s -> "skill";
             case io.github.loopforge4j.core.domain.McpServerDefinition m -> "MCP server";
+            case io.github.loopforge4j.core.domain.DockerfileDefinition d -> "Dockerfile";
+            case io.github.loopforge4j.core.domain.EnvironmentDefinition e -> "environment";
+            case io.github.loopforge4j.core.domain.SandboxProfileDefinition p -> "sandbox profile";
             default -> "asset";
         };
         checkId(kind, asset.id(), problems);
@@ -190,6 +212,62 @@ public final class WorkflowValidator {
                 if (size > 2_000_000) {
                     problems.add("skill files may total at most 2 MB");
                 }
+            }
+            case io.github.loopforge4j.core.domain.DockerfileDefinition dockerfile -> {
+                if (dockerfile.content().isBlank()) {
+                    problems.add("Dockerfile content is required");
+                }
+                checkLength("Dockerfile content", dockerfile.content(), MAX_TEXT, problems);
+                if (dockerfile.files().size() > 100) {
+                    problems.add("a Dockerfile may have at most 100 context files");
+                }
+                long size = 0;
+                for (Map.Entry<String, String> file : dockerfile.files().entrySet()) {
+                    size += file.getValue() == null ? 0 : file.getValue().length();
+                    if (!strictRelativePath(file.getKey())) {
+                        problems.add("context file path '" + file.getKey() + "' must be a safe relative path");
+                    }
+                }
+                if (size > 2_000_000) {
+                    problems.add("Dockerfile context files may total at most 2 MB");
+                }
+            }
+            case io.github.loopforge4j.core.domain.EnvironmentDefinition environment -> {
+                if (environment.variables().size() > 100) {
+                    problems.add("an environment may have at most 100 variables");
+                }
+                environment.variables().forEach((name, value) -> {
+                    if (!ENV_NAME.matcher(name).matches() || name.startsWith("LOOPFORGE_")) {
+                        problems.add("variable name '" + name + "' is invalid (letters, digits, _; not LOOPFORGE_*)");
+                    }
+                    if (value != null && value.indexOf('\0') >= 0) {
+                        problems.add("variable " + name + " contains NUL");
+                    }
+                });
+                for (String entry : environment.pathEntries()) {
+                    if (!strictRelativePath(entry)) {
+                        problems.add("PATH entry '" + entry + "' must be a safe relative path in the workspace");
+                    }
+                }
+                checkLength("install script", environment.installScript(), MAX_TEXT, problems);
+            }
+            case io.github.loopforge4j.core.domain.SandboxProfileDefinition profile -> {
+                if (io.github.loopforge4j.core.domain.SandboxProfileDefinition.BUILT_IN.contains(profile.id())) {
+                    problems.add("sandbox profile '" + profile.id() + "' is built in and configured by the deployment");
+                }
+                if (!io.github.loopforge4j.core.domain.SandboxProfileDefinition.DRIVERS.contains(profile.driver())) {
+                    problems.add("driver must be local, native or docker");
+                }
+                if (profile.dockerfileId() != null
+                        && !io.github.loopforge4j.core.domain.SandboxProfileDefinition.DOCKER.equals(
+                                profile.driver())) {
+                    problems.add("dockerfileId needs the docker driver");
+                }
+                profile.environment().forEach((name, value) -> {
+                    if (!ENV_NAME.matcher(name).matches() || name.startsWith("LOOPFORGE_")) {
+                        problems.add("variable name '" + name + "' is invalid (letters, digits, _; not LOOPFORGE_*)");
+                    }
+                });
             }
             case io.github.loopforge4j.core.domain.McpServerDefinition server -> {
                 if (io.github.loopforge4j.core.mcp.PlatformMcp.reserved(server.id())) {

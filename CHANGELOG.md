@@ -22,6 +22,9 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 18)
+- 沙箱环境：目录中的沙箱配置（`/api/v1/sandboxes`，驱动 local / native / docker）、环境（`/api/v1/environments`：变量、PATH、每工作区一次的安装脚本）与 Dockerfile（`/api/v1/dockerfiles`，按内容哈希构建镜像）；隔离按驱动判断；控制台「沙箱环境」与设计器中的沙箱选择。
+
 ### Added (迭代 17)
 - SkillHub 技能市场（`loopforge.skillhub.*`，`/api/v1/skillhub/*`）：搜索与预览，管理员安装 / 更新技能（记录来源，跳过二进制、超限与越界文件），控制台入口。
 

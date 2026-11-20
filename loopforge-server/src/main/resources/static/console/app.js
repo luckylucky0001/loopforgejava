@@ -194,7 +194,7 @@ function dag(workflow, statuses = {}, onSelect) {
 
 const NAV = [
   ['#/chat', '助手'], ['#/runs', '运行'], ['#/approvals', '待处理'], ['#/workflows', 'SOP'], ['#/agents', '角色'],
-  ['#/assets/rules', '规则 / Skills / MCP'], ['#/repositories', '代码仓库'], ['#/projects', '项目'],
+  ['#/assets/rules', '规则 / Skills / MCP'], ['#/environments/sandboxes', '沙箱环境'], ['#/repositories', '代码仓库'], ['#/projects', '项目'],
   ['#/analytics', '分析'], ['#/knowledge', '知识库'], ['#/runners', '执行机器'], ['#/executors', '执行器'], ['#/settings', '设置'],
 ];
 
@@ -225,6 +225,9 @@ const ROUTES = [
   [/^#\/assets\/(rules|skills|mcp-servers)\/new$/, (kind) => definitionPage(kind, null)],
   [/^#\/assets\/(rules|skills|mcp-servers)\/([^/]+)$/, (kind, id) => definitionPage(kind, id)],
   [/^#\/assets\/(rules|skills|mcp-servers)$/, assetsPage],
+  [/^#\/environments\/(sandboxes|environments|dockerfiles)\/new$/, (kind) => definitionPage(kind, null)],
+  [/^#\/environments\/(sandboxes|environments|dockerfiles)\/([^/]+)$/, (kind, id) => definitionPage(kind, id)],
+  [/^#\/environments\/(sandboxes|environments|dockerfiles)$/, environmentsPage],
   [/^#\/repositories\/new$/, () => definitionPage('repositories', null)],
   [/^#\/repositories\/([^/]+)$/, (id) => definitionPage('repositories', id)],
   [/^#\/repositories$/, () => listPage('repositories', '代码仓库', ['id', 'name', 'provider', 'cloneUrl', 'projectId'])],
@@ -684,7 +687,10 @@ function designer(wf, catalog, onChange) {
       field('名称', bind(h('input', { value: wf.name || '' }), (v) => { wf.name = v; })),
       field('状态', select(wf.status || 'draft', [['draft', '草稿'], ['published', '已发布'], ['archived', '已归档']], (v) => { wf.status = v; })),
       field('项目（空 = 全局）', select(wf.projectId, [['', '全局'], ...catalog.projects.map((p) => [p.id, p.name])], (v) => { wf.projectId = v || undefined; })),
-      field('沙箱', bind(h('input', { value: wf.sandboxProfileId || 'local', placeholder: 'local / docker / bwrap' }), (v) => { wf.sandboxProfileId = v.trim() || undefined; })),
+      field('沙箱', select(wf.sandboxProfileId || 'local', [['local', 'local（服务器进程）'], ['docker', 'docker'], ['bwrap', 'bwrap'],
+        ...(catalog.sandboxes || []).map((p) => [p.id, `${p.name || p.id}（${p.driver}${p.available ? '' : '，不可用'}）`]),
+        ...(['local', 'docker', 'bwrap'].includes(wf.sandboxProfileId || 'local') || (catalog.sandboxes || []).some((p) => p.id === wf.sandboxProfileId) ? [] : [[wf.sandboxProfileId, wf.sandboxProfileId]])],
+      (v) => { wf.sandboxProfileId = v || undefined; })),
       field('描述', bind(h('textarea', { rows: 3 }, wf.description || ''), (v) => { wf.description = v || undefined; })),
       h('p', { class: 'muted' }, '拖动节点调整位置；从节点右侧的圆点拖到另一个节点即可连线；点选节点或连线后在这里编辑，Delete 键删除。'));
   }
@@ -721,9 +727,10 @@ function designer(wf, catalog, onChange) {
 }
 
 async function workflowPage(id) {
-  const [loaded, agents, executors, workflows, projects] = await Promise.all([
+  const [loaded, agents, executors, workflows, projects, sandboxes] = await Promise.all([
     id ? api(`/workflows/${id}`) : Promise.resolve(JSON.parse(JSON.stringify(TEMPLATE))),
     api('/agents').catch(() => []), api('/executors').catch(() => []), api('/workflows').catch(() => []), api('/projects').catch(() => []),
+    api('/sandboxes').catch(() => []),
   ]);
   let wf = stripMeta(loaded);
   wf.nodes ||= [];
@@ -733,7 +740,7 @@ async function workflowPage(id) {
   const editor = h('textarea', { class: 'code', spellcheck: 'false' });
   const body = h('div', {});
   let mode = 'design';
-  const catalog = { agents, executors, workflows, projects };
+  const catalog = { agents, executors, workflows, projects, sandboxes };
   const showDesign = () => {
     mode = 'design';
     body.replaceChildren(designer(wf, catalog, (next) => { wf = next; }));
@@ -782,6 +789,9 @@ const KINDS = {
   agents: { title: '角色', path: '/agents', back: '#/agents', template: { name: '新角色', executorId: 'claude', prompt: '你负责……', rules: [], skills: [], mcpServers: [], hooks: [], verification: [], platformMcp: false, knowledgeBase: false } },
   rules: { title: '规则', path: '/rules', back: '#/assets/rules', template: { name: '新规则', content: '', priority: 0 } },
   skills: { title: 'Skill', path: '/skills', back: '#/assets/skills', template: { name: '新 Skill', description: '', content: '# Skill\n', files: {} } },
+  sandboxes: { title: '沙箱配置', path: '/sandboxes', back: '#/environments/sandboxes', template: { name: '新沙箱', driver: 'docker', dockerfileId: '', environmentId: '', readOnlyRootFs: false, environment: {} } },
+  environments: { title: '环境', path: '/environments', back: '#/environments/environments', template: { name: '新环境', variables: {}, pathEntries: ['.tools/bin'], installScript: '# 在工作区里安装工具，每个工作区只运行一次\n' } },
+  dockerfiles: { title: 'Dockerfile', path: '/dockerfiles', back: '#/environments/dockerfiles', template: { name: '新镜像', content: 'FROM debian:bookworm-slim\nRUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*\n', files: {} } },
   'mcp-servers': { title: 'MCP 服务器', path: '/mcp-servers', back: '#/assets/mcp-servers', template: { name: '新 MCP', transport: 'stdio', command: '', args: [], environment: {} } },
   repositories: { title: '代码仓库', path: '/repositories', back: '#/repositories', template: { name: '', cloneUrl: 'https://github.com/owner/repo.git', defaultBranch: 'main' } },
 };
@@ -793,6 +803,24 @@ async function listPage(kind, title, columns) {
     h('table', {}, h('tr', {}, columns.map((c) => h('th', {}, c))),
       items.map((item) => h('tr', {}, columns.map((c, i) => h('td', { class: i === 0 ? 'mono' : '' },
         i === 0 ? h('a', { href: `${base}/${encodeURIComponent(item.id)}` }, item.id) : String(item[c] ?? '—'))))))]);
+}
+
+/** Sandbox profiles (what SOPs select), their environments and Dockerfiles. */
+async function environmentsPage(kind) {
+  const tabs = h('div', { class: 'row mb' }, [['sandboxes', '沙箱配置'], ['environments', '环境'], ['dockerfiles', 'Dockerfile']].map(([k, label]) =>
+    h('a', { class: k === kind ? 'btn current' : 'btn', href: `#/environments/${k}` }, label)));
+  if (kind === 'sandboxes') {
+    const items = await api('/sandboxes');
+    shell([tabs, h('div', { class: 'row' }, h('h1', {}, '沙箱配置'), h('span', { class: 'spacer' }), h('a', { class: 'btn', href: '#/environments/sandboxes/new' }, '新建')),
+      h('p', { class: 'muted' }, 'SOP 用 sandboxProfileId 选择：local（服务器进程）、native（bubblewrap 隔离）、docker（Dockerfile 构建的镜像或默认镜像）；环境里的变量、PATH 与安装脚本作用于每条命令。内置的 local / docker / bwrap 由部署配置。'),
+      h('table', {}, h('tr', {}, ['id', '名称', '驱动', '镜像', '环境', '隔离', '可用'].map((t) => h('th', {}, t))),
+        items.map((p) => h('tr', {}, h('td', { class: 'mono' }, h('a', { href: `#/environments/sandboxes/${encodeURIComponent(p.id)}` }, p.id)), h('td', {}, p.name),
+          h('td', { class: 'mono' }, p.driver), h('td', { class: 'mono' }, p.dockerfileId || '—'), h('td', { class: 'mono' }, p.environmentId || '—'),
+          h('td', {}, p.isolated ? '是' : '否'), h('td', {}, badge(p.available ? 'succeeded' : 'failed', p.available ? '可用' : '不可用')))))]);
+    return;
+  }
+  await listPage(kind, KINDS[kind].title, kind === 'environments' ? ['id', 'name', 'description'] : ['id', 'name', 'description']);
+  document.querySelector('main').prepend(tabs);
 }
 
 async function assetsPage(kind) {
