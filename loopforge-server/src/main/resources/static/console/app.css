@@ -200,3 +200,5 @@ meter { width: 160px; }
 .browser-frame { display: block; width: 100%; aspect-ratio: 1280 / 800; object-fit: contain; cursor: pointer; outline: none; }
 .browser-frame:focus { box-shadow: inset 0 0 0 2px #3b82f6; }
 .row .grow { flex: 1; min-width: 160px; }
+.term-host { margin-top: 8px; background: #000; border-radius: 6px; padding: 6px; min-height: 40px; }
+.term-host:empty { display: none; }

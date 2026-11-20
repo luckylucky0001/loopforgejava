@@ -1790,6 +1790,7 @@ async function chatPage(id) {
       h('button', { class: 'danger', onclick: remove }, '删除')),
     feed, live, queueBox,
     browserPanel(`/assistant/sessions/${encodeURIComponent(current.id)}/browser`),
+    h('details', { class: 'panel' }, h('summary', {}, '工作区终端'), terminalPanel(`/assistant/sessions/${encodeURIComponent(current.id)}/terminal`, '助手回复时不能打开')),
     h('div', { class: 'panel mt' }, input, h('div', { class: 'row mt' },
       h('label', { class: 'muted', title: '回复进行中时发送：打断当前回复并先处理这条（否则排队等待）' }, steer, ' 发送时打断当前回复'),
       h('span', { class: 'spacer' }), stopButton, sendButton))))]);
@@ -2110,7 +2111,101 @@ async function workspacePage(runId) {
         info.repositories.length ? h('div', { class: 'panel' }, h('div', { class: 'row' }, h('h2', {}, '提交'), h('span', { class: 'spacer' }),
           info.repositories.length > 1 ? repoPicker : null), history) : null,
         h('div', { class: 'panel' }, h('h2', {}, '文件'), tree)),
-      view)]);
+      view),
+    info.readOnly || info.shared ? null : terminalPanel(`${base}/terminal`, '在工作区沙箱里运行；有节点运行时不能打开')]);
+}
+
+// ------------------------------------------------------------------ workspace terminal
+
+let xtermLoading = null;
+
+/** xterm.js (MIT, vendored under /console/vendor/xterm), loaded the first time a terminal opens. */
+function loadXterm() {
+  if (window.Terminal) return Promise.resolve(window.Terminal);
+  if (!xtermLoading) {
+    xtermLoading = new Promise((resolve, reject) => {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = '/console/vendor/xterm/xterm.css';
+      document.head.append(css);
+      const script = document.createElement('script');
+      script.src = '/console/vendor/xterm/xterm.js';
+      script.onload = () => resolve(window.Terminal);
+      script.onerror = () => { xtermLoading = null; reject(new Error('终端组件加载失败')); };
+      document.head.append(script);
+    });
+  }
+  return xtermLoading;
+}
+
+/** A shell in a workspace (upstream workspace terminal): polled while the page is open. */
+function terminalPanel(path, hint) {
+  const host = h('div', { class: 'term-host' });
+  const note = h('span', { class: 'muted' }, hint || '');
+  const openButton = h('button', { class: 'primary' }, '打开终端');
+  const closeButton = h('button', { class: 'danger', hidden: true }, '关闭终端');
+  const page = location.hash;
+  let id = null;
+  let term = null;
+  let timer = null;
+  let pending = '';
+  let sending = false;
+  const stop = (message) => {
+    clearTimeout(timer);
+    id = null;
+    closeButton.hidden = true;
+    openButton.hidden = false;
+    if (message) note.textContent = message;
+  };
+  const poll = async () => {
+    if (!id) return;
+    if (location.hash !== page || !host.isConnected) {
+      api(path, { method: 'POST', body: { operation: 'close', id } }).catch(() => {});
+      stop();
+      return;
+    }
+    try {
+      const r = await api(path, { method: 'POST', body: { operation: 'read', id } });
+      if (r.data) term.write(Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0)));
+      if (r.exited) { stop('终端已退出'); return; }
+    } catch (error) { stop(error.message); return; }
+    timer = setTimeout(poll, 250);
+  };
+  const flush = async () => {
+    if (sending || !pending || !id) return;
+    sending = true;
+    const data = pending;
+    pending = '';
+    try { await api(path, { method: 'POST', body: { operation: 'input', id, data } }); } catch (error) { note.textContent = error.message; } finally {
+      sending = false;
+      if (pending) flush();
+    }
+  };
+  openButton.addEventListener('click', () => attempt(async () => {
+    const Terminal = await loadXterm();
+    if (!term) {
+      term = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000 });
+      term.open(host);
+      term.onData((d) => { pending += d; flush(); });
+    }
+    term.reset();
+    const cols = Math.max(40, Math.min(300, Math.floor((host.clientWidth || 800) / 8.4)));
+    const rows = 24;
+    term.resize(cols, rows);
+    const r = await api(path, { method: 'POST', body: { operation: 'open', cols, rows } });
+    id = r.id;
+    openButton.hidden = true;
+    closeButton.hidden = false;
+    note.textContent = `离开页面 ${r.idleSeconds} 秒后自动关闭`;
+    term.focus();
+    poll();
+  }));
+  closeButton.addEventListener('click', () => {
+    const old = id;
+    stop('终端已关闭');
+    if (old) api(path, { method: 'POST', body: { operation: 'close', id: old } }).catch(() => {});
+  });
+  return h('div', { class: 'panel' }, h('div', { class: 'row' }, h('h2', {}, '终端'), h('span', { class: 'spacer' }), note, openButton, closeButton), host);
 }
 
 // ------------------------------------------------------------------ requirement lanes

@@ -46,7 +46,10 @@ class SecurityConfiguration {
                                 },
                                 new org.springframework.security.web.header.writers.StaticHeadersWriter(
                                         "Content-Security-Policy",
-                                        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:;"
+                                        // scripts stay strict; the terminal (xterm.js) themes itself with
+                                        // <style> elements, and the console never renders markup it is given
+                                        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';"
+                                                + " img-src 'self' data: blob:;"
                                                 + " connect-src 'self'; object-src 'none'; base-uri 'none';"
                                                 + " frame-ancestors 'none'; form-action 'self'"))))
                 .authorizeHttpRequests(auth -> {

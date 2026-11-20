@@ -55,6 +55,20 @@ exact resolved set with:
 ./mvnw -q dependency:list -pl loopforge-server -DincludeScope=runtime
 ```
 
+## xterm.js (bundled in the web console)
+
+- Project: <https://github.com/xtermjs/xterm.js>, package `@xterm/xterm` 5.5.0
+- License: MIT (the full notice ships next to the files in
+  `loopforge-server/src/main/resources/static/console/vendor/xterm/LICENSE`)
+- What is included: the unmodified `lib/xterm.js` and `css/xterm.css`, loaded by
+  the console's workspace terminal.
+
+```text
+Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
+Copyright (c) 2014-2016, SourceLair Private Company (https://www.sourcelair.com)
+Copyright (c) 2012-2013, Christopher Jeffrey (https://github.com/chjj/)
+```
+
 ## Executor CLIs
 
 Coding-agent CLIs (Claude Code, Codex, CodeBuddy, ...) are **not** bundled.

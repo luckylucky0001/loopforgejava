@@ -1839,6 +1839,24 @@ public final class RunEngine implements AutoCloseable {
         }
     }
 
+    /**
+     * The sandbox of a workspace that exists on this host, for people working in it (a terminal):
+     * never creates or restores one.
+     */
+    public Sandbox existingWorkspaceSandbox(String runId) throws IOException {
+        WorkspaceLocation location = workspace(runId);
+        if (!location.available()) {
+            throw new IOException(location.unavailable());
+        }
+        Run run = require(runId);
+        Run owner = run.workspaceOwnerId().equals(run.id())
+                ? run
+                : runs.find(run.workspaceOwnerId()).orElse(run);
+        SandboxProvider provider = sandboxProvider(owner.workflow().sandboxProfileId())
+                .orElseThrow(() -> new IOException("沙箱 " + owner.workflow().sandboxProfileId() + " 在本实例不可用"));
+        return provider.acquire(owner.workspaceOwnerId());
+    }
+
     /** Sandbox of the run's workspace; records the workspace root on first use. */
     Sandbox sandbox(Run run) throws IOException, NodeFailure {
         SandboxProvider provider = sandboxProvider(run.workflow().sandboxProfileId())

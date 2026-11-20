@@ -122,6 +122,10 @@ loopforge:
 
 配置了单独的预览源时，服务器需要能访问 `loopforge.preview.public-url`。Docker 镜像不带浏览器，需要截图时在镜像里自行安装。
 
+### 工作区终端
+
+运行的工作区页面和对话页都有「终端」：在工作区自己的沙箱里打开一个交互式 Shell（有 `script` 时带伪终端，支持颜色和交互程序）。只有能操作运行的人能打开，而且要等没有节点在运行（停在审批处、已暂停或已结束）；对话在助手回复时不能打开。终端只属于打开它的人，每人每个工作区最多 2 个；离开页面 15 秒后自动关闭，运行事件里会记下谁打开过终端。终端不带个人 Git 凭据。
+
 ### Agent 浏览器
 
 运行和对话各有一个服务器上的 Chromium，Agent 用浏览器 MCP（`loopforge-browser`）操作它：`browser_navigate` 打开网页、localhost 上的开发服务器或工作区里的 HTML 文件，`browser_snapshot` 读取可见文本与带 ref（如 `e12`）的可交互元素，`browser_click` / `browser_type` / `browser_press` 操作，`browser_screenshot` 截图，`browser_tabs` 管理标签页。浏览器在第一次使用时启动，闲置 15 分钟关闭。
@@ -409,6 +413,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/POST` | `/api/v1/skillhub/skills[/{slug}[/versions\|/files\|/file]]`、`/categories`、`/install`、`/update`、`/installed` | SkillHub 技能市场：搜索、详情、文件预览、安装与更新（管理员） |
 | `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
 | `POST/DELETE` | `/api/v1/runs/{id}/browser`、`/api/v1/assistant/sessions/{id}/browser` | Agent 浏览器：状态、打开网址、前进后退、快照、截图、按 ref 点击 / 输入 / 按键、标签页、控制台输入事件；关闭 |
+| `POST` | `/api/v1/runs/{id}/workspace/terminal`、`/api/v1/assistant/sessions/{id}/terminal` | 工作区终端：`open` / `read`（Base64 输出）/ `input` / `close` |
 | `POST` | `/api/v1/browser/mcp` | 浏览器 MCP（Agent 的浏览器令牌） |
 | `GET/POST/PUT/DELETE` | `/api/v1/runs/{id}/preview[/session[/{sid}]\|/backend\|/download\|/screenshot]`、`/preview/{令牌}/**` | 前端预览：状态、会话链接（可带后端地址、可撤销）、默认后端地址、zip 下载、截图（PNG，`POST` 重新截图）、删除；免登录的隔离访问 |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |

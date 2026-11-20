@@ -300,6 +300,16 @@ public final class Conversations {
         return out;
     }
 
+    /** The sandbox of the conversation's workspace, if its sandbox profile is available here. */
+    public java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.Sandbox> sandbox(
+            String conversationId, String sandboxProfileId) throws IOException {
+        var provider = engine.sandboxProvider(sandboxProfileId);
+        if (provider.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(provider.get().acquire(workspaceId(conversationId)));
+    }
+
     /** The conversation's workspace root, if its sandbox profile is available here. */
     public java.util.Optional<java.nio.file.Path> workspace(String conversationId, String sandboxProfileId)
             throws IOException {
