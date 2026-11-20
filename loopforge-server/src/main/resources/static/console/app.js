@@ -859,11 +859,27 @@ async function projectPage(projectId) {
     { name: 'workflowId', label: 'SOP', type: 'select', options: sopOptions, value: r.workflowId || sopOptions[0] },
     { name: 'input', label: '补充说明', type: 'textarea', rows: 3 }],
   (v) => api(`/projects/${projectId}/requirements/${r.number}/runs`, { method: 'POST', body: v }).then((run) => { location.hash = `#/runs/${run.id}`; return run; }));
-  const newSchedule = () => prompted('新定时任务', [
-    { name: 'name', label: '名称' }, { name: 'cron', label: 'Cron（分 时 日 月 周）', placeholder: '0 3 * * 1-5' },
-    { name: 'zone', label: '时区', value: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' },
-    { name: 'workflowId', label: 'SOP', type: 'select', options: sopOptions }, { name: 'input', label: '输入', type: 'textarea', rows: 3 }],
-  (v) => api(`/projects/${projectId}/schedules`, { method: 'POST', body: { ...v, enabled: true, skipIfRunning: true } }).then(refresh));
+  const SCHEDULE_KINDS = { sop: '运行 SOP', assistant: 'AI 任务（助手按提示词执行）', dispatch: '自动派发需求' };
+  const scheduleCommon = () => [{ name: 'name', label: '名称' }, { name: 'cron', label: 'Cron（分 时 日 月 周）', placeholder: '0 3 * * 1-5' },
+    { name: 'zone', label: '时区', value: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' }];
+  const scheduleFields = {
+    sop: () => [{ name: 'workflowId', label: 'SOP', type: 'select', options: sopOptions }, { name: 'input', label: '输入', type: 'textarea', rows: 3 }],
+    assistant: () => [{ name: 'prompt', label: '提示词（以你的身份和凭据、完全权限执行，不会等待确认）', type: 'textarea', rows: 6 }],
+    dispatch: () => [{ name: 'statuses', label: '派发哪些状态的需求（逗号分隔）', value: 'todo' },
+      { name: 'maxDispatch', label: '每次最多派发', type: 'number', value: '5' },
+      { name: 'workflowId', label: 'SOP（留空 = 用需求自己绑定的）', type: 'select', options: ['', ...sopOptions] }],
+  };
+  const newSchedule = () => prompted('新定时任务', [{ name: 'kind', label: '类型', type: 'select', options: Object.keys(SCHEDULE_KINDS), value: 'sop' }],
+    (k) => Promise.resolve(prompted(`新定时任务 · ${SCHEDULE_KINDS[k.kind]}`, [...scheduleCommon(), ...scheduleFields[k.kind]()], (v) => {
+      const body = { name: v.name, cron: v.cron, zone: v.zone, kind: k.kind, enabled: true, skipIfRunning: true };
+      if (k.kind === 'sop') Object.assign(body, { workflowId: v.workflowId, input: v.input });
+      if (k.kind === 'assistant') body.prompt = v.prompt;
+      if (k.kind === 'dispatch') Object.assign(body, { workflowId: v.workflowId || undefined, maxDispatch: Number(v.maxDispatch) || 5,
+        dispatchStatuses: v.statuses.split(',').map((x) => x.trim()).filter(Boolean) });
+      return api(`/projects/${projectId}/schedules`, { method: 'POST', body }).then(refresh);
+    })));
+  const scheduleTarget = (s) => (s.kind === 'assistant' ? `AI：${(s.prompt || '').slice(0, 40)}` : s.kind === 'dispatch'
+    ? `派发 ${(s.dispatchStatuses || []).join('/')} → ${s.workflowId || '需求的 SOP'}（≤${s.maxDispatch}）` : s.workflowId);
   const newChannel = () => prompted('新通知', [
     { name: 'name', label: '名称' },
     { name: 'kind', label: '类型（webhook=通用 JSON；wecom/feishu/dingtalk/slack=群机器人）', type: 'select', options: ['webhook', 'wecom', 'feishu', 'dingtalk', 'slack'], value: 'webhook' },
@@ -911,16 +927,18 @@ async function projectPage(projectId) {
         h('td', {}, badge(l.status === 'ok' ? 'succeeded' : 'failed')), h('td', {}, l.created), h('td', {}, l.updated), h('td', {}, l.removed),
         h('td', { class: 'muted' }, l.message)))),
     h('div', { class: 'row' }, h('h2', {}, '定时任务'), h('span', { class: 'spacer' }), h('button', { onclick: newSchedule }, '新建')),
-    h('table', {}, h('tr', {}, ['名称', 'Cron', 'SOP', '下次', '上次', '操作'].map((t) => h('th', {}, t))),
-      schedules.map((s) => h('tr', {}, h('td', {}, s.name, s.enabled ? null : h('span', { class: 'muted' }, '（停用）')), h('td', { class: 'mono' }, `${s.cron} ${s.zone}`), h('td', { class: 'mono' }, s.workflowId),
+    h('table', {}, h('tr', {}, ['名称', 'Cron', '内容', '下次', '上次', '操作'].map((t) => h('th', {}, t))),
+      schedules.map((s) => h('tr', {}, h('td', {}, s.name, s.enabled ? null : h('span', { class: 'muted' }, '（停用）')), h('td', { class: 'mono' }, `${s.cron} ${s.zone}`), h('td', {}, scheduleTarget(s), s.runAs ? h('div', { class: 'muted' }, `执行身份 ${s.runAs}`) : null),
         h('td', {}, time(s.nextRunAt)), h('td', {}, s.lastRunId ? h('a', { href: `#/runs/${s.lastRunId}` }, time(s.lastRunAt)) : '—', s.lastError ? h('div', { class: 'error' }, s.lastError) : null),
         h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => attempt(() => api(`/projects/${projectId}/schedules/${s.id}/run`, { method: 'POST' }), refresh) }, '立即运行'),
           h('button', { onclick: () => attempt(() => api(`/projects/${projectId}/schedules/${s.id}/executions`), (rows) => modal(`执行记录 · ${s.name}`,
             rows.length === 0 ? h('p', { class: 'muted' }, '还没有执行过') : h('table', {}, h('tr', {}, ['时间', '触发', '结果', '运行', '说明'].map((t) => h('th', {}, t))),
               rows.map((e) => h('tr', {}, h('td', {}, time(e.firedAt)), h('td', {}, e.trigger === 'cron' ? '定时' : `手动 · ${e.actor || ''}`),
-                h('td', {}, badge(e.status === 'started' ? (e.runStatus || 'deleted') : e.status === 'skipped' ? 'waiting' : 'failed')),
-                h('td', {}, e.runId ? h('a', { href: `#/runs/${e.runId}`, class: 'mono' }, e.runId.slice(0, 14)) : '—'),
-                h('td', { class: 'muted' }, e.error || (e.runStatus === null && e.runId ? '运行已删除' : ''))))), () => null)) }, '记录'),
+                h('td', {}, badge(e.status === 'started' ? (e.runStatus || 'deleted') : e.status === 'skipped' ? 'waiting' : e.status)),
+                h('td', {}, (e.runIds || []).length ? e.runIds.map((id) => h('div', {}, h('a', { href: `#/runs/${id}`, class: 'mono' }, id.slice(0, 14)))) : '—'),
+                h('td', { class: 'muted' }, e.sessionId ? h('div', {}, h('a', { href: `#/chat/${e.sessionId}` }, '查看对话')) : null,
+                  e.reply ? h('div', { class: 'msg-body' }, e.reply.slice(0, 600)) : null, e.error ? h('div', { class: 'error' }, e.error) : null,
+                  e.runStatus === null && e.runId ? '运行已删除' : '')))), () => null)) }, '记录'),
           h('button', { onclick: () => attempt(() => api(`/projects/${projectId}/schedules/${s.id}`, { method: 'PUT', body: { ...s, enabled: !s.enabled } }), refresh) }, s.enabled ? '停用' : '启用'),
           h('button', { class: 'danger', onclick: () => confirm('删除定时任务？') && attempt(() => api(`/projects/${projectId}/schedules/${s.id}`, { method: 'DELETE' }), refresh) }, '删除')))))),
     channels === null ? null : [

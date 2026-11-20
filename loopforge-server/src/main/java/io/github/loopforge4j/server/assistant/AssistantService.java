@@ -192,7 +192,74 @@ public class AssistantService {
         }
     }
 
-    private void runTurn(AssistantSession session, CurrentUser speaker, String text, List<AssistantMessage> history) {
+    /** How a scheduled turn ended. */
+    public record ScheduledOutcome(String sessionId, String reply, boolean failed, String error) {}
+
+    static final String SCHEDULED_BRIEF = "这是定时任务触发的一轮，没有人实时回复：需要的平台操作直接执行，不要等待确认；" + "结束时用几句话总结做了什么（启动的运行附上 id）。\n\n";
+
+    /**
+     * Runs a scheduled AI task (upstream AI scheduled task): a new project conversation of {@code
+     * owner}, whose identity and credentials the turn uses; {@code done} receives the outcome.
+     *
+     * @return the conversation's id
+     */
+    public String runScheduled(
+            String projectId,
+            io.github.loopforge4j.server.account.User owner,
+            String title,
+            String prompt,
+            java.util.function.Consumer<ScheduledOutcome> done) {
+        requireEnabled();
+        CurrentUser user = CurrentUser.of(owner);
+        access.requireProject(user, projectId, ProjectRole.DEVELOPER);
+        String profile = config.sandboxProfile();
+        access.requireIsolatedProfile(user, profile);
+        if (!engines.getObject().conversations().available(profile)) {
+            throw new ApiException(
+                    HttpStatus.UNPROCESSABLE_CONTENT, "sandbox profile '" + profile + "' is not available");
+        }
+        Instant now = clock.instant();
+        AssistantSession session = new AssistantSession(
+                "chat_" + UUID.randomUUID().toString().replace("-", "").substring(0, 20),
+                projectId,
+                user.id(),
+                user.username(),
+                clip(title, 200),
+                profile,
+                config.executor() == null || config.executor().isBlank()
+                        ? null
+                        : config.executor().strip(),
+                null,
+                "idle",
+                null,
+                0,
+                0,
+                null,
+                now,
+                now);
+        store.create(session);
+        if (!store.claimTurn(session.id(), now)) {
+            throw new ApiException(HttpStatus.CONFLICT, "the conversation is busy");
+        }
+        String text = SCHEDULED_BRIEF + prompt;
+        streams.publish(
+                session.id(),
+                "message",
+                store.append(
+                        new AssistantMessage(0, session.id(), "user", user.username(), text, null, 0, 0, null, null)));
+        Thread.ofVirtual().name("assistant-scheduled-" + session.id()).start(() -> {
+            AssistantMessage reply = runTurn(session, user, text, List.of());
+            done.accept(new ScheduledOutcome(
+                    session.id(),
+                    reply == null ? null : reply.content(),
+                    reply == null || "error".equals(reply.role()),
+                    reply == null ? "the turn did not finish" : "error".equals(reply.role()) ? reply.content() : null));
+        });
+        return session.id();
+    }
+
+    private AssistantMessage runTurn(
+            AssistantSession session, CurrentUser speaker, String text, List<AssistantMessage> history) {
         String id = session.id();
         Cancellation cancellation = Cancellation.create();
         List<String> activity = new ArrayList<>();
@@ -208,6 +275,7 @@ public class AssistantService {
         long tokens = current.totalTokens();
         double cost = current.costUsd();
         String error = null;
+        AssistantMessage last = null;
         try {
             PlatformMcp.Binding binding =
                     platform.bindConversation(id, session.projectId(), speaker.id(), session.sandboxProfileId());
@@ -260,18 +328,22 @@ public class AssistantService {
                     snapshot(activity),
                     null));
             streams.publish(id, "message", saved);
+            last = saved;
         } catch (CancelledException e) {
             error = "已停止";
-            streams.publish(id, "message", store.append(errorMessage(id, "已停止回复", activity)));
+            last = store.append(errorMessage(id, "已停止回复", activity));
+            streams.publish(id, "message", last);
         } catch (Exception e) {
             error = e.getClass().getSimpleName() + ": " + clip(String.valueOf(e.getMessage()), 300);
             log.warn("conversation {} turn failed: {}", id, error);
-            streams.publish(id, "message", store.append(errorMessage(id, "回复失败：" + error, activity)));
+            last = store.append(errorMessage(id, "回复失败：" + error, activity));
+            streams.publish(id, "message", last);
         } finally {
             watcher.cancel(false);
             store.finishTurn(current.with("idle", cliSession, error, tokens, cost, null));
             streams.publish(id, "status", Map.of("status", "idle"));
         }
+        return last;
     }
 
     /** The whole recent conversation, for a turn that cannot continue a CLI session. */

@@ -40,7 +40,12 @@ public class ScheduleStore {
                 schedule.lastError(),
                 schedule.createdBy(),
                 existing.map(Schedule::createdAt).orElse(now),
-                now);
+                now,
+                schedule.kind(),
+                schedule.prompt(),
+                schedule.dispatchStatuses(),
+                schedule.maxDispatch(),
+                schedule.runAs());
         String sql = existing.isPresent()
                 ? "UPDATE schedules SET project_id = :p, enabled = :enabled, next_run_at = :next, payload = :payload,"
                         + " updated_at = :now WHERE id = :id"
@@ -89,7 +94,12 @@ public class ScheduleStore {
                 s.lastError(),
                 s.createdBy(),
                 s.createdAt(),
-                s.updatedAt());
+                s.updatedAt(),
+                s.kind(),
+                s.prompt(),
+                s.dispatchStatuses(),
+                s.maxDispatch(),
+                s.runAs());
     }
 
     public List<Schedule> list(String projectId) {

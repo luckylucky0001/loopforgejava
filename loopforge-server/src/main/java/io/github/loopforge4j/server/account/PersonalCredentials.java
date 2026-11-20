@@ -147,7 +147,7 @@ public class PersonalCredentials {
 
     /**
      * The account work is done for: a username as recorded on runs, or {@code schedule:<id>} (the
-     * account that created the schedule).
+     * account that last saved the schedule).
      */
     public Optional<String> accountOf(String responsible) {
         if (responsible == null || responsible.isBlank()) {
@@ -158,7 +158,7 @@ public class PersonalCredentials {
             name = schedules
                     .getObject()
                     .find(name.substring(SCHEDULE.length()))
-                    .map(Schedule::createdBy)
+                    .map(Schedule::responsible)
                     .orElse(null);
             if (name == null) {
                 return Optional.empty();

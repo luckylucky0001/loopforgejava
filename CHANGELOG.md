@@ -22,6 +22,10 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 15)
+- 定时任务类型 `assistant`（AI 任务：以最后保存人的身份、凭据与完全权限运行一轮助手对话）与 `dispatch`（按状态与优先级自动启动需求的 SOP，每次上限、跳过运行中的需求）；执行记录包含全部运行、AI 回复与对话。
+- 定时任务以最后保存它的账户执行（`runAs`），定时运行的个人凭据随之解析。
+
 ### Added (迭代 14)
 - 个人凭据（`/api/v1/me/credentials`）：每个执行器的 API Key、Base URL 与凭据变量，按主机的 Git Token；AES-256-GCM 加密（`loopforge.security.credential-key`），从不返回密钥。
 - 运行、定时任务、助手发言与需求澄清按负责人使用个人凭据；执行器凭据整体替代平台凭据，Git Token 按主机替代；控制台「设置 → 个人凭据」。

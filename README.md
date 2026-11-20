@@ -79,6 +79,16 @@ loopforge:
       model: sonnet
 ```
 
+### 定时任务
+
+项目页「定时任务」有三种类型，都按 cron（可指定时区）触发，也可「立即运行」，每次触发都记入执行记录：
+
+- **运行 SOP**：按固定输入启动一个 SOP；上一次还在运行时可跳过。
+- **AI 任务**：在项目里以最后保存任务的人的身份、凭据和完全权限开一轮助手对话执行提示词（不等待确认），记录回复、它启动的运行和对话链接。
+- **自动派发需求**：把指定状态（默认 `todo`）的需求按优先级启动各自绑定的 SOP（或统一指定的 SOP），每次最多 N 个，跳过正在运行的需求。
+
+任务以最后保存它的账户执行（定时 SOP 和派发出的运行使用这个人的个人凭据）；修改任务即接手它的执行身份。
+
 ### 个人凭据
 
 「设置 → 个人凭据」里每个人可以配置自己的模型凭据（每个执行器：API Key、模型网关 Base URL、其他凭据变量）和 Git Token（按主机）。你启动的运行、你创建的定时任务、你在助手里的发言和你发起的需求澄清使用这些凭据：某个执行器配置了个人凭据时完全替代平台的 `loopforge.credentials`，Git Token 按主机替代 `loopforge.git.https`。密钥加密保存（生产环境请配置 `loopforge.security.credential-key`），接口只返回末尾几位。执行机器上的运行仍使用机器本地的凭据。
@@ -265,7 +275,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/me/credentials[/{kind}\|/kinds]` | 个人凭据：`executor:<kind>`（apiKey、baseUrl、variables）与 `git:<host>`（token、username）；从不返回密钥 |
 | `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs]]` | 需求与启动需求运行 |
-| `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run\|/executions]]` | 定时任务与执行记录（定时 / 手动、结果、运行当前状态） |
+| `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run\|/executions]]` | 定时任务（`kind`：`sop` / `assistant` / `dispatch`）与执行记录（结果、启动的运行、AI 回复与对话） |
 | `GET/POST/PUT/DELETE` | `/api/v1/notifications[/{id}]` | Webhook 通知 |
 | `GET` / `POST` | `/api/v1/runs/{id}/deliveries` / `/deliveries/refresh` | 运行交付的 PR 与合并状态 |
 | `POST` / `GET` | `/api/v1/runs` | 启动运行 / 列表（按状态、SOP、父运行过滤） |
