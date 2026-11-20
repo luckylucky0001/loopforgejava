@@ -529,16 +529,25 @@ final class NodeRunner {
 
     private record GateRun(VerificationGate gate, FailurePolicy onFailure) {}
 
+    private String runProject(String runId) throws NodeFailure {
+        io.github.loopforge4j.core.domain.ExecutionContext context =
+                currentRun(runId).context();
+        return context == null ? null : context.projectId();
+    }
+
     private void runAgent(String runId, int generation, int attempt, WorkflowNode node, Cancellation cancellation)
             throws NodeFailure, IOException, CancelledException {
         PreviewContract previewContract = PreviewBuild.isBuildNode(node.id())
                 ? currentRun(runId).workflow().preview()
                 : null;
         boolean previewBuild = previewContract != null && previewContract.isStatic();
+        String project = runProject(runId);
         AgentDefinition agent = previewBuild && PreviewBuild.isBuildAgent(node.agentId())
                 ? PreviewBuild.agent(previewContract)
                 : engine.catalog()
                         .agent(node.agentId())
+                        // a project's own role serves only that project's runs
+                        .filter(a -> a.usableIn(project))
                         .orElseThrow(() ->
                                 new NodeFailure(FailureKind.CONFIGURATION, "agent '" + node.agentId() + "' not found"));
         ExecutorDefinition executor = resolveExecutor(agent, node);

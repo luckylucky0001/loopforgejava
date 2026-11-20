@@ -43,13 +43,18 @@ public record AgentAssets(
     public static AgentAssets resolve(
             AgentDefinition agent, CatalogStore catalog, String projectId, String responsible) {
         List<RuleDefinition> rules = new ArrayList<>();
+        // a project's own rules and skills serve only the work of that project
+        String owner = projectId != null ? projectId : agent.projectId();
         for (String ref : agent.rules()) {
-            catalog.asset(AssetKind.RULE, ref.strip()).ifPresent(rules::add);
+            catalog.asset(AssetKind.RULE, ref.strip())
+                    .filter(r -> r.projectId() == null || r.projectId().equals(owner))
+                    .ifPresent(rules::add);
         }
         rules.sort(Comparator.comparingInt(RuleDefinition::priority).reversed());
         List<SkillDefinition> skills = new ArrayList<>();
         for (String id : agent.skills()) {
             skills.add(catalog.asset(AssetKind.SKILL, id)
+                    .filter(k -> k.projectId() == null || k.projectId().equals(owner))
                     .orElseThrow(() -> new IllegalArgumentException("skill '" + id + "' not found")));
         }
         List<McpServerDefinition> servers = new ArrayList<>();

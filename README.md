@@ -117,6 +117,12 @@ loopforge:
 
 项目维护者也可以给项目添加自定义 HTTP MCP，每个人可以在「设置 → 我的 MCP」添加自己的 HTTP MCP：项目的只在该项目的运行里可用，个人的只在本人负责的运行里可用，其他人看不到。自定义 MCP 只能是 HTTP（不能定义服务器要启动的程序），请求头里也不能写密钥。
 
+### 项目角色与通用模板
+
+角色、规则和 Skills 可以属于一个项目（`projectId`）：共享的由管理员维护、所有项目可用；项目自己的由该项目的维护者维护，只在该项目可见、只能用于该项目的 SOP 和运行，创建后不能改到别的项目。SOP 只能用共享角色或本项目的角色，角色只能绑定共享或本项目的规则与 Skills；运行时引擎同样只解析运行所在项目可用的角色、规则和 Skills。
+
+管理员可以把全局 SOP 标记为通用模板（`generic`）：模板不能直接运行，只能用共享角色。项目维护者在「SOP → 通用模板」把模板复制到项目，得到一份草稿 SOP（标签 `generic-source:<模板 id>`），模板用到的角色复制为项目自己的副本（`<角色 id>-<项目 id>`），之后可以按项目调整；再次复制会复用项目里已有的副本，不覆盖本地修改。
+
 ### SkillHub 技能市场
 
 配置 `loopforge.skillhub.base-url`（与可选的 `api-key`，只发送给市场自己的主机）后，「规则 / Skills / MCP → Skills」可以搜索市场并安装技能（管理员）：指定版本或最新版本的 `SKILL.md` 与文本文件写入技能目录，二进制文件、超限文件与越界路径会被跳过并列出；已安装的技能可以更新到其他版本。市场只看到调用者的匿名标识。
@@ -337,7 +343,8 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` / `POST` | `/api/v1/catalog/export` / `/import` | 目录导出 / 导入（默认不覆盖） |
 | `GET` | `/api/v1/executors` | 执行器及本机是否已安装 |
 | `GET/PUT/DELETE` | `/api/v1/repositories/{id}` | 代码仓库 |
-| `GET/PUT/DELETE` | `/api/v1/rules/{id}`、`/skills/{id}`、`/mcp-servers/{id}` | 角色可绑定的规则、Skills、MCP 服务器 |
+| `GET/PUT/DELETE` | `/api/v1/rules/{id}`、`/skills/{id}`、`/mcp-servers/{id}` | 角色可绑定的规则、Skills、MCP 服务器（规则与 Skills 可带 `projectId`） |
+| `GET` / `POST` | `/api/v1/workflow-templates[/{id}]` / `/api/v1/workflow-templates/{id}/adopt` | 通用 SOP 模板；复制到项目（`projectId`、可选 `id`、`name`，需要维护者） |
 | `GET` / `POST` | `/api/v1/auth/status`、`/auth/setup`、`/auth/login`、`/auth/logout` | 初始化与登录（公开） |
 | `GET/POST/DELETE` | `/api/v1/me`、`/me/tokens`、`/me/password`；`/api/v1/users` | 当前账户与个人 Token；账户管理（管理员） |
 | `GET/PUT/DELETE` | `/api/v1/me/credentials[/{kind}\|/kinds]` | 个人凭据：`executor:<kind>`（apiKey、baseUrl、variables）与 `git:<host>`（token、username）；从不返回密钥 |

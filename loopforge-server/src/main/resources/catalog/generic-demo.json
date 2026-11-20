@@ -1,0 +1,88 @@
+{
+  "workflows": [
+    {
+      "id": "generic-demo-delivery",
+      "name": "通用模板 · 定型→实现→评审→验收（模拟）",
+      "version": 1,
+      "status": "published",
+      "tags": [
+        "generic",
+        "demo",
+        "no-api-key"
+      ],
+      "description": "通用模板示例：复制到项目后得到一份草稿 SOP，角色复制为项目自己的副本，可按项目调整。",
+      "sandboxProfileId": "local",
+      "nodes": [
+        {
+          "id": "clarify",
+          "name": "需求定型",
+          "type": "agent",
+          "agentId": "demo-planner",
+          "maxAttempts": 1,
+          "artifactOutputs": [
+            {
+              "name": "requirement",
+              "path": "requirement.md",
+              "mediaType": "text/markdown",
+              "required": true
+            }
+          ]
+        },
+        {
+          "id": "implement",
+          "name": "开发实现",
+          "type": "agent",
+          "agentId": "demo-developer",
+          "maxAttempts": 2,
+          "artifactOutputs": [
+            {
+              "name": "implementation",
+              "path": "implementation.md",
+              "mediaType": "text/markdown",
+              "required": true
+            }
+          ]
+        },
+        {
+          "id": "review",
+          "name": "独立评审",
+          "type": "agent",
+          "agentId": "demo-reviewer",
+          "rejectTo": "implement",
+          "maxReworks": 2,
+          "maxAttempts": 1,
+          "artifactOutputs": [
+            {
+              "name": "review",
+              "path": "review.md",
+              "mediaType": "text/markdown",
+              "required": true
+            }
+          ]
+        },
+        {
+          "id": "accept",
+          "name": "人工验收",
+          "type": "approval",
+          "rejectTo": "implement",
+          "taskPrompt": "检查评审结论与实现说明"
+        }
+      ],
+      "edges": [
+        {
+          "source": "clarify",
+          "target": "implement"
+        },
+        {
+          "source": "implement",
+          "target": "review"
+        },
+        {
+          "source": "review",
+          "target": "accept"
+        }
+      ],
+      "generic": true
+    }
+  ]
+}

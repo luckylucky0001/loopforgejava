@@ -30,25 +30,44 @@ class AgentController {
     private final CatalogStore store;
     private final CatalogService catalog;
     private final DefinitionRevisionStore revisions;
+    private final io.github.loopforge4j.server.account.AccessPolicy access;
 
-    AgentController(CatalogStore store, CatalogService catalog, DefinitionRevisionStore revisions) {
+    AgentController(
+            CatalogStore store,
+            CatalogService catalog,
+            DefinitionRevisionStore revisions,
+            io.github.loopforge4j.server.account.AccessPolicy access) {
         this.store = store;
         this.catalog = catalog;
         this.revisions = revisions;
+        this.access = access;
     }
 
+    @Operation(summary = "Shared roles and the roles of the projects the caller belongs to")
     @GetMapping
-    List<AgentDefinition> list() {
-        return store.agents();
+    List<AgentDefinition> list(java.security.Principal principal) {
+        return store.agents().stream()
+                .filter(a -> access.canSee(principal, a.projectId()))
+                .toList();
     }
 
     @GetMapping("/{id}")
-    AgentDefinition get(@PathVariable String id) {
-        return store.agent(id).orElseThrow(() -> new RunNotFoundException("agent '" + id + "' not found"));
+    AgentDefinition get(@PathVariable String id, java.security.Principal principal) {
+        return store.agent(id)
+                .filter(a -> access.canSee(principal, a.projectId()))
+                .orElseThrow(() -> new RunNotFoundException("agent '" + id + "' not found"));
     }
 
+    @Operation(summary = "Create or replace a role: shared roles by administrators, a project's by its maintainers")
     @PutMapping("/{id}")
-    AgentDefinition put(@PathVariable String id, @RequestBody AgentDefinition body) {
+    AgentDefinition put(@PathVariable String id, @RequestBody AgentDefinition body, java.security.Principal principal) {
+        var existing = store.agent(id);
+        CatalogScopes.requireWrite(
+                access,
+                principal,
+                existing.isPresent(),
+                existing.map(AgentDefinition::projectId).orElse(null),
+                body.projectId());
         AgentDefinition agent = id.equals(body.id())
                 ? body
                 : new AgentDefinition(
@@ -70,13 +89,17 @@ class AgentController {
                         body.verification(),
                         body.platformMcp(),
                         body.knowledgeBase(),
-                        body.updatedAt());
+                        body.updatedAt(),
+                        body.projectId());
         return catalog.saveAgent(agent);
     }
 
     @Operation(summary = "Delete a role; refused while an SOP node still uses it")
     @DeleteMapping("/{id}")
-    ResponseEntity<Void> delete(@PathVariable String id) {
+    ResponseEntity<Void> delete(@PathVariable String id, java.security.Principal principal) {
+        store.agent(id)
+                .ifPresent(existing -> access.requireProject(
+                        principal, existing.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
         List<String> users = store.workflows().stream()
                 .filter(w -> w.nodes().stream().anyMatch(n -> id.equals(n.agentId())))
                 .map(WorkflowDefinition::id)
@@ -91,14 +114,15 @@ class AgentController {
 
     @Operation(summary = "Saved revisions of a role, newest first")
     @GetMapping("/{id}/revisions")
-    List<DefinitionRevision> revisions(@PathVariable String id) {
-        get(id);
+    List<DefinitionRevision> revisions(@PathVariable String id, java.security.Principal principal) {
+        get(id, principal);
         return revisions.list(DefinitionRevision.AGENT, id);
     }
 
     @GetMapping("/{id}/revisions/{revision}")
-    DefinitionRevision revision(@PathVariable String id, @PathVariable int revision) {
-        get(id);
+    DefinitionRevision revision(
+            @PathVariable String id, @PathVariable int revision, java.security.Principal principal) {
+        get(id, principal);
         return revisions
                 .find(DefinitionRevision.AGENT, id, revision, AgentDefinition.class)
                 .orElseThrow(() -> new RunNotFoundException("revision " + revision + " of '" + id + "' not found"));
@@ -106,7 +130,7 @@ class AgentController {
 
     @Operation(summary = "Restore a revision: its definition is saved as the newest revision")
     @PostMapping("/{id}/revisions/{revision}/restore")
-    AgentDefinition restore(@PathVariable String id, @PathVariable int revision) {
-        return put(id, (AgentDefinition) revision(id, revision).payload());
+    AgentDefinition restore(@PathVariable String id, @PathVariable int revision, java.security.Principal principal) {
+        return put(id, (AgentDefinition) revision(id, revision, principal).payload(), principal);
     }
 }

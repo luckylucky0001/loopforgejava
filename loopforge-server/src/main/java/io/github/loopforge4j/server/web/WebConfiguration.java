@@ -16,8 +16,8 @@ class WebConfiguration implements WebMvcConfigurer {
     }
 
     /**
-     * The global catalog (roles, rules, skills, MCP servers, bundle import) is writable by
-     * administrators; SOPs and repositories check project roles in their controllers.
+     * The global catalog (MCP servers, sandboxes, bundle import) is writable by administrators;
+     * SOPs, roles, rules, skills and repositories check project roles in their controllers.
      */
     @Override
     public void addInterceptors(org.springframework.web.servlet.config.annotation.InterceptorRegistry registry) {
@@ -34,9 +34,6 @@ class WebConfiguration implements WebMvcConfigurer {
                     }
                 })
                 .addPathPatterns(
-                        "/api/v1/agents/**",
-                        "/api/v1/rules/**",
-                        "/api/v1/skills/**",
                         "/api/v1/mcp-servers/**",
                         "/api/v1/dockerfiles/**",
                         "/api/v1/environments/**",

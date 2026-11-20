@@ -258,10 +258,11 @@ public class RunEvalService {
                     access.requireIsolatedSandbox(principal, changed);
                     target = catalogService.saveWorkflow(changed).id();
                 } else {
-                    access.requireAdmin(principal);
                     String agentId = rec.targetId();
                     AgentDefinition current = catalog.agent(agentId == null ? "" : agentId)
                             .orElseThrow(() -> new IllegalArgumentException("role '" + agentId + "' not found"));
+                    // shared roles belong to administrators, a project's roles to its maintainers
+                    access.requireProject(principal, current.projectId(), ProjectRole.MAINTAINER);
                     target = catalogService
                             .saveAgent(RunEvalApply.apply(rec, current))
                             .id();

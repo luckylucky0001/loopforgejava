@@ -124,6 +124,16 @@ public final class PlatformOperations {
                     "Copy an SOP as a new draft. Body: {id, name?, projectId?}",
                     "POST",
                     "/api/v1/workflows/{id}/clone"),
+            read(
+                    "workflow_templates_list",
+                    "List generic SOP templates (adopt one into a project to use it)",
+                    "/api/v1/workflow-templates"),
+            write(
+                    "workflow_templates_adopt",
+                    "Copy a generic SOP template and its roles into a project as a draft."
+                            + " Body: {projectId, id?, name?}",
+                    "POST",
+                    "/api/v1/workflow-templates/{id}/adopt"),
             write(
                     "workflows_validate",
                     "Validate an SOP definition without saving it",

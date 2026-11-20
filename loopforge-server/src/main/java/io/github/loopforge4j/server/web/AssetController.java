@@ -61,46 +61,82 @@ class AssetController {
     }
 
     @GetMapping("/rules")
-    List<RuleDefinition> rules() {
-        return store.assets(AssetKind.RULE);
+    List<RuleDefinition> rules(java.security.Principal principal) {
+        return store.assets(AssetKind.RULE).stream()
+                .filter(r -> access.canSee(principal, r.projectId()))
+                .toList();
     }
 
     @GetMapping("/rules/{id}")
-    RuleDefinition rule(@PathVariable String id) {
-        return get(AssetKind.RULE, id);
+    RuleDefinition rule(@PathVariable String id, java.security.Principal principal) {
+        RuleDefinition rule = get(AssetKind.RULE, id);
+        if (!access.canSee(principal, rule.projectId())) {
+            throw new RunNotFoundException("rule '" + id + "' not found");
+        }
+        return rule;
     }
 
     @PutMapping("/rules/{id}")
-    RuleDefinition putRule(@PathVariable String id, @RequestBody RuleDefinition body) {
+    RuleDefinition putRule(
+            @PathVariable String id, @RequestBody RuleDefinition body, java.security.Principal principal) {
+        var existing = store.asset(AssetKind.RULE, id);
+        CatalogScopes.requireWrite(
+                access,
+                principal,
+                existing.isPresent(),
+                existing.map(RuleDefinition::projectId).orElse(null),
+                body.projectId());
         return catalog.saveAsset(
                 AssetKind.RULE,
-                new RuleDefinition(id, body.name(), body.description(), body.content(), body.priority(), null));
+                new RuleDefinition(
+                        id, body.name(), body.description(), body.content(), body.priority(), null, body.projectId()));
     }
 
     @DeleteMapping("/rules/{id}")
-    ResponseEntity<Void> deleteRule(@PathVariable String id) {
+    ResponseEntity<Void> deleteRule(@PathVariable String id, java.security.Principal principal) {
+        store.asset(AssetKind.RULE, id)
+                .ifPresent(r -> access.requireProject(
+                        principal, r.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
         return delete(AssetKind.RULE, id);
     }
 
     @GetMapping("/skills")
-    List<SkillDefinition> skills() {
-        return store.assets(AssetKind.SKILL);
+    List<SkillDefinition> skills(java.security.Principal principal) {
+        return store.assets(AssetKind.SKILL).stream()
+                .filter(k -> access.canSee(principal, k.projectId()))
+                .toList();
     }
 
     @GetMapping("/skills/{id}")
-    SkillDefinition skill(@PathVariable String id) {
-        return get(AssetKind.SKILL, id);
+    SkillDefinition skill(@PathVariable String id, java.security.Principal principal) {
+        SkillDefinition skill = get(AssetKind.SKILL, id);
+        if (!access.canSee(principal, skill.projectId())) {
+            throw new RunNotFoundException("skill '" + id + "' not found");
+        }
+        return skill;
     }
 
     @PutMapping("/skills/{id}")
-    SkillDefinition putSkill(@PathVariable String id, @RequestBody SkillDefinition body) {
+    SkillDefinition putSkill(
+            @PathVariable String id, @RequestBody SkillDefinition body, java.security.Principal principal) {
+        var existing = store.asset(AssetKind.SKILL, id);
+        CatalogScopes.requireWrite(
+                access,
+                principal,
+                existing.isPresent(),
+                existing.map(SkillDefinition::projectId).orElse(null),
+                body.projectId());
         return catalog.saveAsset(
                 AssetKind.SKILL,
-                new SkillDefinition(id, body.name(), body.description(), body.content(), body.files(), null));
+                new SkillDefinition(
+                        id, body.name(), body.description(), body.content(), body.files(), null, body.projectId()));
     }
 
     @DeleteMapping("/skills/{id}")
-    ResponseEntity<Void> deleteSkill(@PathVariable String id) {
+    ResponseEntity<Void> deleteSkill(@PathVariable String id, java.security.Principal principal) {
+        store.asset(AssetKind.SKILL, id)
+                .ifPresent(k -> access.requireProject(
+                        principal, k.projectId(), io.github.loopforge4j.server.account.ProjectRole.MAINTAINER));
         return delete(AssetKind.SKILL, id);
     }
 

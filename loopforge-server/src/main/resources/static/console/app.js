@@ -221,7 +221,7 @@ const ROUTES = [
   [/^#\/runs\/([^/]+)\/workspace$/, workspacePage], [/^#\/runs\/([^/]+)$/, runPage], [/^#\/runs$/, runsPage], [/^#\/approvals$/, approvalsPage],
   [/^#\/workflows\/new$/, () => workflowPage(null)], [/^#\/workflows\/([^/]+)$/, workflowPage], [/^#\/workflows$/, workflowsPage],
   [/^#\/agents\/new$/, () => definitionPage('agents', null)], [/^#\/agents\/([^/]+)$/, (id) => definitionPage('agents', id)],
-  [/^#\/agents$/, () => listPage('agents', '角色', ['id', 'name', 'executorId'])],
+  [/^#\/agents$/, () => listPage('agents', '角色', ['id', 'name', 'executorId', 'projectId'])],
   [/^#\/assets\/(rules|skills|mcp-servers)\/new$/, (kind) => definitionPage(kind, null)],
   [/^#\/assets\/(rules|skills|mcp-servers)\/([^/]+)$/, (kind, id) => definitionPage(kind, id)],
   [/^#\/assets\/(rules|skills|mcp-servers)$/, assetsPage],
@@ -478,10 +478,34 @@ async function showArtifact(runId, artifact) {
 async function workflowsPage() {
   const workflows = await api('/workflows');
   shell([h('div', { class: 'row' }, h('h1', {}, 'SOP'), h('span', { class: 'spacer' }), h('a', { class: 'btn', href: '#/workflows/new' }, '新建'),
+    h('button', { onclick: () => templateLibrary() }, '通用模板'),
     h('button', { onclick: exportCatalog }, '导出目录'), h('button', { onclick: importCatalog }, '导入目录')),
   h('table', {}, h('tr', {}, ['id', '名称', '状态', '节点', '修订', '项目'].map((t) => h('th', {}, t))),
-    workflows.map((w) => h('tr', {}, h('td', {}, h('a', { href: `#/workflows/${w.id}`, class: 'mono' }, w.id)), h('td', {}, w.name), h('td', {}, badge(w.status)),
-      h('td', {}, (w.nodes || []).length), h('td', {}, w.revision), h('td', {}, w.projectId || '—'))))]);
+    workflows.map((w) => h('tr', {}, h('td', {}, h('a', { href: `#/workflows/${w.id}`, class: 'mono' }, w.id)),
+      h('td', {}, w.name, w.generic ? h('span', { class: 'chip' }, '通用模板') : null,
+        (w.tags || []).filter((t) => t.startsWith('generic-source:')).map((t) => h('span', { class: 'chip muted' }, `来自 ${t.slice('generic-source:'.length)}`))),
+      h('td', {}, badge(w.status)), h('td', {}, (w.nodes || []).length), h('td', {}, w.revision), h('td', {}, w.projectId || '—'))))]);
+}
+
+/** Generic SOP templates: a project's maintainers copy one (with its roles) into the project. */
+async function templateLibrary() {
+  const [templates, projects] = await Promise.all([api('/workflow-templates'), api('/projects').catch(() => [])]);
+  let dialog = null;
+  const body = h('div', {}, h('p', { class: 'muted' }, '通用模板不能直接运行。复制到项目后得到一份草稿 SOP，模板用到的角色也会复制到项目里，项目维护者可以自行调整；再次复制会复用项目里已有的角色副本，不覆盖本地修改。'),
+    templates.length ? null : h('p', { class: 'muted' }, '还没有通用模板（管理员在 SOP 设置里把全局 SOP 标记为通用模板）。'),
+    ...templates.map((t) => {
+      const project = h('select', {}, projects.map((p) => h('option', { value: p.id }, p.name || p.id)));
+      const adopt = () => prompted(`复制「${t.name}」到项目`, [
+        { name: 'id', label: 'SOP id（留空 = 模板 id-项目 id）' }, { name: 'name', label: '名称（留空 = 模板名称）' }],
+      (v) => api(`/workflow-templates/${encodeURIComponent(t.id)}/adopt`, { method: 'POST', body: { projectId: project.value, id: v.id || undefined, name: v.name || undefined } })
+        .then((w) => { dialog?.close(); location.hash = `#/workflows/${encodeURIComponent(w.id)}`; return w; }));
+      return h('div', { class: 'panel' }, h('div', { class: 'row' }, h('strong', {}, t.name), h('span', { class: 'chip' }, SOP_LANES[t.sopLane] || t.sopLane),
+        t.preview ? h('span', { class: 'chip' }, '前端预览') : null, h('span', { class: 'mono muted' }, t.id),
+        h('span', { class: 'spacer' }), project, h('button', { class: 'primary', disabled: projects.length === 0, onclick: adopt }, '复制到项目')),
+      t.description ? h('p', { class: 'muted' }, t.description) : null,
+      h('p', { class: 'muted' }, `${t.nodes} 个节点 · 角色：${(t.roles || []).map((r) => r.name).join('、') || '无'} · 沙箱 ${t.sandboxProfileId}`));
+    }));
+  dialog = modal('通用 SOP 模板', body, () => null);
 }
 
 async function exportCatalog() {
@@ -706,6 +730,10 @@ function designer(wf, catalog, onChange) {
       (v) => { wf.sandboxProfileId = v || undefined; })),
       field('描述', bind(h('textarea', { rows: 3 }, wf.description || ''), (v) => { wf.description = v || undefined; })),
       field('泳道标签', select(wf.sopLane || '', [['', '自动推断'], ...Object.entries(SOP_LANES)], (v) => { wf.sopLane = v || undefined; })),
+      me?.user?.role === 'admin' || me?.service || wf.generic
+        ? field('通用模板（只能被复制到项目，不能直接运行；需为全局 SOP 且只用共享角色）',
+          select(wf.generic ? 'true' : 'false', [['false', '否'], ['true', '是']], (v) => { wf.generic = v === 'true'; }))
+        : null,
       previewContractFields(),
       h('p', { class: 'muted' }, '拖动节点调整位置；从节点右侧的圆点拖到另一个节点即可连线；点选节点或连线后在这里编辑，Delete 键删除。'));
   }
@@ -866,7 +894,7 @@ async function environmentsPage(kind) {
 async function assetsPage(kind) {
   const tabs = h('div', { class: 'row mb' }, [['rules', '规则'], ['skills', 'Skills'], ['mcp-servers', 'MCP 服务器']].map(([k, label]) =>
     h('a', { class: k === kind ? 'btn current' : 'btn', href: `#/assets/${k}` }, label)));
-  await listPage(kind, KINDS[kind].title, kind === 'rules' ? ['id', 'name', 'priority'] : kind === 'skills' ? ['id', 'name', 'description'] : ['id', 'name', 'transport', 'command']);
+  await listPage(kind, KINDS[kind].title, kind === 'rules' ? ['id', 'name', 'priority', 'projectId'] : kind === 'skills' ? ['id', 'name', 'description', 'projectId'] : ['id', 'name', 'transport', 'command']);
   document.querySelector('main').prepend(tabs);
   if (kind === 'mcp-servers') {
     document.querySelector('main h1')?.after(h('button', { onclick: () => mcpMarket() }, 'MCP 市场'));
@@ -937,6 +965,7 @@ async function definitionPage(kind, id) {
     h('button', { class: 'primary', onclick: save }, '保存'), id && kind === 'agents' ? h('button', { onclick: history }, '历史') : null,
     id ? h('button', { class: 'danger', onclick: remove }, '删除') : null),
   kind === 'mcp-servers' ? h('p', { class: 'muted' }, '敏感值写成 ${secret:NAME}，值配置在服务端 loopforge.mcp.secrets。') : null,
+  ['agents', 'rules', 'skills'].includes(kind) ? h('p', { class: 'muted' }, 'projectId 留空为共享（管理员维护，所有项目可用）；填写项目 id 则只在该项目可用，由项目维护者管理，创建后不能更改所属项目。') : null,
   kind === 'repositories' ? h('p', { class: 'muted' }, '凭据配置在服务端（loopforge.git），不要写进克隆 URL。') : null,
   message, editor]);
 }

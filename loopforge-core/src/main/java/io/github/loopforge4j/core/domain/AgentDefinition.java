@@ -30,7 +30,8 @@ public record AgentDefinition(
         List<VerificationGate> verification,
         boolean platformMcp,
         boolean knowledgeBase,
-        Instant updatedAt) {
+        Instant updatedAt,
+        String projectId) {
 
     public AgentDefinition {
         id = id == null ? "" : id.strip();
@@ -44,6 +45,82 @@ public record AgentDefinition(
         interventions = interventions == null ? List.of() : List.copyOf(interventions);
         artifactOutputs = artifactOutputs == null ? List.of() : List.copyOf(artifactOutputs);
         verification = verification == null ? List.of() : List.copyOf(verification);
+        // a role without a project is shared by every project
+        projectId = projectId == null || projectId.isBlank() ? null : projectId.strip();
+    }
+
+    /** A shared role (no owning project). */
+    public AgentDefinition(
+            String id,
+            String name,
+            int version,
+            String description,
+            String prompt,
+            List<String> rules,
+            List<String> skills,
+            List<String> mcpServers,
+            List<AgentHook> hooks,
+            String executorId,
+            String model,
+            String effort,
+            AgentLoopPolicy loop,
+            List<HumanInterventionPoint> interventions,
+            List<ArtifactContract> artifactOutputs,
+            List<VerificationGate> verification,
+            boolean platformMcp,
+            boolean knowledgeBase,
+            Instant updatedAt) {
+        this(
+                id,
+                name,
+                version,
+                description,
+                prompt,
+                rules,
+                skills,
+                mcpServers,
+                hooks,
+                executorId,
+                model,
+                effort,
+                loop,
+                interventions,
+                artifactOutputs,
+                verification,
+                platformMcp,
+                knowledgeBase,
+                updatedAt,
+                null);
+    }
+
+    /** Whether work of {@code project} may use this role: shared roles, or the project's own. */
+    public boolean usableIn(String project) {
+        return projectId == null || projectId.equals(project);
+    }
+
+    /** A copy with another id, owned by {@code project} (adopting a generic template). */
+    public AgentDefinition copyFor(String newId, String project, List<String> newMcpServers) {
+        return new AgentDefinition(
+                newId,
+                name,
+                1,
+                description,
+                prompt,
+                rules,
+                skills,
+                newMcpServers,
+                hooks,
+                executorId,
+                model,
+                effort,
+                loop,
+                interventions,
+                artifactOutputs,
+                verification,
+                platformMcp,
+                knowledgeBase,
+                null,
+                project);
     }
 
     public AgentDefinition withRules(List<String> newRules) {
@@ -66,7 +143,8 @@ public record AgentDefinition(
                 verification,
                 platformMcp,
                 knowledgeBase,
-                updatedAt);
+                updatedAt,
+                projectId);
     }
 
     public static Builder builder(String id) {
@@ -93,7 +171,8 @@ public record AgentDefinition(
                 verification,
                 platformMcp,
                 knowledgeBase,
-                instant);
+                instant,
+                projectId);
     }
 
     /** Fluent builder for tests and catalog code. */

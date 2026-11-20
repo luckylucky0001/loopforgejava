@@ -341,6 +341,11 @@ public final class WorkflowValidator {
         if (workflow.sandboxProfileId() == null || workflow.sandboxProfileId().isBlank()) {
             problems.add("workflow sandbox profile is required");
         }
+        if (workflow.generic()
+                && workflow.projectId() != null
+                && !workflow.projectId().isBlank()) {
+            problems.add("通用模板不属于任何项目，请去掉所属项目");
+        }
         io.github.loopforge4j.core.domain.PreviewContract preview = workflow.preview();
         if (preview != null) {
             if (!preview.isStatic()) {

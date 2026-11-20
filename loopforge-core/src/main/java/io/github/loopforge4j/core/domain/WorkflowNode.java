@@ -100,6 +100,31 @@ public record WorkflowNode(
                 preview);
     }
 
+    /** A copy bound to another role (adopting a generic template remaps roles to project copies). */
+    public WorkflowNode withAgentId(String newAgentId) {
+        return new WorkflowNode(
+                id,
+                name,
+                type,
+                newAgentId,
+                executorId,
+                sopWorkflowId,
+                taskPrompt,
+                scriptLanguage,
+                script,
+                artifactOutputs,
+                rejectTo,
+                onFailure,
+                retryStrategy,
+                carryOver,
+                maxAttempts,
+                maxReworks,
+                timeoutSeconds,
+                executionScope,
+                position,
+                preview);
+    }
+
     public static Builder builder(String id, NodeType type) {
         return new Builder(id, type);
     }

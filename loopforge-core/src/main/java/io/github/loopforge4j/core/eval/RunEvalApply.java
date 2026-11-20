@@ -68,7 +68,8 @@ public final class RunEvalApply {
                 workflow.createdAt(),
                 workflow.updatedAt(),
                 workflow.preview(),
-                workflow.sopLane());
+                workflow.sopLane(),
+                workflow.generic());
     }
 
     public static AgentDefinition apply(RunEvaluation.Recommendation rec, AgentDefinition agent) {
@@ -120,7 +121,8 @@ public final class RunEvalApply {
                 gates,
                 agent.platformMcp(),
                 agent.knowledgeBase(),
-                agent.updatedAt());
+                agent.updatedAt(),
+                agent.projectId());
     }
 
     private static int bounded(Object value, String key, int min, int max) {

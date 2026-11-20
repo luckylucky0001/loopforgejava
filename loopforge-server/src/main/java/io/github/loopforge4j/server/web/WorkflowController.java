@@ -234,6 +234,7 @@ class WorkflowController {
                 body.createdAt(),
                 body.updatedAt(),
                 body.preview(),
-                body.sopLane());
+                body.sopLane(),
+                body.generic());
     }
 }

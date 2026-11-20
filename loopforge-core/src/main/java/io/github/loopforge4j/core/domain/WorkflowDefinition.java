@@ -25,9 +25,13 @@ public record WorkflowDefinition(
         Instant createdAt,
         Instant updatedAt,
         PreviewContract preview,
-        String sopLane) {
+        String sopLane,
+        boolean generic) {
 
     public static final String DEFAULT_SANDBOX_PROFILE = "local";
+
+    /** The tag an SOP adopted from a generic template carries: {@code generic-source:<template id>}. */
+    public static final String GENERIC_SOURCE_TAG = "generic-source:";
 
     public WorkflowDefinition {
         id = id == null ? "" : id.strip();
@@ -43,6 +47,44 @@ public record WorkflowDefinition(
         preview = preview == null || !preview.enabled() ? null : preview;
         // the role-chain tag is controlled: unknown values are stored as the normalized lane
         sopLane = sopLane == null || sopLane.isBlank() ? null : SopLanes.normalize(sopLane);
+    }
+
+    /** An SOP that is not a generic template. */
+    public WorkflowDefinition(
+            String id,
+            String name,
+            int version,
+            int revision,
+            WorkflowStatus status,
+            String projectId,
+            String owner,
+            List<String> tags,
+            String description,
+            String sandboxProfileId,
+            List<WorkflowNode> nodes,
+            List<WorkflowEdge> edges,
+            Instant createdAt,
+            Instant updatedAt,
+            PreviewContract preview,
+            String sopLane) {
+        this(
+                id,
+                name,
+                version,
+                revision,
+                status,
+                projectId,
+                owner,
+                tags,
+                description,
+                sandboxProfileId,
+                nodes,
+                edges,
+                createdAt,
+                updatedAt,
+                preview,
+                sopLane,
+                false);
     }
 
     /** A copy with other nodes and edges (the preview build step is attached or removed this way). */
@@ -63,7 +105,8 @@ public record WorkflowDefinition(
                 createdAt,
                 updatedAt,
                 preview,
-                sopLane);
+                sopLane,
+                generic);
     }
 
     public Optional<WorkflowNode> node(String nodeId) {
@@ -92,7 +135,8 @@ public record WorkflowDefinition(
                 createdAt == null ? now : createdAt,
                 now,
                 preview,
-                sopLane);
+                sopLane,
+                generic);
     }
 
     public static Builder builder(String id) {
@@ -108,6 +152,7 @@ public record WorkflowDefinition(
         private String sandboxProfileId;
         private PreviewContract preview;
         private String sopLane;
+        private boolean generic;
         private final List<WorkflowNode> nodes = new ArrayList<>();
         private final List<WorkflowEdge> edges = new ArrayList<>();
 
@@ -137,6 +182,12 @@ public record WorkflowDefinition(
 
         public Builder sopLane(String value) {
             this.sopLane = value;
+            return this;
+        }
+
+        /** Marks the SOP as a generic template, adopted into projects instead of run directly. */
+        public Builder generic(boolean value) {
+            this.generic = value;
             return this;
         }
 
@@ -180,7 +231,8 @@ public record WorkflowDefinition(
                     null,
                     null,
                     preview,
-                    sopLane);
+                    sopLane,
+                    generic);
         }
     }
 }

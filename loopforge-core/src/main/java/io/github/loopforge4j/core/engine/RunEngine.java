@@ -363,6 +363,9 @@ public final class RunEngine implements AutoCloseable {
         if (!sameProject(workflow.projectId(), context)) {
             throw new RunNotFoundException("workflow '" + workflow.id() + "' not found");
         }
+        if (workflow.generic()) {
+            throw new WorkflowValidationException(List.of("通用模板必须复制到具体项目后才能使用"));
+        }
         // the frontend preview contract's build step is part of the frozen snapshot
         workflow = io.github.loopforge4j.core.preview.PreviewBuild.attach(workflow);
         WorkflowValidator.validate(workflow);
