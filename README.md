@@ -89,9 +89,27 @@ loopforge:
 
 仍被引用的环境、Dockerfile 和沙箱配置不能删除。执行机器只支持它本机配置的沙箱。
 
-### 预览节点
+### 前端预览
 
-SOP 可以加「预览」节点：先运行可选的构建命令（例如 `npm ci && npm run build -- --base=./`），再把工作区里的站点目录（默认 `dist`）归档。运行页面的「预览」面板给出在新标签页打开的签名链接（2 小时有效，过期刷新页面即可）和 zip 下载；站点在隔离的源中运行，拿不到控制台的登录信息。站点需要用相对路径引用资源；勾选「单页应用」后，前端路由回退到入口页。上限 2000 个文件、单文件 10 MB、合计 50 MB；执行机器上运行的预览节点只构建不保存。
+在 SOP 面板勾选「前端预览」（`preview` 约定：执行器默认 `codebuddy`、模型、站点目录默认 `dist`、入口默认 `index.html`、单页应用回退、保留天数最多 30 天）后，保存时会在流程末尾追加系统步骤「构建静态站点」（`af-preview-build`，可拖到流程中任意位置，关掉约定即移除）：
+
+- 工作区没有前端工程（Vite / webpack / Next 等配置、前端依赖的 `package.json`、`index.html`）时直接跳过，业务交付不受影响；
+- 否则由 AI 用相对资源根做生产构建，产物契约要求入口文件存在；步骤成功后立即归档，后面的人工审批就能打开预览；归档失败时在运行成功后用最终工作区再试一次；
+- 执行机器上构建的站点打包上传给服务器，服务器解包时再校验一遍。
+
+也可以直接放「预览」节点：用自己的构建命令（例如 `npm ci && npm run build -- --base=./`）构建后归档。归档只收普通文件（链接、设备文件、硬链接都会让归档失败，`.git` 跳过），默认上限 2 万个文件、单文件 100 MB、合计 500 MB。
+
+运行页的「预览」面板显示状态（可打开 / 已跳过 / 失败 / 已过期），「打开预览」生成会话链接 `/preview/<令牌>/`（只存令牌哈希，闲置 30 分钟失效，可撤销）。可以填后端地址：页面里的 fetch / XHR / WebSocket 请求会转到该地址（路径与参数不变）；维护者可以把它存为默认。网关会给页面加 `<base>`、把根路径资源改到预览路径下、注入 History 适配，所以按 `/` 构建的单页应用也能打开。
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `loopforge.preview.public-url` | 空 | 单独的预览源（例如 `https://preview.example.com` 指向本服务）；配置后预览只在该源上提供，页面拥有自己的源（`allow-same-origin`） |
+| `loopforge.preview.session-ttl` | `30m` | 链接闲置多久失效 |
+| `loopforge.preview.retention` | `30d` | 预览节点归档的保留期 |
+| `loopforge.preview.max-files` / `max-file-size` / `max-size` | `20000` / `100MB` / `500MB` | 归档上限 |
+| `loopforge.preview.frame-ancestors` | 空 | 允许嵌入预览的其他来源 |
+
+没有单独的预览源时，页面运行在不透明源里：读不到控制台的登录令牌，也不能借控制台身份调用 API；浏览器存储与 Cookie 用内存模拟。
 
 ### SkillHub 技能市场
 
@@ -308,7 +326,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/sandboxes[/{id}]`、`/environments[/{id}]`、`/dockerfiles[/{id}]` | 沙箱配置（含是否可用、是否隔离）、环境与 Dockerfile（写入需要管理员） |
 | `GET/POST` | `/api/v1/skillhub/skills[/{slug}[/versions\|/files\|/file]]`、`/categories`、`/install`、`/update`、`/installed` | SkillHub 技能市场：搜索、详情、文件预览、安装与更新（管理员） |
 | `GET/POST` | `/api/v1/runs/{id}/eval[/stream\|/apply]`、`/evals` | 运行质量评测：发起、最新结果、最近 10 次、实时事件、应用建议 |
-| `GET` | `/api/v1/runs/{id}/preview[/download]`、`/preview/{id}/{签名}/**` | 预览节点归档的站点：信息与 2 小时有效的签名链接、zip 下载、免登录的隔离访问 |
+| `GET/POST/PUT/DELETE` | `/api/v1/runs/{id}/preview[/session[/{sid}]\|/backend\|/download]`、`/preview/{令牌}/**` | 前端预览：状态、会话链接（可带后端地址、可撤销）、默认后端地址、zip 下载、删除；免登录的隔离访问 |
 | `POST` | `/api/v1/runs/{id}/cancel`、`/pause`、`/resume`、`/retry` | 运行控制 |
 | `POST` | `/api/v1/runs/{id}/nodes/{node}/approve`、`/reject`、`/pass`、`/decline-retry` | 节点决策 |
 | `GET/PUT/POST` | `/api/v1/projects/{id}/tracker`、`/tracker/sync`、`/tracker/logs`、`/tracker/import-tapd` | 外部需求同步设置、立即同步、同步记录、按链接导入 TAPD |

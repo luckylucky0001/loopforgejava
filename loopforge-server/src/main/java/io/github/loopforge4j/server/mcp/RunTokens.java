@@ -155,14 +155,6 @@ public class RunTokens {
         return sign("forwarded-by-platform-mcp:v1");
     }
 
-    /**
-     * An HMAC of {@code value} for {@code purpose} under the shared key (signed links); the newline
-     * keeps it apart from token bodies and the forwarding mark.
-     */
-    public String signature(String purpose, String value) {
-        return sign(purpose + "\n" + value);
-    }
-
     private String sign(String body) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");

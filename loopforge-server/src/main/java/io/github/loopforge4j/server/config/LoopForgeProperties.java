@@ -42,7 +42,36 @@ public record LoopForgeProperties(
         @Valid @DefaultValue Tapd tapd,
         @Valid @DefaultValue Trackers trackers,
         @Valid @DefaultValue Assistant assistant,
-        @Valid @DefaultValue Skillhub skillhub) {
+        @Valid @DefaultValue Skillhub skillhub,
+        @Valid @DefaultValue Preview preview) {
+
+    /**
+     * Frontend previews (upstream {@code AGENTFLOW_PREVIEW_*}).
+     *
+     * @param publicUrl a separate origin previews are served on (e.g. {@code
+     *     https://preview.example.com} pointing at this server); the site then runs with a real origin
+     *     of its own. Without it, previews run in an opaque origin on this server's origin, where they
+     *     cannot reach the console's storage (browser storage is emulated in memory)
+     * @param frameAncestors extra CSP {@code frame-ancestors} sources allowed to embed a preview
+     * @param sessionTtl how long a preview link stays valid without being used
+     * @param retention how long an archived site is kept by default (at most 30 days)
+     * @param maxFiles files a site may hold
+     * @param maxFileSize a larger file fails the archive
+     * @param maxSize total size of a site
+     */
+    public record Preview(
+            String publicUrl,
+            String frameAncestors,
+            @NotNull @DefaultValue("30m") Duration sessionTtl,
+            @NotNull @DefaultValue("30d") Duration retention,
+            @DefaultValue("20000") int maxFiles,
+            @NotNull @DefaultValue("100MB") org.springframework.util.unit.DataSize maxFileSize,
+            @NotNull @DefaultValue("500MB") org.springframework.util.unit.DataSize maxSize) {
+
+        public boolean separateOrigin() {
+            return publicUrl != null && !publicUrl.isBlank();
+        }
+    }
 
     /**
      * The SkillHub skills market (upstream {@code SKILLHUB_BASE_URL} / {@code SKILLHUB_API_KEY}).

@@ -59,7 +59,8 @@ public final class InMemoryCatalogStore implements CatalogStore {
                             definition.nodes(),
                             definition.edges(),
                             previous.createdAt(),
-                            definition.updatedAt());
+                            definition.updatedAt(),
+                            definition.preview());
             return base.nextRevision(clock.instant());
         });
     }

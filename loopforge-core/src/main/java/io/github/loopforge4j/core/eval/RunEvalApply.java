@@ -66,7 +66,8 @@ public final class RunEvalApply {
                 nodes,
                 workflow.edges(),
                 workflow.createdAt(),
-                workflow.updatedAt());
+                workflow.updatedAt(),
+                workflow.preview());
     }
 
     public static AgentDefinition apply(RunEvaluation.Recommendation rec, AgentDefinition agent) {

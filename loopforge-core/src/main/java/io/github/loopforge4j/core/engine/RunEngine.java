@@ -89,6 +89,7 @@ public final class RunEngine implements AutoCloseable {
     private final GitCredentialProvider gitCredentials;
     private final java.util.function.Function<String, Optional<SandboxProvider>> sandboxProfiles;
     private final io.github.loopforge4j.core.store.PreviewStore previews;
+    private final io.github.loopforge4j.core.preview.PreviewArchive.Limits previewLimits;
     private final LeaseKeeper leases;
     private final AdmissionPolicy admission;
     private final io.github.loopforge4j.core.pricing.TokenPricing pricing;
@@ -116,6 +117,7 @@ public final class RunEngine implements AutoCloseable {
         this.gitCredentials = builder.gitCredentials == null ? GitCredentialProvider.NONE : builder.gitCredentials;
         this.sandboxProfiles = builder.sandboxProfiles;
         this.previews = builder.previews;
+        this.previewLimits = builder.previewLimits;
         this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
         this.platformMcp =
                 builder.platformMcp == null ? io.github.loopforge4j.core.mcp.PlatformMcp.NONE : builder.platformMcp;
@@ -361,6 +363,8 @@ public final class RunEngine implements AutoCloseable {
         if (!sameProject(workflow.projectId(), context)) {
             throw new RunNotFoundException("workflow '" + workflow.id() + "' not found");
         }
+        // the frontend preview contract's build step is part of the frozen snapshot
+        workflow = io.github.loopforge4j.core.preview.PreviewBuild.attach(workflow);
         WorkflowValidator.validate(workflow);
         boolean remote = context != null && !java.util.Objects.equals(context.runnerId(), runnerId);
         if (!remote && sandboxProvider(workflow.sandboxProfileId()).isEmpty()) {
@@ -1484,8 +1488,41 @@ public final class RunEngine implements AutoCloseable {
                     log.warn("run {}: delivery lookup failed: {}", runId, e.toString());
                 }
             }
+            if (run.status() == RunStatus.SUCCEEDED) {
+                finalizePreview(run);
+            }
             releaseWorkspaceIfIdle(run.workspaceOwnerId());
         });
+    }
+
+    /**
+     * When a run with a frontend preview contract succeeds and its build step archived nothing
+     * (upstream {@code BeginFinalization}), the site is archived from the final workspace before it
+     * is released; a workspace without a frontend project skips the preview.
+     */
+    private void finalizePreview(Run run) {
+        io.github.loopforge4j.core.domain.PreviewContract contract =
+                run.workflow().preview();
+        if (contract == null || !contract.isStatic() || run.workspaceReleased() || foreignWorkspace(run)) {
+            return;
+        }
+        Optional<String> status = previews.status(run.id());
+        if (status.isPresent()
+                && !status.get().equals(io.github.loopforge4j.core.store.PreviewStore.FAILED)
+                && !status.get().equals(io.github.loopforge4j.core.store.PreviewStore.PENDING)) {
+            return;
+        }
+        Optional<io.github.loopforge4j.core.runtime.sandbox.SandboxProvider> provider =
+                sandboxProvider(run.workflow().sandboxProfileId());
+        if (provider.isEmpty()) {
+            return;
+        }
+        try {
+            java.nio.file.Path workspace = sandbox(run).workspace();
+            PreviewSteps.archiveBuilt(this, run.id(), null, contract, workspace);
+        } catch (IOException | NodeFailure | RuntimeException e) {
+            log.warn("run {}: preview finalization failed: {}", run.id(), e.toString());
+        }
     }
 
     private void releaseWorkspaceIfIdle(String ownerId) {
@@ -1546,6 +1583,10 @@ public final class RunEngine implements AutoCloseable {
 
     io.github.loopforge4j.core.store.PreviewStore previews() {
         return previews;
+    }
+
+    io.github.loopforge4j.core.preview.PreviewArchive.Limits previewLimits() {
+        return previewLimits;
     }
 
     NodeRunner nodeRunner() {
@@ -2033,9 +2074,17 @@ public final class RunEngine implements AutoCloseable {
         private io.github.loopforge4j.core.store.PreviewStore previews =
                 io.github.loopforge4j.core.store.PreviewStore.NONE;
 
-        /** Where preview nodes archive their sites. */
+        /** Where previews archive their sites. */
         public Builder previews(io.github.loopforge4j.core.store.PreviewStore value) {
             this.previews = value;
+            return this;
+        }
+
+        private io.github.loopforge4j.core.preview.PreviewArchive.Limits previewLimits =
+                io.github.loopforge4j.core.preview.PreviewArchive.Limits.DEFAULT;
+
+        public Builder previewLimits(io.github.loopforge4j.core.preview.PreviewArchive.Limits value) {
+            this.previewLimits = value;
             return this;
         }
 

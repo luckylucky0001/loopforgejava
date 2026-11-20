@@ -10,6 +10,7 @@ import io.github.loopforge4j.core.domain.Run;
 import io.github.loopforge4j.core.domain.RunStatus;
 import io.github.loopforge4j.core.domain.WorkflowDefinition;
 import io.github.loopforge4j.core.domain.WorkflowNode;
+import io.github.loopforge4j.core.preview.PreviewArchive;
 import io.github.loopforge4j.core.runtime.executor.CredentialProvider;
 import io.github.loopforge4j.core.runtime.executor.ExecutorRegistry;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxOptions;
@@ -17,12 +18,10 @@ import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxProvider;
 import io.github.loopforge4j.core.store.InMemoryCatalogStore;
 import io.github.loopforge4j.core.store.InMemoryRunStore;
 import io.github.loopforge4j.core.store.PreviewStore;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -43,18 +42,24 @@ class PreviewNodeTest {
                 .sandbox(new LocalSandboxProvider(new LocalSandboxOptions(
                         root, LocalSandboxOptions.DEFAULT_PASSTHROUGH, true, Duration.ofMinutes(2))))
                 .previews(store)
+                .previewLimits(new PreviewArchive.Limits(2_000, 10L << 20, 50L << 20))
                 .settings(new EngineSettings("test", "mock", Duration.ofMinutes(2), Duration.ofMillis(25), false))
                 .build();
     }
 
-    final PreviewStore recording = (runId, nodeId, s, files) -> {
-        settings.put(runId, s);
-        saved.put(
-                runId,
-                files.stream()
-                        .collect(Collectors.toMap(
-                                PreviewStore.File::path, f -> new String(f.content(), StandardCharsets.UTF_8))));
-        return true;
+    final PreviewStore recording = new PreviewStore() {
+        @Override
+        public boolean save(
+                String runId, String nodeId, PreviewSettings s, PreviewArchive.Site site, java.time.Duration retention)
+                throws java.io.IOException {
+            settings.put(runId, s);
+            Map<String, String> files = new java.util.TreeMap<>();
+            for (String file : site.files()) {
+                files.put(file, java.nio.file.Files.readString(site.root().resolve(file)));
+            }
+            saved.put(runId, files);
+            return true;
+        }
     };
 
     static WorkflowDefinition workflow(String id, String script, PreviewSettings preview) {
@@ -74,12 +79,16 @@ class PreviewNodeTest {
     }
 
     @Test
-    void theBuiltSiteIsArchivedWithoutLinksOrGitData() {
+    void theBuiltSiteIsArchivedWithoutGitDataAndLinksAreRefused() {
         catalog.saveWorkflow(workflow(
                 "wf",
                 "mkdir -p out/assets out/.git && echo '<h1>hi</h1>' > out/index.html && echo 'x()' > out/assets/app.js"
-                        + " && echo secret > out/.git/config && ln -s /etc/hostname out/leak && echo built",
+                        + " && echo secret > out/.git/config && echo built",
                 new PreviewSettings("out", null, true)));
+        catalog.saveWorkflow(
+                workflow("linked", "mkdir -p dist && echo x > dist/index.html && ln -s /etc/hostname dist/leak", null));
+        catalog.saveWorkflow(workflow(
+                "hard", "mkdir -p dist && echo x > dist/index.html && echo s > secret && ln secret dist/copy", null));
         try (RunEngine engine = engine(recording)) {
             Run run = settle(engine, "wf");
             assertThat(run.status()).as(() -> run.requireNode("site").error()).isEqualTo(RunStatus.SUCCEEDED);
@@ -88,6 +97,11 @@ class PreviewNodeTest {
                     .containsEntry("index.html", "<h1>hi</h1>\n");
             assertThat(settings.get(run.id())).isEqualTo(new PreviewSettings("out", "index.html", true));
             assertThat(run.requireNode("site").output()).contains("built", "预览已归档：2 个文件", "入口 index.html");
+            Run linked = settle(engine, "linked");
+            assertThat(linked.requireNode("site").error()).contains("rejects the link leak");
+            Run hard = settle(engine, "hard");
+            assertThat(hard.requireNode("site").error()).contains("rejects the hard link copy");
+            assertThat(saved).doesNotContainKeys(linked.id(), hard.id());
         }
     }
 
@@ -125,7 +139,7 @@ class PreviewNodeTest {
         try (RunEngine engine = engine(recording)) {
             Run link = settle(engine, "link");
             assertThat(link.status()).isEqualTo(RunStatus.FAILED);
-            assertThat(link.requireNode("site").error()).contains("was not built");
+            assertThat(link.requireNode("site").error()).contains("is not a directory in the workspace");
             Run big = settle(engine, "big");
             assertThat(big.status()).isEqualTo(RunStatus.FAILED);
             assertThat(big.requireNode("site").error()).contains("big.bin is larger than 10 MB");

@@ -13,11 +13,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipInputStream;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpMethod;
@@ -28,7 +31,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.client.RestClient;
 
-/** Preview nodes archive a static site that opens through signed, expiring links. */
+/** Frontend previews: the SOP contract's build step, preview links, the gateway and retention. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class PreviewIntegrationTest {
 
@@ -56,6 +59,9 @@ class PreviewIntegrationTest {
     @LocalServerPort
     int port;
 
+    @Autowired
+    PreviewService service;
+
     final HttpClient browser =
             HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
 
@@ -80,12 +86,13 @@ class PreviewIntegrationTest {
         return r.getBody() == null || r.getBody().isBlank() ? null : (T) Json.read(r.getBody(), Object.class);
     }
 
-    HttpResponse<byte[]> open(String path) throws Exception {
-        return browser.send(
-                HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
-                        .GET()
-                        .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+    HttpResponse<String> open(String url, String... headers) throws Exception {
+        HttpRequest.Builder b =
+                HttpRequest.newBuilder(URI.create(url.startsWith("http") ? url : "http://localhost:" + port + url));
+        if (headers.length > 0) {
+            b.headers(headers);
+        }
+        return browser.send(b.GET().build(), HttpResponse.BodyHandlers.ofString());
     }
 
     String member(RestClient admin, String name, String role) {
@@ -112,122 +119,248 @@ class PreviewIntegrationTest {
                 .until(() -> List.of("succeeded", "failed")
                         .contains(
                                 ((Map<String, Object>) call(c, "GET", "/api/v1/runs/" + id, null, 200)).get("status")));
+        Map<String, Object> done = call(c, "GET", "/api/v1/runs/" + id, null, 200);
+        assertThat(done).as(() -> Json.write(done.get("nodes"))).containsEntry("status", "succeeded");
         return id;
+    }
+
+    static Map<String, Object> contractWorkflow(String setup, long retention) {
+        return Map.of(
+                "name", "前端交付",
+                "status", "published",
+                "projectId", "p1",
+                "preview",
+                        Map.of("enabled", true, "executorId", "mock", "spaFallback", true, "retentionSec", retention),
+                "nodes", List.of(Map.of("id", "impl", "type", "script", "script", setup)));
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void theArchivedSiteOpensThroughASignedLinkInAnIsolatedOrigin() throws Exception {
+    void theContractsBuildStepArchivesASiteThatOpensThroughSessions() throws Exception {
         RestClient admin = client(TOKEN);
         call(admin, "PUT", "/api/v1/projects/p1", Map.of("name", "P1"), 200);
         RestClient vic = client(member(admin, "vic", "viewer"));
         RestClient outsider = client(member(admin, "olga", null));
-        String build =
-                "mkdir -p dist/assets dist/docs && printf '<script src=\"assets/app.js\"></script>' > dist/index.html"
-                        + " && echo 'console.log(1)' > dist/assets/app.js && echo docs > dist/docs/index.html";
+
+        // the build step is attached after every sink when the SOP is saved
         call(
                 admin,
                 "PUT",
-                "/api/v1/workflows/site",
-                Map.of(
-                        "name", "站点",
-                        "status", "published",
-                        "projectId", "p1",
-                        "nodes",
-                                List.of(Map.of(
-                                        "id",
-                                        "preview",
-                                        "type",
-                                        "preview",
-                                        "script",
-                                        build,
-                                        "preview",
-                                        Map.of("path", "dist", "spa", true)))),
+                "/api/v1/workflows/fe",
+                contractWorkflow("echo '{\"devDependencies\": {\"vite\": \"5\"}}' > package.json", 3600),
                 200);
-        Map<String, Object> stored = call(admin, "GET", "/api/v1/workflows/site", null, 200);
-        assertThat(((List<Map<String, Object>>) stored.get("nodes")).getFirst())
-                .containsEntry("preview", Map.of("path", "dist", "index", "index.html", "spa", true));
-        call(
-                admin,
-                "PUT",
-                "/api/v1/workflows/bad",
-                Map.of(
-                        "name",
-                        "坏",
-                        "nodes",
-                        List.of(Map.of("id", "p", "type", "preview", "preview", Map.of("path", "../outside")))),
-                422);
+        Map<String, Object> stored = call(admin, "GET", "/api/v1/workflows/fe", null, 200);
+        assertThat((List<Map<String, Object>>) stored.get("nodes"))
+                .extracting(n -> n.get("id") + ":" + n.get("agentId"))
+                .containsExactly("impl:null", "af-preview-build:af-preview-builder");
+        assertThat((List<Map<String, Object>>) stored.get("edges"))
+                .singleElement()
+                .satisfies(
+                        e -> assertThat(e).containsEntry("source", "impl").containsEntry("target", "af-preview-build"));
+        assertThat((Map<String, Object>) stored.get("preview"))
+                .containsEntry("sourcePath", "dist")
+                .containsEntry("indexFile", "index.html")
+                .containsEntry("kind", "static");
 
-        String runId = settledRun(admin, "site");
-        Map<String, Object> run = call(admin, "GET", "/api/v1/runs/" + runId, null, 200);
-        assertThat(run).as(() -> Json.write(run)).containsEntry("status", "succeeded");
-
-        // project members get the link; people outside the project do not
-        call(outsider, "GET", "/api/v1/runs/" + runId + "/preview", null, 403);
+        String runId = settledRun(admin, "fe");
         Map<String, Object> preview = call(vic, "GET", "/api/v1/runs/" + runId + "/preview", null, 200);
         assertThat(preview)
-                .containsEntry("nodeId", "preview")
-                .containsEntry("files", 3)
-                .containsEntry("index", "index.html")
-                .containsKey("expiresAt");
-        String url = (String) preview.get("url");
-        assertThat(url).startsWith("/preview/" + runId + "/").endsWith("/");
+                .containsEntry("status", "ready")
+                .containsEntry("nodeId", "af-preview-build")
+                .containsEntry("fileCount", 1)
+                .containsEntry("entryFile", "index.html")
+                .containsEntry("spaFallback", true);
+        assertThat(Instant.parse((String) preview.get("expiresAt")))
+                .isBetween(Instant.now().plusSeconds(3000), Instant.now().plusSeconds(3700));
+        call(outsider, "GET", "/api/v1/runs/" + runId + "/preview", null, 403);
+        call(outsider, "POST", "/api/v1/runs/" + runId + "/preview/session", Map.of(), 403);
 
-        // the browser needs no token; scripts run in an opaque origin
-        HttpResponse<byte[]> index = open(url);
-        assertThat(index.statusCode()).isEqualTo(200);
-        assertThat(new String(index.body(), StandardCharsets.UTF_8)).contains("assets/app.js");
-        assertThat(index.headers().firstValue("Content-Type"))
-                .hasValueSatisfying(t -> assertThat(t).startsWith("text/html"));
-        assertThat(index.headers().firstValue("Content-Security-Policy"))
-                .hasValueSatisfying(csp ->
-                        assertThat(csp).startsWith("sandbox allow-scripts").doesNotContain("allow-same-origin"));
-        assertThat(index.headers().firstValue("Referrer-Policy")).hasValue("no-referrer");
-        assertThat(open(url + "assets/app.js").headers().firstValue("Content-Type"))
-                .hasValueSatisfying(t -> assertThat(t).startsWith("text/javascript"));
-        // client-side routes fall back to the entry page; missing files do not
-        assertThat(new String(open(url + "settings/profile").body(), StandardCharsets.UTF_8))
-                .contains("assets/app.js");
-        assertThat(open(url + "missing.png").statusCode()).isEqualTo(404);
-        // directories redirect so that relative links resolve
-        HttpResponse<byte[]> bare = open(url.substring(0, url.length() - 1));
-        assertThat(bare.statusCode()).isEqualTo(302);
-        assertThat(bare.headers().firstValue("Location")).hasValue(url);
-        assertThat(open(url + "docs").headers().firstValue("Location")).hasValue(url + "docs/");
-        assertThat(new String(open(url + "docs/").body(), StandardCharsets.UTF_8))
-                .isEqualTo("docs\n");
+        // a viewer opens a link; the page runs in an opaque origin with emulated storage
+        Map<String, Object> session = call(vic, "POST", "/api/v1/runs/" + runId + "/preview/session", Map.of(), 200);
+        String url = (String) session.get("url");
+        assertThat(url).matches("http://localhost:" + port + "/preview/[0-9a-f]{32}/");
+        String prefix = URI.create(url).getPath().replaceAll("/$", "");
+        HttpResponse<String> page = open(url);
+        assertThat(page.statusCode()).isEqualTo(200);
+        assertThat(page.body())
+                .contains("frontend-preview")
+                .contains("data-lf-preview-storage")
+                .doesNotContain("data-lf-preview-backend");
+        assertThat(page.headers().firstValue("Content-Security-Policy"))
+                .hasValueSatisfying(csp -> assertThat(csp)
+                        .startsWith("sandbox allow-scripts")
+                        .doesNotContain("allow-same-origin")
+                        .contains("connect-src 'self';"));
+        assertThat(page.headers().firstValue("Access-Control-Allow-Origin")).hasValue("*");
+        assertThat(page.headers().firstValue("Referrer-Policy")).hasValue("same-origin");
 
-        // a tampered, expired or foreign link opens nothing
-        String token = url.split("/")[3];
-        long expires = Long.parseLong(token.substring(0, token.indexOf('.')));
-        String signature = token.substring(token.indexOf('.') + 1);
-        assertThat(open("/preview/" + runId + "/" + (expires + 3600) + "." + signature + "/")
+        // with a backend address the site's calls are sent there
+        call(vic, "POST", "/api/v1/runs/" + runId + "/preview/session", Map.of("backendUrl", "ftp://x"), 400);
+        call(vic, "POST", "/api/v1/runs/" + runId + "/preview/session", Map.of("backendUrl", "http://u:p@x.test"), 400);
+        Map<String, Object> withBackend = call(
+                vic,
+                "POST",
+                "/api/v1/runs/" + runId + "/preview/session",
+                Map.of("backendUrl", "http://api.example.test:8080/v1#frag"),
+                200);
+        assertThat(withBackend).containsEntry("backendUrl", "http://api.example.test:8080/v1");
+        HttpResponse<String> routed = open((String) withBackend.get("url"));
+        assertThat(routed.body())
+                .contains("window.__LOOPFORGE_PREVIEW_BACKEND__=\"http://api.example.test:8080/v1\"")
+                .contains("data-lf-preview-history");
+        assertThat(routed.headers().firstValue("Content-Security-Policy"))
+                .hasValueSatisfying(
+                        csp -> assertThat(csp).contains("connect-src 'self' http://api.example.test:8080;"));
+
+        // storing a default backend address is for operators; it also hands back a fresh link
+        call(vic, "PUT", "/api/v1/runs/" + runId + "/preview/backend", Map.of("backendUrl", "https://api.test"), 403);
+        Map<String, Object> updated = call(
+                admin,
+                "PUT",
+                "/api/v1/runs/" + runId + "/preview/backend",
+                Map.of("backendUrl", "https://api.test"),
+                200);
+        assertThat((Map<String, Object>) updated.get("preview")).containsEntry("backendUrl", "https://api.test");
+        assertThat((Map<String, Object>) updated.get("session")).containsEntry("backendUrl", "https://api.test");
+        assertThat((Map<String, Object>) call(vic, "POST", "/api/v1/runs/" + runId + "/preview/session", null, 200))
+                .containsEntry("backendUrl", "https://api.test");
+
+        // a page sent to a root path comes back under the preview
+        HttpResponse<String> stray = open(
+                "/login?next=1",
+                "Referer",
+                url + "settings",
+                "Sec-Fetch-Site",
+                "same-origin",
+                "Sec-Fetch-Mode",
+                "navigate");
+        assertThat(stray.statusCode()).isEqualTo(303);
+        assertThat(stray.headers().firstValue("Location")).hasValue(prefix + "/login?next=1");
+        assertThat(open("/login", "Referer", url, "Sec-Fetch-Site", "cross-site", "Sec-Fetch-Mode", "navigate")
                         .statusCode())
-                .isEqualTo(403);
-        assertThat(open("/preview/" + runId + "/1." + signature + "/").statusCode())
-                .isEqualTo(403);
-        assertThat(open("/preview/" + runId + "/garbage/").statusCode()).isEqualTo(403);
-        String other = settledRun(admin, "site");
-        assertThat(open("/preview/" + other + "/" + token + "/").statusCode()).isEqualTo(403);
+                .isNotEqualTo(303);
 
-        // the zip holds the site
+        // revoked, unknown and malformed links open nothing
+        call(vic, "DELETE", "/api/v1/runs/" + runId + "/preview/session/" + session.get("id"), null, 204);
+        assertThat(open(url).statusCode()).isEqualTo(403);
+        assertThat(open("/preview/" + "0".repeat(32) + "/").statusCode()).isEqualTo(403);
+        assertThat(open("/preview/not-a-token/").statusCode()).isEqualTo(404);
+
+        // zip download
         ResponseEntity<byte[]> zip = vic.get()
                 .uri("/api/v1/runs/" + runId + "/preview/download")
                 .retrieve()
                 .toEntity(byte[].class);
         assertThat(zip.getStatusCode().value()).isEqualTo(200);
+        assertThat(entries(zip.getBody())).containsExactly("index.html");
+
+        // agents read the preview and open links through the platform MCP; deleting needs a maintainer
+        call(vic, "DELETE", "/api/v1/runs/" + runId + "/preview", null, 403);
+        call(admin, "DELETE", "/api/v1/runs/" + runId + "/preview", null, 204);
+        call(vic, "GET", "/api/v1/runs/" + runId + "/preview", null, 404);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void siteBuiltForTheRootPathIsRewrittenAndOldPreviewsExpire() throws Exception {
+        RestClient admin = client(TOKEN);
+        call(admin, "PUT", "/api/v1/projects/p1", Map.of("name", "P1"), 200);
+        String build = "mkdir -p dist/assets dist/docs && printf '<html><head><title>t</title></head><body>"
+                + "<script type=\"module\" src=\"/assets/app.js\"></script><a href=\"/about\">a</a></body></html>'"
+                + " > dist/index.html && printf 'import(\"/assets/chunk.js\"); fetch(\"/api/x\"); history.pushState({}, \"\", \"/x\")'"
+                + " > dist/assets/app.js && printf 'body{background:url(/img/bg.png)}' > dist/assets/app.css"
+                + " && echo docs > dist/docs/index.html";
+        Map<String, Object> node = new HashMap<>(Map.of("id", "site", "type", "preview", "script", build));
+        node.put("preview", Map.of("path", "dist", "spa", true));
+        call(
+                admin,
+                "PUT",
+                "/api/v1/workflows/site",
+                Map.of("name", "站点", "status", "published", "projectId", "p1", "nodes", List.of(node)),
+                200);
+        String runId = settledRun(admin, "site");
+        assertThat((Map<String, Object>) call(admin, "GET", "/api/v1/runs/" + runId + "/preview", null, 200))
+                .containsEntry("status", "ready")
+                .containsEntry("fileCount", 4);
+        String url = (String)
+                ((Map<String, Object>) call(admin, "POST", "/api/v1/runs/" + runId + "/preview/session", null, 200))
+                        .get("url");
+        String prefix = URI.create(url).getPath().replaceAll("/$", "");
+
+        String html = open(url).body();
+        assertThat(html.indexOf("<base href=\"" + prefix + "/\">"))
+                .isPositive()
+                .isLessThan(html.indexOf("<script type=\"module\""));
+        assertThat(html)
+                .contains("src=\"" + prefix + "/assets/app.js\"")
+                .contains("href=\"" + prefix + "/about\"")
+                .contains("var routed = true;");
+        HttpResponse<String> js = open(url + "assets/app.js");
+        assertThat(js.headers().firstValue("Content-Type"))
+                .hasValueSatisfying(t -> assertThat(t).startsWith("text/javascript"));
+        assertThat(js.headers().firstValue("Cache-Control"))
+                .hasValueSatisfying(c -> assertThat(c).contains("immutable"));
+        assertThat(js.body())
+                .contains("import(\"" + prefix + "/assets/chunk.js\")")
+                .contains("fetch(\"/api/x\")");
+        assertThat(open(url + "assets/app.css").body()).contains("url(" + prefix + "/img/bg.png)");
+        // client-side routes fall back to the entry page; files do not
+        assertThat(open(url + "settings/profile", "Accept", "text/html").body()).contains("<base href=");
+        assertThat(open(url + "missing.png", "Accept", "image/png").statusCode())
+                .isEqualTo(404);
+        // directories redirect so that relative links resolve
+        HttpResponse<String> bare = open(prefix);
+        assertThat(bare.statusCode()).isEqualTo(302);
+        assertThat(bare.headers().firstValue("Location")).hasValue(prefix + "/");
+        assertThat(open(url + "docs").headers().firstValue("Location")).hasValue(prefix + "/docs/");
+        assertThat(open(url + "docs/").body()).endsWith("docs\n");
+
+        // a workspace without a frontend skips the contract's preview; nothing can be opened
+        call(admin, "PUT", "/api/v1/workflows/be", contractWorkflow("echo 'package main' > main.go", 3600), 200);
+        String backendRun = settledRun(admin, "be");
+        Map<String, Object> skipped = call(admin, "GET", "/api/v1/runs/" + backendRun + "/preview", null, 200);
+        assertThat(skipped).containsEntry("status", "skipped");
+        assertThat((String) skipped.get("error")).contains("工作区没有前端工程");
+        call(admin, "POST", "/api/v1/runs/" + backendRun + "/preview/session", null, 409);
+        call(admin, "GET", "/api/v1/runs/" + backendRun + "/preview/download", null, 409);
+
+        // previews past their retention expire: links stop working, the zip is gone
+        call(
+                admin,
+                "PUT",
+                "/api/v1/workflows/short",
+                contractWorkflow("echo '{\"dependencies\": {\"react\": \"18\"}}' > package.json", 1),
+                200);
+        String shortRun = settledRun(admin, "short");
+        String shortUrl = (String)
+                ((Map<String, Object>) call(admin, "POST", "/api/v1/runs/" + shortRun + "/preview/session", null, 200))
+                        .get("url");
+        await().atMost(Duration.ofSeconds(10)).until(() -> {
+            service.sweep();
+            return "expired"
+                    .equals(((Map<String, Object>)
+                                    call(admin, "GET", "/api/v1/runs/" + shortRun + "/preview", null, 200))
+                            .get("status"));
+        });
+        assertThat(open(shortUrl).statusCode()).isEqualTo(403);
+        call(admin, "GET", "/api/v1/runs/" + shortRun + "/preview/download", null, 410);
+
+        // the preview and its links go with their run
+        call(admin, "DELETE", "/api/v1/runs/" + runId, null, 204);
+        assertThat(open(url).statusCode()).isEqualTo(403);
+    }
+
+    static List<String> entries(byte[] zip) throws Exception {
         List<String> entries = new ArrayList<>();
-        try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(zip.getBody()))) {
+        try (ZipInputStream in = new ZipInputStream(new ByteArrayInputStream(zip))) {
             for (var e = in.getNextEntry(); e != null; e = in.getNextEntry()) {
                 entries.add(e.getName());
             }
         }
-        assertThat(entries).containsExactly("assets/app.js", "docs/index.html", "index.html");
+        return entries;
+    }
 
-        // agents can hand out the link through the platform MCP, and the preview goes with its run
-        call(admin, "DELETE", "/api/v1/runs/" + runId, null, 204);
-        assertThat(open(url).statusCode()).isEqualTo(404);
-        assertThat((Map<String, Object>) call(admin, "GET", "/api/v1/runs/" + other + "/preview", null, 200))
-                .containsKey("url");
+    static String text(byte[] bytes) {
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 }

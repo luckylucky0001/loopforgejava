@@ -39,7 +39,7 @@
 | `internal/httpapi/assistant_schedule.go`、`assistant_tasks.go`、调度触发配置 | `server.work.ScheduleService`（`kind` = `assistant` / `dispatch`）、`AssistantService.runScheduled` | AI 定时任务（以最后保存人的身份与凭据、完全权限运行一轮助手对话）与按状态自动派发需求的 SOP |
 | `internal/domain` Dockerfile / Environment / SandboxProfile 与 `/api/dockerfiles`、`/api/environments`、`/api/sandboxes` | `core.domain.*Definition`、`core.runtime.sandbox.ProfileSandboxProvider`、`EnvironmentSandbox`、`server.sandbox.*` | 目录中的沙箱配置（local / native / docker）、环境（变量、PATH、每工作区一次的安装脚本）、按内容哈希构建并复用的 Dockerfile 镜像 |
 | `internal/httpapi/skillhub_client.go`、`skillhub_market.go` | `server.skillhub.*` | SkillHub 市场：浏览、安装与更新为目录技能（来源记录、匿名用户标识、跨主机跳转不带 API Key） |
-| 预览构建（`preview` 节点、预览链接与下载） | `core.domain.PreviewSettings`、`core.engine.NodeRunner.runPreview`、`core.store.PreviewStore`、`server.preview.*` | 构建并归档静态站点，签名到期链接在沙箱 CSP 的隔离源中打开，单页应用回退与 zip 下载 |
+| `internal/domain/preview*.go`、`internal/preview/*`（归档、网关、会话、下载）、`internal/httpapi/run_preview.go`、runner 预览上传 | `core.domain.PreviewContract`、`core.preview.*`（`PreviewBuild`、`PreviewArchive`、`FrontendDetector`）、`core.engine.PreviewSteps`、`server.preview.*`、`runner.RemotePreviewStore` | 前端预览约定与自动追加的构建步骤、非前端跳过、构建后立即归档、会话链接（哈希令牌、滑动续期、撤销）、后端地址拦截、HTML / CSS / JS 路径改写与 History 适配、保留期过期、执行机器上传；另有可写构建命令的 `preview` 节点。站点存数据库（未移植 tar.zst 内容寻址存储与截图） |
 | `internal/runeval/*`、`internal/domain/run_eval.go` | `core.eval.*`、`server.eval.*` | 运行评测：事实、加权维度、评测提示与结果约定、建议应用到当前 SOP / 角色 |
 | `internal/httpapi/clarify_jobs.go`、`clarify_session.go`、`issue_routes.go`（澄清） | `server.work.Clarification*`、`core.engine.Conversations.checkout` | AI 澄清：后台轮次、只读检出、续接会话、范围规则与轮数收敛、结论写入描述与回写原单 |
 | `internal/tracker/service.go`、`tapd_url.go` | `server.tracker`（`TrackerService`、`GitHubIssues`、`GitLabIssues`、`TapdClient`、`TapdLinks`） | 拉取、TAPD 链接导入、推送、交付回写、定时同步；直接调用 GitHub / GitLab / TAPD 开放 API |
@@ -91,6 +91,7 @@
 | 单点登录账户绑定 | 企业身份 | issuer + subject 绑定；重名时改用新用户名，邮箱关联需显式开启 | 防止身份提供方里的同名用户接管本地账户（含管理员） |
 | 个人 GitHub 连接 | 内置 OAuth App 的设备码授权 | 个人设置里粘贴 Token（按主机） | 不内置第三方 OAuth App 凭据；Token 同样只加密保存 |
 | 自动派发的基线门禁 | 派发前执行集成分支基线检查 | 不做基线检查，按优先级派发、跳过有活动运行的需求 | 本项目的需求工作分支直接从基础分支创建，没有集成分支概念 |
+| 预览的源 | 与控制台同源并 `allow-same-origin` | 默认不透明源（存储内存模拟）；配置单独的预览源后才 `allow-same-origin` | 控制台令牌存在 localStorage，同源脚本可读 |
 | SkillHub 安装范围 | 安装到项目 | 安装为全局技能（管理员） | 本项目的技能目录是全局的，由管理员维护 |
 | 运行日志 | Worker 的 stdout / stderr 日志表 | 运行事件即日志；脚本 stdout 与 stderr 合并后逐行写入 `output` 事件（每次最多 2,000 行） | 事件已有游标、保留策略与实时流，不需要第二张日志表 |
 | 澄清结果提交 | Agent 调用 `submit_clarification` MCP 工具 | 回复末尾的 JSON 代码块，无效时在同一会话里重试一次 | 不需要为每轮签发 MCP 凭据；校验规则（问题非空、选择题至少两个不同选项、结论必须有 summary）与上游一致 |

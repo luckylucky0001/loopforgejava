@@ -17,6 +17,8 @@ import io.github.loopforge4j.core.domain.InterventionStage;
 import io.github.loopforge4j.core.domain.LoopExhaustedPolicy;
 import io.github.loopforge4j.core.domain.NodeRun;
 import io.github.loopforge4j.core.domain.NodeStatus;
+import io.github.loopforge4j.core.domain.PreviewContract;
+import io.github.loopforge4j.core.domain.PreviewSettings;
 import io.github.loopforge4j.core.domain.PullRequest;
 import io.github.loopforge4j.core.domain.RepositoryContext;
 import io.github.loopforge4j.core.domain.Run;
@@ -25,6 +27,9 @@ import io.github.loopforge4j.core.domain.ScriptLanguage;
 import io.github.loopforge4j.core.domain.VerificationGate;
 import io.github.loopforge4j.core.domain.WorkflowDefinition;
 import io.github.loopforge4j.core.domain.WorkflowNode;
+import io.github.loopforge4j.core.preview.FrontendDetector;
+import io.github.loopforge4j.core.preview.PreviewArchive;
+import io.github.loopforge4j.core.preview.PreviewBuild;
 import io.github.loopforge4j.core.runtime.Cancellation;
 import io.github.loopforge4j.core.runtime.CancelledException;
 import io.github.loopforge4j.core.runtime.EventSink;
@@ -45,7 +50,6 @@ import io.github.loopforge4j.core.runtime.sandbox.LineListener;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
 import io.github.loopforge4j.core.runtime.sandbox.Sandbox;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -385,21 +389,9 @@ final class NodeRunner {
 
     // ---------------------------------------------------------------- preview
 
-    static final int PREVIEW_MAX_FILES = 2_000;
-    static final long PREVIEW_MAX_FILE = 10L << 20;
-    static final long PREVIEW_MAX_TOTAL = 50L << 20;
-    static final int PREVIEW_MAX_PATH = 1_000;
-
-    /** A preview beyond the archive limits: the node fails, it is not an infrastructure error. */
-    private static final class PreviewLimit extends IOException {
-        PreviewLimit(String message) {
-            super(message);
-        }
-    }
-
     /**
      * Builds (when the node has a command) and archives the static site under the preview path, so
-     * reviewers can open it while the run continues (upstream preview build).
+     * reviewers can open it while the run continues. A site that cannot be archived fails the node.
      */
     private void runPreview(String runId, int generation, int attempt, WorkflowNode node, Cancellation cancellation)
             throws NodeFailure, IOException, CancelledException {
@@ -407,67 +399,15 @@ final class NodeRunner {
                 ? ""
                 : executeScript(runId, attempt, node, cancellation);
         Sandbox sandbox = engine.sandbox(currentRun(runId));
-        io.github.loopforge4j.core.domain.PreviewSettings settings = node.preview();
-        Path workspace = sandbox.workspace().toRealPath();
-        Path site = workspace.resolve(settings.path()).normalize();
-        if (!site.startsWith(workspace)
-                || Files.isSymbolicLink(site)
-                || !Files.isDirectory(site, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-            throw new NodeFailure(FailureKind.SCRIPT, "preview directory '" + settings.path() + "' was not built");
-        }
-        List<io.github.loopforge4j.core.store.PreviewStore.File> files = new ArrayList<>();
-        long[] total = {0};
+        PreviewSettings settings = node.preview();
+        PreviewArchive.Site site;
         try {
-            Files.walkFileTree(site, new java.nio.file.SimpleFileVisitor<>() {
-                @Override
-                public java.nio.file.FileVisitResult preVisitDirectory(
-                        Path dir, java.nio.file.attribute.BasicFileAttributes attrs) {
-                    return dir.getFileName() != null
-                                    && dir.getFileName().toString().equals(".git")
-                            ? java.nio.file.FileVisitResult.SKIP_SUBTREE
-                            : java.nio.file.FileVisitResult.CONTINUE;
-                }
-
-                @Override
-                public java.nio.file.FileVisitResult visitFile(
-                        Path file, java.nio.file.attribute.BasicFileAttributes attrs) throws IOException {
-                    if (!attrs.isRegularFile()) {
-                        return java.nio.file.FileVisitResult.CONTINUE; // links and devices stay out
-                    }
-                    if (files.size() == PREVIEW_MAX_FILES) {
-                        throw new PreviewLimit("preview has more than " + PREVIEW_MAX_FILES + " files");
-                    }
-                    if (attrs.size() > PREVIEW_MAX_FILE) {
-                        throw new PreviewLimit("preview file " + site.relativize(file) + " is larger than 10 MB");
-                    }
-                    total[0] += attrs.size();
-                    if (total[0] > PREVIEW_MAX_TOTAL) {
-                        throw new PreviewLimit("preview is larger than 50 MB");
-                    }
-                    String relative = site.relativize(file).toString().replace('\\', '/');
-                    if (relative.length() > PREVIEW_MAX_PATH) {
-                        throw new PreviewLimit("preview path " + relative.substring(0, 80) + "... is too long");
-                    }
-                    files.add(
-                            new io.github.loopforge4j.core.store.PreviewStore.File(relative, Files.readAllBytes(file)));
-                    return java.nio.file.FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (PreviewLimit e) {
+            site = PreviewArchive.collect(sandbox.workspace(), settings, engine.previewLimits());
+        } catch (PreviewArchive.Failure e) {
+            engine.previews().fail(runId, node.id(), settings, e.getMessage());
             throw new NodeFailure(FailureKind.SCRIPT, e.getMessage());
         }
-        if (files.stream().noneMatch(f -> f.path().equals(settings.index()))) {
-            throw new NodeFailure(
-                    FailureKind.SCRIPT,
-                    "preview entry '" + settings.index() + "' is missing in '" + settings.path() + "'");
-        }
-        boolean kept = engine.previews().save(runId, node.id(), settings, files);
-        String summary = kept
-                ? "预览已归档：" + files.size() + " 个文件 · " + Math.max(1, total[0] / 1024) + " KB · 入口 " + settings.index()
-                : "预览已构建（" + files.size() + " 个文件），此执行环境不保存预览";
-        sinkFor(runId, node)
-                .emit(io.github.loopforge4j.core.runtime.Telemetry.of(
-                        "artifact", "preview.archived", "finish", summary));
+        String summary = archive(runId, node, settings, site, PreviewContractDefaults.RETENTION);
         String output = (build.isBlank() ? "" : build.strip() + "\n\n") + summary + "\n";
         List<Artifact> artifacts = ArtifactSupport.collect(
                 sandbox.workspace(),
@@ -478,6 +418,60 @@ final class NodeRunner {
                 output,
                 engine.clock().instant());
         commitSuccess(runId, generation, attempt, node, output, artifacts, null);
+    }
+
+    /** Hands the collected site to the preview store and reports what happened. */
+    private String archive(
+            String runId,
+            WorkflowNode node,
+            PreviewSettings settings,
+            PreviewArchive.Site site,
+            java.time.Duration retention)
+            throws IOException {
+        boolean kept = engine.previews().save(runId, node.id(), settings, site, retention);
+        String summary = kept
+                ? "预览已归档：" + site.files().size() + " 个文件 · " + Math.max(1, site.bytes() / 1024) + " KB · 入口 "
+                        + site.index()
+                : "预览已构建（" + site.files().size() + " 个文件），此执行环境不保存预览";
+        sinkFor(runId, node)
+                .emit(io.github.loopforge4j.core.runtime.Telemetry.of(
+                        "preview", kept ? "preview.archive.ready" : "preview.archived", "finish", summary));
+        return summary;
+    }
+
+    /** Constants shared by preview nodes and the SOP's preview contract. */
+    private static final class PreviewContractDefaults {
+        static final java.time.Duration RETENTION =
+                java.time.Duration.ofSeconds(io.github.loopforge4j.core.domain.PreviewContract.MAX_RETENTION_SEC);
+    }
+
+    /**
+     * Before the SOP's preview build step runs: a workspace without a frontend project skips it
+     * (the run's delivery is unaffected), as upstream does.
+     *
+     * @return whether the step was completed as skipped
+     */
+    private boolean skipPreviewBuild(
+            String runId, int generation, int attempt, WorkflowNode node, PreviewContract contract, Sandbox sandbox) {
+        FrontendDetector.Result found = FrontendDetector.detect(sandbox.workspace());
+        if (found.frontend()) {
+            return false;
+        }
+        String reason = "工作区没有前端工程，已跳过预览（" + found.evidence() + "）";
+        engine.previews().skip(runId, node.id(), contract.settings(), reason);
+        sinkFor(runId, node)
+                .emit(io.github.loopforge4j.core.runtime.Telemetry.of("preview", "preview.skipped", "finish", reason));
+        String output = "# 前端预览\n\n已跳过：工作区没有可构建的前端工程。业务交付不受影响。\n\n" + found.evidence() + "\n";
+        commitSuccess(runId, generation, attempt, node, output, List.of(), null);
+        return true;
+    }
+
+    /**
+     * After the SOP's preview build step succeeded: archive at once, so a later approval can open the
+     * preview while the run still waits. Archiving problems are recorded on the preview only.
+     */
+    private String archiveBuiltPreview(String runId, WorkflowNode node, PreviewContract contract, Sandbox sandbox) {
+        return PreviewSteps.archiveBuilt(engine, runId, node.id(), contract, sandbox.workspace());
     }
 
     private io.github.loopforge4j.core.runtime.EventSink sinkFor(String runId, WorkflowNode node) {
@@ -537,10 +531,16 @@ final class NodeRunner {
 
     private void runAgent(String runId, int generation, int attempt, WorkflowNode node, Cancellation cancellation)
             throws NodeFailure, IOException, CancelledException {
-        AgentDefinition agent = engine.catalog()
-                .agent(node.agentId())
-                .orElseThrow(
-                        () -> new NodeFailure(FailureKind.CONFIGURATION, "agent '" + node.agentId() + "' not found"));
+        PreviewContract previewContract = PreviewBuild.isBuildNode(node.id())
+                ? currentRun(runId).workflow().preview()
+                : null;
+        boolean previewBuild = previewContract != null && previewContract.isStatic();
+        AgentDefinition agent = previewBuild && PreviewBuild.isBuildAgent(node.agentId())
+                ? PreviewBuild.agent(previewContract)
+                : engine.catalog()
+                        .agent(node.agentId())
+                        .orElseThrow(() ->
+                                new NodeFailure(FailureKind.CONFIGURATION, "agent '" + node.agentId() + "' not found"));
         ExecutorDefinition executor = resolveExecutor(agent, node);
         AgentExecutor adapter = engine.executors()
                 .adapter(executor.kind())
@@ -567,6 +567,9 @@ final class NodeRunner {
         Run run = currentRun(runId);
         Sandbox sandbox = engine.sandbox(run);
         run = engine.prepareRepositories(runId, sandbox, cancellation);
+        if (previewBuild && skipPreviewBuild(runId, generation, attempt, node, previewContract, sandbox)) {
+            return;
+        }
         Map<String, String> runEnvironment = engine.processEnvironment(run, sandbox);
         String manifest = ArtifactSupport.materializeInputs(
                 sandbox.workspace(), run, node, engine.runs().artifacts(runId));
@@ -756,6 +759,10 @@ final class NodeRunner {
                 contracts,
                 output,
                 engine.clock().instant());
+        if (previewBuild && manualGate == null) {
+            output = (output == null || output.isBlank() ? "" : output.strip() + "\n\n")
+                    + archiveBuiltPreview(runId, node, previewContract, sandbox) + "\n";
+        }
         commitSuccess(runId, generation, attempt, node, output, artifacts, manualGate);
     }
 

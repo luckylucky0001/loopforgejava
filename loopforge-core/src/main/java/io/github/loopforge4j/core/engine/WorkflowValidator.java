@@ -341,6 +341,20 @@ public final class WorkflowValidator {
         if (workflow.sandboxProfileId() == null || workflow.sandboxProfileId().isBlank()) {
             problems.add("workflow sandbox profile is required");
         }
+        io.github.loopforge4j.core.domain.PreviewContract preview = workflow.preview();
+        if (preview != null) {
+            if (!preview.isStatic()) {
+                problems.add("frontend preview currently supports static sites only");
+            }
+            if (io.github.loopforge4j.core.preview.PreviewArchive.safeRelative(preview.sourcePath()) == null) {
+                problems.add("frontend preview sourcePath '" + clip(preview.sourcePath()) + "' is invalid");
+            }
+            if (io.github.loopforge4j.core.preview.PreviewArchive.safeRelative(preview.indexFile()) == null) {
+                problems.add("frontend preview indexFile '" + clip(preview.indexFile()) + "' is invalid");
+            }
+            checkId("frontend preview executor", preview.executorId(), problems);
+            checkLength("frontend preview model", preview.model(), MAX_NAME, problems);
+        }
         Set<String> ids = new LinkedHashSet<>();
         for (WorkflowNode node : workflow.nodes()) {
             if (node.id().isBlank()) {

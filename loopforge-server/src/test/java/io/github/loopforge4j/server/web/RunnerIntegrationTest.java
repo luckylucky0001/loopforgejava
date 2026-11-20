@@ -291,4 +291,105 @@ class RunnerIntegrationTest {
                         .value())
                 .isEqualTo(401);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aMachineUploadsThePreviewItBuilt() throws Exception {
+        RestClient admin = client(TOKEN);
+        ok(admin, "PUT", "/api/v1/projects/p2", Map.of("name", "P2"), 200);
+        String carolId = (String)
+                ok(admin, "POST", "/api/v1/users", Map.of("username", "carol", "password", "carol-password-1"), 201)
+                        .get("id");
+        ok(admin, "PUT", "/api/v1/projects/p2/members/" + carolId, Map.of("role", "developer"), 200);
+        ok(
+                admin,
+                "PUT",
+                "/api/v1/workflows/fe",
+                Map.of(
+                        "status",
+                        "published",
+                        "projectId",
+                        "p2",
+                        "preview",
+                        Map.of("enabled", true, "executorId", "mock"),
+                        "nodes",
+                        List.of(Map.of(
+                                "id",
+                                "impl",
+                                "type",
+                                "script",
+                                "script",
+                                "echo '{\"dependencies\": {\"vue\": \"3\"}}' > package.json"))),
+                200);
+        RestClient carol = client(login("carol"));
+        Map<String, Object> registered = ok(carol, "POST", "/api/v1/runners", Map.of("name", "carol-pc"), 201);
+        String runnerToken = (String) registered.get("token");
+        Map<String, Object> run = ok(
+                carol,
+                "POST",
+                "/api/v1/runs",
+                Map.of("workflowId", "fe", "projectId", "p2", "runnerId", registered.get("id")),
+                201);
+        String runId = (String) run.get("id");
+        RunnerConfig config = new RunnerConfig(
+                "http://localhost:" + port,
+                runnerToken,
+                data.resolve("carol-machine"),
+                1,
+                "mock",
+                true,
+                GitCredentials.NONE,
+                Duration.ofMillis(300),
+                Duration.ofSeconds(30),
+                Duration.ofMinutes(2));
+        ExecutorRegistry executors = ExecutorRegistry.withBuiltIns(CredentialProvider.NONE)
+                .register(new MockAgentExecutor(Duration.ofMillis(5)));
+        try (RunnerAgent agent = new RunnerAgent(config, executors).start()) {
+            await().atMost(Duration.ofSeconds(30))
+                    .until(() -> "succeeded"
+                            .equals(ok(carol, "GET", "/api/v1/runs/" + runId, null, 200)
+                                    .get("status")));
+        }
+        Map<String, Object> preview = ok(carol, "GET", "/api/v1/runs/" + runId + "/preview", null, 200);
+        assertThat(preview)
+                .containsEntry("status", "ready")
+                .containsEntry("nodeId", "af-preview-build")
+                .containsEntry("fileCount", 1);
+        String url = (String) ok(carol, "POST", "/api/v1/runs/" + runId + "/preview/session", Map.of(), 200)
+                .get("url");
+        assertThat(client(null).get().uri(url).retrieve().toEntity(String.class).getBody())
+                .contains("frontend-preview");
+
+        // uploads are checked: no unsafe names, only the machine's own runs
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(bytes)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("../escape.html"));
+            zip.write("x".getBytes());
+            zip.closeEntry();
+        }
+        ResponseEntity<String> evil = client(runnerToken)
+                .put()
+                .uri("/api/v1/runner-api/runs/" + runId + "/preview?path=dist&index=index.html")
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .body(bytes.toByteArray())
+                .retrieve()
+                .toEntity(String.class);
+        assertThat(evil.getStatusCode().value()).as(evil.getBody()).isEqualTo(422);
+        assertThat(ok(carol, "GET", "/api/v1/runs/" + runId + "/preview", null, 200))
+                .containsEntry("status", "failed");
+        assertThat(Files.exists(data.resolve("escape.html"))).isFalse();
+        Map<String, Object> other =
+                ok(admin, "POST", "/api/v1/runs", Map.of("workflowId", "fe", "projectId", "p2"), 201);
+        assertThat(client(runnerToken)
+                        .put()
+                        .uri("/api/v1/runner-api/runs/" + other.get("id") + "/preview?path=dist&index=index.html")
+                        .contentType(MediaType.parseMediaType("application/zip"))
+                        .body(bytes.toByteArray())
+                        .retrieve()
+                        .toEntity(String.class)
+                        .getStatusCode()
+                        .value())
+                .isEqualTo(404);
+        ok(admin, "POST", "/api/v1/runs/" + other.get("id") + "/cancel", null, 200);
+    }
 }

@@ -58,7 +58,9 @@
 | `sop` | 以子运行执行另一个 SOP，与父运行共享工作区；检测嵌套循环；成功后把子运行产物复制为本节点产物 |
 | `preview` | 可选的构建命令（与脚本节点相同的执行方式）之后，把工作区里的站点目录（默认 `dist`，入口默认 `index.html`）归档到数据库：跳过符号链接、设备文件与 `.git`，上限 2000 个文件、单文件 10 MB、合计 50 MB，目录越出工作区或缺少入口即失败；每次运行保留最新一次预览，随运行删除 |
 
-预览通过签名链接 `/preview/<运行>/<到期时间>.<HMAC>/` 打开：链接由能读这次运行的人从 `GET /runs/{id}/preview` 取得，2 小时内有效，用所有实例共享的令牌密钥签名，浏览器不需要登录。站点响应带 `Content-Security-Policy: sandbox allow-scripts …`（没有 `allow-same-origin`），脚本运行在不透明源里，读不到控制台的登录令牌，也不能借控制台身份调 API；`Referrer-Policy: no-referrer` 避免链接经 Referer 外泄。单页应用模式下，找不到且不像文件的路径回退到入口页。
+SOP 的前端预览约定（`WorkflowDefinition.preview`，随运行快照冻结）在保存和启动时由 `PreviewBuild.attach` 追加 Agent 步骤 `af-preview-build`（合成角色 `af-preview-builder`，提示词与产物契约来自约定，不进目录）。该步骤运行前用 `FrontendDetector` 判断工作区是否有前端工程，没有就记为已跳过；成功后立即归档（`PreviewSteps`），运行成功时若还没有可用的预览（没有或失败）再从最终工作区归档一次，然后才释放工作区。执行机器上的 `RemotePreviewStore` 把站点打包上传，服务器解包（只收干净的相对路径）后用同样的规则再收集一次。
+
+预览状态为 `ready` / `skipped` / `failed` / `expired`，保留期满由定时任务删除文件。访问走会话：`POST /runs/{id}/preview/session` 生成 32 位十六进制令牌（只存 SHA-256），`/preview/<令牌>/` 在使用时滑动续期、可撤销。网关为 HTML 注入 `<base>`、视口样式、可选的后端拦截脚本（fetch / XHR / sendBeacon / EventSource / WebSocket 改发到后端源）与 History 适配脚本，并把根路径的属性、CSS `url()` 和脚本里的资源路径改到预览路径下（移植自上游，MIT）。响应带 `Content-Security-Policy: sandbox allow-scripts …`：没有配置单独的预览源时不含 `allow-same-origin`，页面在不透明源里运行，读不到控制台的令牌，存储用内存模拟，资源响应带 `Access-Control-Allow-Origin: *` 以便模块脚本加载；配置 `loopforge.preview.public-url` 后预览只在该源提供并拥有自己的源。来自预览页面、落到根路径的导航会被重定向回预览路径下。
 
 失败路由（上游 `nodeFailedAt`）：在尝试预算内重试（配置错误、门禁失败、轮次耗尽不重试）→ 否则失败；允许打回时自动 `reject` 到 `rejectTo`；Agent 的 `rework` 终态在返工预算耗尽时转人工决策而不是直接失败。
 

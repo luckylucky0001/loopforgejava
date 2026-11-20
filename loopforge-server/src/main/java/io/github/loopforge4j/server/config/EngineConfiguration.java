@@ -257,7 +257,11 @@ class EngineConfiguration {
         docker.ifPresent(builder::sandbox);
         bwrap.ifPresent(builder::sandbox);
         builder.sandboxProfiles(catalogSandboxes);
-        builder.previews(previews);
+        builder.previews(previews)
+                .previewLimits(new io.github.loopforge4j.core.preview.PreviewArchive.Limits(
+                        properties.preview().maxFiles(),
+                        properties.preview().maxFileSize().toBytes(),
+                        properties.preview().maxSize().toBytes()));
         RunEngine runEngine = builder.instances(instances)
                 .pricing(io.github.loopforge4j.core.pricing.TokenPricing.withOverrides(properties.pricing().stream()
                         .collect(java.util.stream.Collectors.toMap(

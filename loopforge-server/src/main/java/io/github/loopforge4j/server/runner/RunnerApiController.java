@@ -29,6 +29,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -57,7 +58,12 @@ public class RunnerApiController {
     private final io.github.loopforge4j.core.delivery.DeliveryProvider delivery;
     private final String publicUrl;
 
+    private final io.github.loopforge4j.server.preview.JdbcPreviewStore previews;
+    private final io.github.loopforge4j.core.preview.PreviewArchive.Limits previewLimits;
+    private final java.time.Duration previewRetention;
+
     public RunnerApiController(
+            io.github.loopforge4j.server.preview.JdbcPreviewStore previews,
             RunnerService runners,
             JdbcRunStore runs,
             CatalogStore catalog,
@@ -72,6 +78,12 @@ public class RunnerApiController {
         this.engines = engines;
         this.platform = platform;
         this.publicUrl = properties.publicUrl();
+        this.previews = previews;
+        this.previewLimits = new io.github.loopforge4j.core.preview.PreviewArchive.Limits(
+                properties.preview().maxFiles(),
+                properties.preview().maxFileSize().toBytes(),
+                properties.preview().maxSize().toBytes());
+        this.previewRetention = properties.preview().retention();
     }
 
     // ------------------------------------------------------------------ machine
@@ -232,6 +244,97 @@ public class RunnerApiController {
         owned(runId, runner(request));
         return json(runs.artifact(runId, artifactId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "artifact not found")));
+    }
+
+    // ------------------------------------------------------------------ previews
+
+    /** The state of the run's preview (the machine skips archiving what is already there). */
+    @GetMapping(path = "/runs/{runId}/preview", produces = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<String> previewStatus(@PathVariable String runId, HttpServletRequest request) {
+        owned(runId, runner(request));
+        return json(java.util.Map.of(
+                "status",
+                previews.status(runId).orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "preview not found"))));
+    }
+
+    /** A preview the machine skipped or failed to archive. */
+    @PostMapping(path = "/runs/{runId}/preview/state", produces = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<String> previewState(
+            @PathVariable String runId, @RequestBody String body, HttpServletRequest request) {
+        owned(runId, runner(request));
+        JsonNode in = parse(body);
+        io.github.loopforge4j.core.domain.PreviewSettings settings = previewSettings(
+                in.path("path").asText(null),
+                in.path("index").asText(null),
+                in.path("spa").asBoolean(false));
+        String nodeId = in.hasNonNull("nodeId") ? clip(in.get("nodeId").asText(), 128) : null;
+        String reason = clip(in.path("reason").asText(""), 1000);
+        switch (in.path("status").asText("")) {
+            case io.github.loopforge4j.core.store.PreviewStore.SKIPPED ->
+                previews.skip(runId, nodeId, settings, reason);
+            case io.github.loopforge4j.core.store.PreviewStore.FAILED -> previews.fail(runId, nodeId, settings, reason);
+            default -> throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "status must be skipped or failed");
+        }
+        return json(java.util.Map.of("status", in.path("status").asText()));
+    }
+
+    /** The zipped site the machine built: unpacked, checked and stored like a local archive. */
+    @PutMapping(path = "/runs/{runId}/preview", produces = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<String> previewUpload(
+            @PathVariable String runId,
+            @RequestParam(required = false) String nodeId,
+            @RequestParam String path,
+            @RequestParam String index,
+            @RequestParam(defaultValue = "false") boolean spa,
+            @RequestParam(defaultValue = "0") long retentionSec,
+            HttpServletRequest request)
+            throws java.io.IOException {
+        owned(runId, runner(request));
+        io.github.loopforge4j.core.domain.PreviewSettings settings = previewSettings(path, index, spa);
+        String node = nodeId == null ? null : clip(nodeId, 128);
+        java.nio.file.Path temp = java.nio.file.Files.createTempDirectory("lf-preview-upload");
+        try {
+            io.github.loopforge4j.server.preview.PreviewUploadsAccess.extract(
+                    request.getInputStream(), temp.resolve("site"), previewLimits);
+            io.github.loopforge4j.core.preview.PreviewArchive.Site site =
+                    io.github.loopforge4j.core.preview.PreviewArchive.collect(
+                            temp,
+                            new io.github.loopforge4j.core.domain.PreviewSettings("site", settings.index(), spa),
+                            previewLimits);
+            long seconds = retentionSec <= 0
+                            || retentionSec > io.github.loopforge4j.core.domain.PreviewContract.MAX_RETENTION_SEC
+                    ? Math.min(
+                            previewRetention.toSeconds(),
+                            io.github.loopforge4j.core.domain.PreviewContract.MAX_RETENTION_SEC)
+                    : retentionSec;
+            previews.save(runId, node, settings, site, java.time.Duration.ofSeconds(seconds));
+            return json(java.util.Map.of(
+                    "status",
+                    io.github.loopforge4j.core.store.PreviewStore.READY,
+                    "files",
+                    site.files().size()));
+        } catch (io.github.loopforge4j.core.preview.PreviewArchive.Failure e) {
+            previews.fail(runId, node, settings, e.getMessage());
+            throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, e.getMessage());
+        } catch (java.io.IOException e) {
+            if (io.github.loopforge4j.server.preview.PreviewUploadsAccess.rejected(e)) {
+                previews.fail(runId, node, settings, e.getMessage());
+                throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, e.getMessage());
+            }
+            throw e;
+        } finally {
+            io.github.loopforge4j.server.preview.PreviewUploadsAccess.delete(temp);
+        }
+    }
+
+    private static io.github.loopforge4j.core.domain.PreviewSettings previewSettings(
+            String path, String index, boolean spa) {
+        String p = io.github.loopforge4j.core.preview.PreviewArchive.safeRelative(path);
+        String i = io.github.loopforge4j.core.preview.PreviewArchive.safeRelative(index);
+        if (p == null || i == null || p.length() > 1000 || i.length() > 1000) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "preview path and index must be relative paths");
+        }
+        return new io.github.loopforge4j.core.domain.PreviewSettings(p, i, spa);
     }
 
     /** Platform and knowledge MCP servers for an agent on the machine, addressed at the server's URL. */

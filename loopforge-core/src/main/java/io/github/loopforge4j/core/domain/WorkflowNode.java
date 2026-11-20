@@ -202,6 +202,9 @@ public record WorkflowNode(
             return this;
         }
 
+        private Position position = Position.ORIGIN;
+        private List<String> carryOver = List.of();
+
         public Builder timeoutSeconds(int value) {
             this.timeoutSeconds = value;
             return this;
@@ -222,13 +225,23 @@ public record WorkflowNode(
                     rejectTo,
                     onFailure,
                     retryStrategy,
-                    List.of(),
+                    carryOver,
                     maxAttempts,
                     maxReworks,
                     timeoutSeconds,
                     executionScope,
-                    Position.ORIGIN,
+                    position,
                     preview);
+        }
+
+        public Builder position(Position value) {
+            this.position = value;
+            return this;
+        }
+
+        public Builder carryOver(List<String> value) {
+            this.carryOver = value;
+            return this;
         }
 
         public Builder preview(PreviewSettings value) {

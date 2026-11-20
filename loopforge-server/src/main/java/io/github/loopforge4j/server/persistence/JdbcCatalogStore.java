@@ -71,7 +71,8 @@ public class JdbcCatalogStore implements CatalogStore {
                             definition.nodes(),
                             definition.edges(),
                             previous.map(WorkflowDefinition::createdAt).orElse(null),
-                            null)
+                            null,
+                            definition.preview())
                     .nextRevision(now);
             String sql = previous.isPresent() ? """
                     UPDATE workflows SET name = :name, status = :status, revision = :revision, payload = :payload,

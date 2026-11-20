@@ -18,15 +18,21 @@ import org.springframework.web.filter.OncePerRequestFilter;
  */
 class RequestSizeLimitFilter extends OncePerRequestFilter {
 
-    private final long maxBytes;
+    private final java.util.function.ToLongFunction<HttpServletRequest> limit;
 
     RequestSizeLimitFilter(long maxBytes) {
-        this.maxBytes = maxBytes;
+        this(request -> maxBytes);
+    }
+
+    /** A limit per request (preview uploads of execution machines are larger than API calls). */
+    RequestSizeLimitFilter(java.util.function.ToLongFunction<HttpServletRequest> limit) {
+        this.limit = limit;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
+        long maxBytes = limit.applyAsLong(request);
         if (request.getContentLengthLong() > maxBytes) {
             response.setStatus(HttpStatus.CONTENT_TOO_LARGE.value());
             response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);

@@ -69,6 +69,7 @@ public class RunnerAgent implements AutoCloseable {
                 .gitCredentials(run -> config.git())
                 .delivery(RemoteServices.delivery(client))
                 .platformMcp(RemoteServices.platformMcp(client))
+                .previews(new RemotePreviewStore(client))
                 .settings(new EngineSettings(
                         instance,
                         config.defaultExecutor(),

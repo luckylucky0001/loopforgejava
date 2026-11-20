@@ -443,7 +443,7 @@ async function runPage(runId) {
       artifacts.length ? h('div', { class: 'panel' }, h('h2', {}, '产物'), h('table', {}, h('tr', {}, ['节点', '名称', '路径', '大小'].map((t) => h('th', {}, t))),
         artifacts.map((a) => h('tr', {}, h('td', {}, `${a.nodeId}#${a.attempt}`), h('td', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); showArtifact(runId, a); } }, a.name)),
           h('td', { class: 'mono' }, a.path), h('td', {}, a.size))))) : null,
-      (run.workflowSnapshot?.nodes || []).some((n) => n.type === 'preview') ? previewPanel(runId) : null,
+      run.workflowSnapshot?.preview?.enabled || (run.workflowSnapshot?.nodes || []).some((n) => n.type === 'preview') ? previewPanel(run) : null,
       active ? null : evalPanel(runId),
       h('h2', {}, '事件'), log,
     ]);
@@ -681,7 +681,7 @@ function designer(wf, catalog, onChange) {
       panel.replaceChildren(h('h2', {}, `${NODE_LABELS[n.type] || n.type} 节点`),
         field('id', bind(h('input', { value: n.id }), rename)),
         field('名称', bind(h('input', { value: n.name || '' }), (v) => { n.name = v || undefined; })),
-        ...(typeFields[n.type] || []),
+        ...(n.id === 'af-preview-build' ? [h('p', { class: 'muted' }, '系统步骤：由 SOP 的「前端预览」配置生成（执行器、模型、站点目录在 SOP 面板里改）；可以拖到流程中任意位置，关掉前端预览时自动移除。')] : (typeFields[n.type] || [])),
         n.type === 'approval' ? null : field('产物', artifacts),
         field('打回到（rejectTo）', select(n.rejectTo, [['', '—'], ...others], (v) => { n.rejectTo = v || undefined; })),
         field('失败时（onFailure）', select(n.onFailure, [['', '默认'], ['fail', '失败'], ['reject', '打回'], ['human', '转人工'], ['loop', '自修正']], (v) => { n.onFailure = v || undefined; })),
@@ -704,7 +704,32 @@ function designer(wf, catalog, onChange) {
         ...(['local', 'docker', 'bwrap'].includes(wf.sandboxProfileId || 'local') || (catalog.sandboxes || []).some((p) => p.id === wf.sandboxProfileId) ? [] : [[wf.sandboxProfileId, wf.sandboxProfileId]])],
       (v) => { wf.sandboxProfileId = v || undefined; })),
       field('描述', bind(h('textarea', { rows: 3 }, wf.description || ''), (v) => { wf.description = v || undefined; })),
+      previewContractFields(),
       h('p', { class: 'muted' }, '拖动节点调整位置；从节点右侧的圆点拖到另一个节点即可连线；点选节点或连线后在这里编辑，Delete 键删除。'));
+  }
+
+  function previewContractFields() {
+    const c = wf.preview || {};
+    const set = (patch) => { wf.preview = { ...c, enabled: true, ...patch }; changed(); };
+    const box = h('input', { type: 'checkbox', checked: !!c.enabled });
+    box.addEventListener('change', () => {
+      if (box.checked) wf.preview = { enabled: true, executorId: c.executorId || 'codebuddy', sourcePath: c.sourcePath || 'dist', indexFile: c.indexFile || 'index.html', spaFallback: !!c.spaFallback };
+      else wf.preview = undefined;
+      changed();
+    });
+    const head = h('label', { class: 'row' }, box, h('strong', {}, '前端预览'));
+    if (!c.enabled) return h('div', { class: 'panel' }, head, h('p', { class: 'muted' }, '勾选后，保存时在流程末尾追加「构建静态站点」步骤：用 AI 产出静态站点并归档，运行页即可打开预览；工作区没有前端工程时自动跳过。'));
+    const spa = h('input', { type: 'checkbox', checked: !!c.spaFallback });
+    spa.addEventListener('change', () => set({ spaFallback: spa.checked }));
+    const days = Math.round((c.retentionSec || 30 * 86400) / 86400);
+    return h('div', { class: 'panel' }, head,
+      field('构建执行器', select(c.executorId || 'codebuddy', [...new Set(['codebuddy', ...catalog.executors.map((x) => x.id)])].map((id) => [id, (catalog.executors.find((x) => x.id === id)?.name) || id]), (v) => set({ executorId: v }))),
+      field('模型', bind(h('input', { value: c.model || '', placeholder: 'default' }), (v) => set({ model: v.trim() || undefined }))),
+      h('div', { class: 'row' },
+        field('站点目录', bind(h('input', { value: c.sourcePath || 'dist' }), (v) => set({ sourcePath: v.trim() || 'dist' }))),
+        field('入口文件', bind(h('input', { value: c.indexFile || 'index.html' }), (v) => set({ indexFile: v.trim() || 'index.html' })))),
+      h('label', { class: 'row' }, spa, '单页应用（前端路由回退到入口文件）'),
+      field('保留天数（最多 30）', bind(h('input', { type: 'number', min: 1, max: 30, value: days }), (v) => set({ retentionSec: Math.min(30, Math.max(1, Number(v) || 30)) * 86400 }))));
   }
 
   canvasHost.addEventListener('keydown', (ev) => {
@@ -1461,23 +1486,43 @@ const EVAL_DIMENSIONS = { control: '控制流健康', latency: '耗时与等待'
 const REC_STATUS = { pending: '待应用', applied: '已应用', failed: '应用失败' };
 
 /** The quality evaluation of a settled run: score, dimensions, findings and recommendations to apply. */
-function previewPanel(runId) {
+const PREVIEW_STATUS = { pending: '等待构建', archiving: '归档中', ready: '可打开', skipped: '已跳过', failed: '失败', expired: '已过期' };
+
+function previewPanel(run) {
+  const runId = run.id;
   const panel = h('div', { class: 'panel' }, h('h2', {}, '预览'), h('p', { class: 'muted' }, '加载中…'));
   const base = `/runs/${encodeURIComponent(runId)}`;
+  const admin = me?.user?.role === 'admin' || me?.service;
+  const openLink = (session) => {
+    const url = /^https?:\/\/[^/]+\/preview\/[0-9a-f]{32}\/$/.test(session.url) ? session.url : undefined;
+    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    linkBox.replaceChildren(...[url ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, url) : null,
+      h('span', { class: 'muted' }, ` · ${session.backendUrl ? '后端 ' + session.backendUrl + ' · ' : ''}闲置 30 分钟后失效`)].filter(Boolean));
+  };
+  const linkBox = h('div', { class: 'mono' });
   const load = async () => {
     let p;
-    try { p = await api(`${base}/preview`); } catch (error) { panel.replaceChildren(h('h2', {}, '预览'), errorBox(error)); return; }
-    if (!p.url) {
-      panel.replaceChildren(h('h2', {}, '预览'), h('p', { class: 'muted' }, '预览节点完成后会在这里出现可以直接打开的站点。'),
-        h('button', { onclick: load }, '刷新'));
+    try { p = await api(`${base}/preview`); } catch (error) {
+      if (error.status === 404) {
+        panel.replaceChildren(h('h2', {}, '预览'), h('p', { class: 'muted' }, run.status === 'succeeded' ? '这次运行没有产出预览。' : '构建步骤完成后，这里会出现可以直接打开的站点。'),
+          h('button', { onclick: load }, '刷新'));
+        return;
+      }
+      panel.replaceChildren(h('h2', {}, '预览'), errorBox(error));
       return;
     }
-    panel.replaceChildren(
-      h('div', { class: 'row' }, h('h2', {}, '预览'), h('span', { class: 'spacer' }),
-        h('a', { class: 'btn', href: /^\/preview\/[^/]+\/[^/]+\/$/.test(p.url) ? p.url : undefined, target: '_blank', rel: 'noopener noreferrer' }, '打开预览'),
-        h('button', { onclick: () => attempt(() => downloadBinary(`${base}/preview/download`, `${runId}-preview.zip`)) }, '下载 zip')),
-      h('p', { class: 'muted' }, `节点 ${p.nodeId} · ${p.path}/${p.index} · ${p.files} 个文件 · ${Math.max(1, Math.round(p.bytes / 1024))} KB${p.spa ? ' · 单页应用' : ''} · ${time(p.createdAt)} 归档`),
-      h('p', { class: 'muted' }, `链接 ${time(p.expiresAt)} 前有效，过期后刷新本页即可获得新链接；预览在隔离的源中运行，读不到控制台的登录信息。`));
+    const backend = h('input', { value: p.backendUrl || '', placeholder: '后端地址（可选），如 https://api.example.com' });
+    const head = h('div', { class: 'row' }, h('h2', {}, '预览'), badge(p.status === 'ready' ? 'succeeded' : p.status === 'failed' ? 'failed' : 'pending', PREVIEW_STATUS[p.status] || p.status), h('span', { class: 'spacer' }),
+      p.status === 'ready' ? h('button', { class: 'primary', onclick: () => attempt(() => api(`${base}/preview/session`, { method: 'POST', body: { backendUrl: backend.value.trim() || undefined } }), openLink) }, '打开预览') : null,
+      p.status === 'ready' ? h('button', { onclick: () => attempt(() => downloadBinary(`${base}/preview/download`, `${runId}-preview.zip`)) }, '下载 zip') : null,
+      admin ? h('button', { class: 'danger', onclick: () => confirm('删除这次运行的预览？') && attempt(() => api(`${base}/preview`, { method: 'DELETE' }), load) }, '删除') : null);
+    const facts = h('p', { class: 'muted' }, `${p.nodeId ? '节点 ' + p.nodeId + ' · ' : ''}${p.sourcePath}/${p.entryFile}${p.fileCount ? ` · ${p.fileCount} 个文件 · ${Math.max(1, Math.round((p.expandedSize || 0) / 1024))} KB` : ''}${p.spaFallback ? ' · 单页应用' : ''}${p.expiresAt && p.status === 'ready' ? ' · ' + time(p.expiresAt) + ' 到期' : ''}`);
+    panel.replaceChildren(...[head, facts,
+      p.error ? h('div', { class: p.status === 'failed' ? 'error' : 'muted' }, p.error) : null,
+      p.status === 'ready' ? h('div', { class: 'row' }, backend,
+        h('button', { onclick: () => attempt(() => api(`${base}/preview/backend`, { method: 'PUT', body: { backendUrl: backend.value.trim() } }), (r) => { if (r.session) openLink(r.session); }) }, '保存为默认后端')) : null,
+      p.status === 'ready' ? h('p', { class: 'muted' }, '页面里的接口请求会转到后端地址（路径与参数不变）；预览在隔离的源中运行，读不到控制台的登录信息。') : null,
+      linkBox].filter(Boolean));
   };
   load();
   return panel;

@@ -165,8 +165,13 @@ public final class PlatformOperations {
             read("runs_artifact_get", "Read one artifact", RUNS + "/{runId}/artifacts/{artifactId}"),
             read(
                     "runs_preview_get",
-                    "Get a run's archived preview site and a signed link (valid for 2 hours) to open it",
+                    "Get a run's frontend preview: status (ready/skipped/failed/expired), size, retention, backend",
                     RUNS + "/{runId}/preview"),
+            write(
+                    "runs_preview_session_create",
+                    "Open a link to a run's ready preview. Body: {backendUrl?} (calls of the site go there)",
+                    "POST",
+                    RUNS + "/{runId}/preview/session"),
             read("runs_deliveries_list", "List a run's pull/merge requests", RUNS + "/{runId}/deliveries"),
             write(
                     "runs_deliveries_refresh",

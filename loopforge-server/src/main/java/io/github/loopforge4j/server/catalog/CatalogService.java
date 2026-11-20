@@ -51,6 +51,8 @@ public class CatalogService {
     }
 
     public WorkflowDefinition saveWorkflow(WorkflowDefinition workflow) {
+        // the frontend preview's build step is stored with the SOP, so the designer can place it
+        workflow = io.github.loopforge4j.core.preview.PreviewBuild.attach(workflow);
         WorkflowValidator.validate(workflow);
         return store.saveWorkflow(workflow);
     }
@@ -103,7 +105,7 @@ public class CatalogService {
         }
         for (WorkflowDefinition workflow : bundle.workflows()) {
             if (overwrite || store.workflow(workflow.id()).isEmpty()) {
-                store.saveWorkflow(workflow);
+                store.saveWorkflow(io.github.loopforge4j.core.preview.PreviewBuild.attach(workflow));
                 written.add("workflow:" + workflow.id());
             }
         }

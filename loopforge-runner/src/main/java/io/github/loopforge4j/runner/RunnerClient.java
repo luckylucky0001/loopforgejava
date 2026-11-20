@@ -54,8 +54,27 @@ public class RunnerClient {
                 .orElseThrow(() -> new StoreException(path + " not found", null));
     }
 
+    /** Uploads a file (a preview archive) with a longer timeout. */
+    public JsonNode put(String path, java.nio.file.Path file, String contentType) {
+        try {
+            return send(
+                            HttpRequest.newBuilder(URI.create(base + path))
+                                    .header("Content-Type", contentType)
+                                    .PUT(HttpRequest.BodyPublishers.ofFile(file)),
+                            path,
+                            Duration.ofMinutes(10))
+                    .orElseThrow(() -> new StoreException(path + " not found", null));
+        } catch (java.io.FileNotFoundException e) {
+            throw new StoreException("upload file missing", e);
+        }
+    }
+
     private Optional<JsonNode> send(HttpRequest.Builder builder, String path) {
-        HttpRequest request = builder.timeout(Duration.ofSeconds(60))
+        return send(builder, path, Duration.ofSeconds(60));
+    }
+
+    private Optional<JsonNode> send(HttpRequest.Builder builder, String path, Duration timeout) {
+        HttpRequest request = builder.timeout(timeout)
                 .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/json")
                 .header("User-Agent", "loopforge4j-runner")

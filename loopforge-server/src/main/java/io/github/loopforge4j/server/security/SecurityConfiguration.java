@@ -91,8 +91,14 @@ class SecurityConfiguration {
                         new ApiTokenFilter(tokens, accountTokens, runTokens, users),
                         AnonymousAuthenticationFilter.class)
                 .addFilterBefore(
-                        new RequestSizeLimitFilter(
-                                properties.security().maxRequestSize().toBytes()),
+                        new RequestSizeLimitFilter(request -> "PUT".equals(request.getMethod())
+                                        && request.getRequestURI()
+                                                .matches(io.github.loopforge4j.server.runner.RunnerApiController.PATH
+                                                        + "/runs/[^/]+/preview")
+                                ? Math.max(
+                                        properties.security().maxRequestSize().toBytes(),
+                                        properties.preview().maxSize().toBytes())
+                                : properties.security().maxRequestSize().toBytes()),
                         org.springframework.security.web.header.HeaderWriterFilter.class)
                 .exceptionHandling(e -> e.authenticationEntryPoint((request, response, ex) -> {
                     response.setStatus(HttpStatus.UNAUTHORIZED.value());

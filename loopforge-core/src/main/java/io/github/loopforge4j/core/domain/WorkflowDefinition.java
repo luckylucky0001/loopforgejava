@@ -23,7 +23,8 @@ public record WorkflowDefinition(
         List<WorkflowNode> nodes,
         List<WorkflowEdge> edges,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        PreviewContract preview) {
 
     public static final String DEFAULT_SANDBOX_PROFILE = "local";
 
@@ -37,6 +38,28 @@ public record WorkflowDefinition(
                 sandboxProfileId == null || sandboxProfileId.isBlank() ? DEFAULT_SANDBOX_PROFILE : sandboxProfileId;
         nodes = nodes == null ? List.of() : List.copyOf(nodes);
         edges = edges == null ? List.of() : List.copyOf(edges);
+        // a disabled contract is the same as none
+        preview = preview == null || !preview.enabled() ? null : preview;
+    }
+
+    /** A copy with other nodes and edges (the preview build step is attached or removed this way). */
+    public WorkflowDefinition withGraph(List<WorkflowNode> newNodes, List<WorkflowEdge> newEdges) {
+        return new WorkflowDefinition(
+                id,
+                name,
+                version,
+                revision,
+                status,
+                projectId,
+                owner,
+                tags,
+                description,
+                sandboxProfileId,
+                newNodes,
+                newEdges,
+                createdAt,
+                updatedAt,
+                preview);
     }
 
     public Optional<WorkflowNode> node(String nodeId) {
@@ -63,7 +86,8 @@ public record WorkflowDefinition(
                 nodes,
                 edges,
                 createdAt == null ? now : createdAt,
-                now);
+                now,
+                preview);
     }
 
     public static Builder builder(String id) {
@@ -77,6 +101,7 @@ public record WorkflowDefinition(
         private String description;
         private WorkflowStatus status = WorkflowStatus.PUBLISHED;
         private String sandboxProfileId;
+        private PreviewContract preview;
         private final List<WorkflowNode> nodes = new ArrayList<>();
         private final List<WorkflowEdge> edges = new ArrayList<>();
 
@@ -101,6 +126,11 @@ public record WorkflowDefinition(
 
         public Builder sandbox(String value) {
             this.sandboxProfileId = value;
+            return this;
+        }
+
+        public Builder preview(PreviewContract value) {
+            this.preview = value;
             return this;
         }
 
@@ -137,7 +167,8 @@ public record WorkflowDefinition(
                     nodes,
                     edges,
                     null,
-                    null);
+                    null,
+                    preview);
         }
     }
 }
