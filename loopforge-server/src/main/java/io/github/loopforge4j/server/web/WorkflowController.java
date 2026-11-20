@@ -78,7 +78,7 @@ class WorkflowController {
     @Operation(summary = "Export the whole catalog as an importable bundle")
     @GetMapping("/catalog/export")
     CatalogBundle export() {
-        return new CatalogBundle(store.agents(), store.workflows());
+        return new CatalogBundle(store.agents(), store.workflows(), store.repositories());
     }
 
     private static WorkflowDefinition withId(WorkflowDefinition body, String id) {

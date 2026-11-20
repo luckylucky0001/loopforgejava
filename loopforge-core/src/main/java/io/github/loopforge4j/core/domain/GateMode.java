@@ -6,7 +6,9 @@ import com.fasterxml.jackson.annotation.JsonValue;
 /** How a verification gate is evaluated. */
 public enum GateMode implements WireEnum {
     COMMAND("command"),
-    MANUAL("manual");
+    MANUAL("manual"),
+    /** Every pushed work branch must have an open (or merged) PR carrying its tip. */
+    MR("mr");
 
     private final String wire;
 

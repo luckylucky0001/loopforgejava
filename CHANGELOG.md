@@ -12,6 +12,8 @@
 - 停机挂起与重启恢复；演示目录（welcome、mock 交付、Claude 缺陷修复模板）。
 - CI（含 PostgreSQL 契约测试）、Dependabot、分层容器镜像、Compose。
 
+- 迭代 2 — 代码仓库与交付：仓库目录 API；运行冻结仓库快照并检出到工作区（多仓库、工作分支、`auto/continue/new/read_only` 模式、空远端初始化）；credential helper 注入 HTTPS 凭据、SSH 私钥、提交身份；`executionScope=repositories` 的脚本与门禁；`mode=mr` 门禁；GitHub PR 交付记录、合并检测（定时 + `POST /runs/{id}/deliveries/refresh`）；`{{repository}}`/`{{existingMR}}` 占位符；目录导出/导入包含仓库。
+
 ### Fixed (并发审查)
 - 暂停后继续父运行会重复启动子 SOP 并遗留旧子运行。
 - 自动打回会清除待处理的取消/暂停；取消待处理时其他人工操作也会清除它。

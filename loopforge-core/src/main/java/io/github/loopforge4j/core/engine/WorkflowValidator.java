@@ -43,6 +43,49 @@ public final class WorkflowValidator {
 
     private WorkflowValidator() {}
 
+    /**
+     * Validates a repository definition. Local paths and {@code file:} URLs let a run read anything the
+     * server can read, and plain {@code http://} leaks credentials, so both need explicit opt-in.
+     */
+    public static List<String> repositoryProblems(
+            io.github.loopforge4j.core.domain.RepositoryDefinition repository, boolean allowLocalRemotes) {
+        List<String> problems = new ArrayList<>();
+        checkId("repository", repository.id(), problems);
+        checkLength("repository name", repository.name(), MAX_NAME, problems);
+        String url = repository.cloneUrl();
+        if (url.isBlank()) {
+            problems.add("repository cloneUrl is required");
+        } else if (url.length() > 2_000 || url.chars().anyMatch(c -> c < 0x21) || url.startsWith("-")) {
+            problems.add("repository cloneUrl is invalid");
+        } else {
+            String lower = url.toLowerCase(java.util.Locale.ROOT);
+            java.util.regex.Matcher userInfo = java.util.regex.Pattern.compile("^[a-z][a-z0-9+.-]*://([^/@]*)@")
+                    .matcher(lower);
+            if (userInfo.find()
+                    && (lower.startsWith("http") || userInfo.group(1).contains(":"))) {
+                problems.add("credentials must not be embedded in the clone URL; configure loopforge.git instead");
+            }
+            boolean local = lower.startsWith("file:") || url.startsWith("/") || url.startsWith(".");
+            boolean remote = lower.startsWith("https://")
+                    || lower.startsWith("ssh://")
+                    || url.matches("^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^:].*");
+            if (local && !allowLocalRemotes) {
+                problems.add("local repository paths are disabled (loopforge.git.allow-local-remotes)");
+            } else if (lower.startsWith("http://") && !allowLocalRemotes) {
+                problems.add("plain http:// remotes would expose credentials; use https://");
+            } else if (!local && !remote && !lower.startsWith("http://")) {
+                problems.add("repository cloneUrl must be https://, ssh://, user@host:path or (if enabled) file:");
+            }
+        }
+        if (!io.github.loopforge4j.core.runtime.git.GitWorkspace.validBranch(repository.defaultBranch())) {
+            problems.add("repository defaultBranch is invalid");
+        }
+        if (repository.githubRepo() != null && !repository.githubRepo().matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")) {
+            problems.add("githubRepo must be owner/name");
+        }
+        return problems;
+    }
+
     /** Throws when the role definition is invalid. */
     public static void validateAgent(AgentDefinition agent) {
         List<String> problems = agentProblems(agent);

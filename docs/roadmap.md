@@ -2,7 +2,7 @@
 
 每个迭代都保持：`./mvnw verify` 通过（测试、格式、覆盖率门槛）、文档同步更新、移植对照表（[porting.md](porting.md)）记录新增的上游对应关系。
 
-## 迭代 1 — 引擎核心（当前）
+## 迭代 1 — 引擎核心（已完成）
 
 - [x] 领域模型与上游 JSON 兼容；工作流校验（返回全部问题）与图算法
 - [x] 并行调度、四类节点、门禁终态、命令门禁、自修正循环、返工与尝试预算
@@ -11,12 +11,15 @@
 - [x] JDBC 存储（H2 / PostgreSQL）、Flyway、REST + SSE、Token 认证、OpenAPI、Actuator
 - [x] 停机挂起与重启恢复；演示目录；CI、容器镜像、Compose
 
-## 迭代 2 — 代码仓库与交付
+## 迭代 2 — 代码仓库与交付（已完成）
 
-- Git 仓库检出到运行工作区（多仓库、工作分支命名、只读仓库）
-- HTTPS / SSH 凭据通过 credential helper 注入，不落盘
-- `{{repository}}`、`{{existingMR}}` 占位符；GitHub PR 创建、状态刷新、合并检测
-- `executionScope=repositories` 的脚本与门禁
+- [x] 仓库目录（`/api/v1/repositories`），运行启动时冻结仓库快照
+- [x] Git 仓库检出到运行工作区：多仓库（目录名去重）、工作分支命名 `feature/fix-<时间>-<运行>`、`auto/continue/new/read_only` 分支模式、空远端自动初始化、子 SOP 共享检出
+- [x] HTTPS 凭据通过 credential helper 从进程环境读取（不进 URL、不落盘）；SSH 私钥仅属主可读；提交身份
+- [x] `{{repository}}`、`{{existingMR}}` 占位符与工作区布局说明
+- [x] `executionScope=repositories` 的脚本与门禁（每个仓库目录各执行一次）
+- [x] `mode=mr` 门禁：推送了提交的工作分支必须有覆盖最新提交的 PR；平台不可查询时转人工
+- [x] GitHub（含 Enterprise）PR 查询、运行交付记录、定时合并检测与手动刷新
 
 ## 迭代 3 — 隔离与执行面
 

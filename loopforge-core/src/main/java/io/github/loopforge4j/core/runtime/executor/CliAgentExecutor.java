@@ -59,7 +59,8 @@ public abstract class CliAgentExecutor implements AgentExecutor {
             argv.add(stdinPromptMarker());
         }
         String stdin = invocation.prompt();
-        Map<String, String> env = new HashMap<>(environment(invocation, sandbox));
+        Map<String, String> env = new HashMap<>(invocation.environment());
+        env.putAll(environment(invocation, sandbox));
         env.putAll(credentials.environmentFor(kind()));
         CommandSpec spec = new CommandSpec(argv, null, env, stdin, invocation.timeout(), kind());
         StreamParser parser = parser(sink);

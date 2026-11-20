@@ -121,4 +121,45 @@ class WorkflowValidatorTest {
                         .build()))
                 .isEmpty();
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource(
+            delimiter = '|',
+            value = {
+                "https://github.com/acme/app.git | false | ",
+                "git@github.com:acme/app.git | false | ",
+                "ssh://git@git.example.com/acme/app.git | false | ",
+                "https://user:secret@github.com/acme/app.git | false | credentials must not be embedded",
+                "https://token@github.com/acme/app.git | false | credentials must not be embedded",
+                "ssh://git:pw@host/app.git | false | credentials must not be embedded",
+                "http://git.example.com/app.git | false | plain http://",
+                "/srv/git/app.git | false | local repository paths are disabled",
+                "file:///srv/git/app.git | false | local repository paths are disabled",
+                "/srv/git/app.git | true | ",
+                "--upload-pack=evil | true | cloneUrl is invalid",
+                "ftp://host/app | false | must be https://",
+            })
+    void repositoryUrlsAreChecked(String url, boolean allowLocal, String expected) {
+        java.util.List<String> problems = WorkflowValidator.repositoryProblems(
+                new io.github.loopforge4j.core.domain.RepositoryDefinition(
+                        "app", null, null, url, null, null, null, null, null),
+                allowLocal);
+        if (expected == null) {
+            assertThat(problems).isEmpty();
+        } else {
+            assertThat(problems).anySatisfy(p -> assertThat(p).contains(expected));
+        }
+    }
+
+    @Test
+    void repositoryIdBranchAndGithubRepoAreChecked() {
+        assertThat(WorkflowValidator.repositoryProblems(
+                        new io.github.loopforge4j.core.domain.RepositoryDefinition(
+                                "bad id", null, null, "", null, "a..b", "not-a-repo", null, null),
+                        false))
+                .anySatisfy(p -> assertThat(p).contains("cloneUrl is required"))
+                .anySatisfy(p -> assertThat(p).contains("defaultBranch is invalid"))
+                .anySatisfy(p -> assertThat(p).contains("githubRepo must be owner/name"))
+                .hasSizeGreaterThanOrEqualTo(4);
+    }
 }

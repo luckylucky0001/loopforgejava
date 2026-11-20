@@ -2,6 +2,7 @@ package io.github.loopforge4j.server.web;
 
 import io.github.loopforge4j.core.domain.Artifact;
 import io.github.loopforge4j.core.domain.ExecutionContext;
+import io.github.loopforge4j.core.domain.PullRequest;
 import io.github.loopforge4j.core.domain.Run;
 import io.github.loopforge4j.core.domain.RunEvent;
 import io.github.loopforge4j.core.domain.RunStatus;
@@ -46,7 +47,7 @@ class RunController {
     @PostMapping
     ResponseEntity<Run> start(@Valid @RequestBody ApiRequests.StartRun request, Principal principal) {
         ExecutionContext context = new ExecutionContext(request.projectId(), actor(principal), null, null, null);
-        Run run = engine.start(request.workflowId(), request.input(), context);
+        Run run = engine.start(request.workflowId(), request.input(), context, request.selections());
         return ResponseEntity.created(URI.create("/api/v1/runs/" + run.id())).body(run);
     }
 
@@ -97,6 +98,18 @@ class RunController {
                         artifact.content() == null
                                 ? new byte[0]
                                 : artifact.content().getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Operation(summary = "Pull requests delivering the run's work branches")
+    @GetMapping("/{runId}/deliveries")
+    List<PullRequest> deliveries(@PathVariable String runId) {
+        return engine.require(runId).deliveries();
+    }
+
+    @Operation(summary = "Re-query the Git host for the run's pull requests (e.g. after a merge)")
+    @PostMapping("/{runId}/deliveries/refresh")
+    List<PullRequest> refreshDeliveries(@PathVariable String runId) {
+        return engine.refreshDeliveries(runId).deliveries();
     }
 
     @PostMapping("/{runId}/cancel")

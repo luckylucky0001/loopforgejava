@@ -10,7 +10,7 @@
 | `internal/engine/workflow_graph.go` | `core.engine.WorkflowGraph`、`WorkflowValidator` | 已移植 |
 | `internal/engine/node_execute.go`、`node_outcome.go`、`gate_submit.go` | `core.engine.NodeRunner`、`GateResults` | 已移植 |
 | `internal/engine/run_ops.go`、`run_state.go`、`lifecycle.go` | `core.engine.RunEngine`、`RunScheduler` | 已移植 |
-| `internal/engine/prompt.go`、`human_context.go` | `core.engine.PromptCompiler`、`RunEngine.recordHumanContext` | 已移植（仓库/MR 相关占位符除外） |
+| `internal/engine/prompt.go`、`human_context.go` | `core.engine.PromptCompiler`、`RunEngine.recordHumanContext` | 已移植（含 `{{repository}}`、`{{existingMR}}`） |
 | `internal/engine/artifacts.go` | `core.engine.ArtifactSupport` | 已移植（repository-patch 除外） |
 | `internal/engine/sop_node.go` | `NodeRunner.runChild` | 基础版本 |
 | `internal/runtime/provider_*.go`、`protocol.go` | `core.runtime.executor` | Claude Code、Codex、CodeBuddy、Mock |
@@ -18,6 +18,10 @@
 | `internal/repo` | `server.persistence` | runs/workflows/agents/events/artifacts |
 | `internal/httpapi` | `server.web` | runs、workflows、agents、executors、catalog、stream |
 | `migrations/seed/001_public_catalog.sql`（welcome-workflow） | `catalog/welcome.json` | 已移植 |
+| `internal/engine/repository_workspace.go`、`git_*.go` | `core.runtime.git.GitWorkspace`、`GitEnvironment` | 已移植（克隆、工作分支、分支模式、空远端初始化） |
+| `internal/engine/mr_gate.go`（`verifyRunMRs`、`mrCoverageProblem`） | `NodeRunner.runPullRequestGate`、`core.delivery.Deliveries` | 已移植 |
+| `internal/tracker/github.go` | `server.delivery.GitHubDeliveryProvider` | PR 查询与合并检测（GitLab/工蜂待补） |
+| `internal/httpapi/repositories.go` | `server.web.RepositoryController` | 已移植 |
 
 ## 有意的差异
 
@@ -36,7 +40,10 @@
 | 进程组 | `Setpgid` + `kill(-pgid)` | `setsid` + `kill -KILL -pgid` | 等价；JVM 无法直接 setpgid |
 | 取消期间的人工操作 | 部分操作会清除取消/暂停标志 | 取消待处理时拒绝操作；结束暂停时释放所有暂停分支 | 修复并发审查发现的竞态 |
 | 多实例 | 运行租约 + 心跳 + 接管 | 单实例（尚未移植租约） | 列入路线图迭代 4 |
+| Git 凭据 | 按负责人账户解析 | 部署级配置（`loopforge.git.https` 列表、SSH 私钥文件） | 账户体系在迭代 5；`GitCredentialProvider` 端口已按运行解析 |
+| 本地仓库路径 | 允许 | 默认拒绝 `file:`/本地路径与 `http://`，需 `loopforge.git.allow-local-remotes` | 防止运行读取服务器任意目录、凭据明文传输 |
+| 克隆 URL 内嵌凭据 | 允许 | 拒绝 | 凭据只能来自服务端配置 |
 
 ## 尚未移植
 
-Web UI 与 Chat/Main Bot、会话工作区、Git 仓库检出与工作分支、PR/MR 交付与合并检测、Docker 沙箱、执行机器（runner）与云端池、MCP（平台 MCP、门禁 MCP、角色 MCP）、Skills 与 Hooks 物化、账户/项目/需求/Issue、定时任务与市场、通知与 Bot、分析与成本定价、预览构建、知识库、多实例租约、其余 7 种 CLI（OpenCode、Cursor、Antigravity、Kimi、Pi、DeepSeek Harness、ZCode）。排期见 [roadmap.md](roadmap.md)。
+Web UI 与 Chat/Main Bot、会话工作区、GitLab/工蜂 MR 交付、Docker 沙箱、执行机器（runner）与云端池、MCP（平台 MCP、门禁 MCP、角色 MCP）、Skills 与 Hooks 物化、账户/项目/需求/Issue、定时任务与市场、通知与 Bot、分析与成本定价、预览构建、知识库、多实例租约、其余 7 种 CLI（OpenCode、Cursor、Antigravity、Kimi、Pi、DeepSeek Harness、ZCode）。排期见 [roadmap.md](roadmap.md)。

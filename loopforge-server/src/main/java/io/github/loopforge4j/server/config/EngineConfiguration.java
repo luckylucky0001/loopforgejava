@@ -1,15 +1,19 @@
 package io.github.loopforge4j.server.config;
 
+import io.github.loopforge4j.core.delivery.DeliveryProvider;
 import io.github.loopforge4j.core.domain.ExecutorDefinition;
 import io.github.loopforge4j.core.engine.EngineSettings;
 import io.github.loopforge4j.core.engine.RunEngine;
 import io.github.loopforge4j.core.engine.RunListener;
 import io.github.loopforge4j.core.runtime.executor.CredentialProvider;
 import io.github.loopforge4j.core.runtime.executor.ExecutorRegistry;
+import io.github.loopforge4j.core.runtime.git.GitCredentialProvider;
+import io.github.loopforge4j.core.runtime.git.GitCredentials;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxOptions;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxProvider;
 import io.github.loopforge4j.core.store.CatalogStore;
 import io.github.loopforge4j.core.store.RunStore;
+import io.github.loopforge4j.server.delivery.GitHubDeliveryProvider;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Clock;
@@ -67,12 +71,49 @@ class EngineConfiguration {
                 properties.engine().nodeTimeout()));
     }
 
+    /** Deployment-wide Git credentials (upstream resolves them per responsible user). */
+    @Bean
+    GitCredentialProvider gitCredentialProvider(LoopForgeProperties properties) {
+        LoopForgeProperties.Git git = properties.git();
+        Map<String, GitCredentials.HttpsCredential> https = new java.util.LinkedHashMap<>();
+        git.https().forEach(credential -> {
+            if (credential.token() != null && !credential.token().isBlank()) {
+                https.put(
+                        credential.host().toLowerCase(java.util.Locale.ROOT),
+                        new GitCredentials.HttpsCredential(credential.username(), credential.token()));
+            }
+        });
+        String sshKey = null;
+        if (git.sshPrivateKeyFile() != null) {
+            try {
+                sshKey = java.nio.file.Files.readString(git.sshPrivateKeyFile());
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("cannot read loopforge.git.ssh-private-key-file", e);
+            }
+        }
+        GitCredentials credentials = new GitCredentials(https, sshKey, git.authorName(), git.authorEmail());
+        return run -> credentials;
+    }
+
+    @Bean
+    DeliveryProvider deliveryProvider(LoopForgeProperties properties) {
+        java.net.URI api = properties.github().apiUrl();
+        String host = "api.github.com".equalsIgnoreCase(api.getHost()) ? "github.com" : api.getHost();
+        LoopForgeProperties.HttpsCredential credential = properties.git().https().stream()
+                .filter(c -> c.host().equalsIgnoreCase(host))
+                .findFirst()
+                .orElse(null);
+        return new GitHubDeliveryProvider(api, () -> credential == null ? null : credential.token());
+    }
+
     @Bean(destroyMethod = "close")
     RunEngine runEngine(
             RunStore runStore,
             CatalogStore catalogStore,
             ExecutorRegistry executors,
             LocalSandboxProvider sandbox,
+            GitCredentialProvider gitCredentials,
+            DeliveryProvider delivery,
             LoopForgeProperties properties,
             Clock clock,
             List<RunListener> listeners) {
@@ -88,6 +129,8 @@ class EngineConfiguration {
                 .catalogStore(catalogStore)
                 .executors(executors)
                 .sandbox(sandbox)
+                .gitCredentials(gitCredentials)
+                .delivery(delivery)
                 .settings(settings)
                 .clock(clock)
                 .build();

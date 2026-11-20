@@ -36,6 +36,9 @@ public final class Run {
     private TokenUsage usage = TokenUsage.ZERO;
     private int toolCalls;
     private String workspaceRoot;
+    private java.util.List<RepositoryContext> repositories = new java.util.ArrayList<>();
+    private boolean repositoriesPrepared;
+    private java.util.List<PullRequest> deliveries = new java.util.ArrayList<>();
     private boolean workspaceReleased;
     private String ownerInstanceId;
     private int generation;
@@ -162,6 +165,31 @@ public final class Run {
 
     public void workspaceRoot(String value) {
         this.workspaceRoot = value;
+    }
+
+    public java.util.List<RepositoryContext> repositories() {
+        return repositories == null ? java.util.List.of() : java.util.List.copyOf(repositories);
+    }
+
+    public void repositories(java.util.List<RepositoryContext> value) {
+        this.repositories = new java.util.ArrayList<>(value);
+    }
+
+    public boolean repositoriesPrepared() {
+        return repositoriesPrepared;
+    }
+
+    public void repositoriesPrepared(boolean value) {
+        this.repositoriesPrepared = value;
+    }
+
+    /** Pull requests that deliver this run's work branches (refreshed from the hosting API). */
+    public java.util.List<PullRequest> deliveries() {
+        return deliveries == null ? java.util.List.of() : java.util.List.copyOf(deliveries);
+    }
+
+    public void deliveries(java.util.List<PullRequest> value) {
+        this.deliveries = new java.util.ArrayList<>(value);
     }
 
     public boolean workspaceReleased() {

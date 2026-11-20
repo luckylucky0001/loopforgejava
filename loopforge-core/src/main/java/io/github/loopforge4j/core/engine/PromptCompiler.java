@@ -4,6 +4,8 @@ import io.github.loopforge4j.core.domain.AgentDefinition;
 import io.github.loopforge4j.core.domain.Artifact;
 import io.github.loopforge4j.core.domain.ArtifactContract;
 import io.github.loopforge4j.core.domain.NodeRun;
+import io.github.loopforge4j.core.domain.PullRequest;
+import io.github.loopforge4j.core.domain.RepositoryContext;
 import io.github.loopforge4j.core.domain.RetryStrategy;
 import io.github.loopforge4j.core.domain.Run;
 import io.github.loopforge4j.core.domain.VerificationGate;
@@ -43,6 +45,7 @@ public final class PromptCompiler {
         if (!hadCatalog && !manifest.isEmpty()) {
             prompt += "\n\n# Upstream artifacts\n\n" + manifest;
         }
+        prompt = appendWorkspaceLayout(prompt, run.repositories());
         prompt = appendArtifactContract(prompt, contracts);
         return appendGateInstruction(prompt, gateResultPath, node.rejectTo(), false);
     }
@@ -102,6 +105,11 @@ public final class PromptCompiler {
         }
         prompt = prompt.replace("{{input}}", input);
         prompt = prompt.replace("{{rejectTo}}", node.rejectTo() == null ? "上游实现节点" : node.rejectTo());
+        prompt = prompt.replace("{{repository}}", repositoryLine(run));
+        if (!run.repositories().isEmpty() && !prompt.contains("{{existingMR}}")) {
+            prompt += "\n\n## Git 仓库交付\n\n{{existingMR}}";
+        }
+        prompt = prompt.replace("{{existingMR}}", deliveryBlurb(run));
         prompt = prompt.replace("{{subject}}", "本次任务");
         String feedback = run.node(node.id()).map(NodeRun::feedback).orElse(null);
         prompt = prompt.replace("{{feedback}}", feedback == null ? "" : feedback);
@@ -124,6 +132,74 @@ public final class PromptCompiler {
             prompt = prompt.replace("{{artifact." + artifact.nodeId() + "." + artifact.name() + "}}", content);
         }
         return prompt;
+    }
+
+    /** Upstream {@code promptRepositoryLine}: the primary repository of the run. */
+    static String repositoryLine(Run run) {
+        if (run.repositories().isEmpty()) {
+            return "未绑定代码仓库";
+        }
+        RepositoryContext rc = run.repositories().getFirst();
+        String work = rc.writableWorkBranch() == null ? "只读，不提交" : rc.writableWorkBranch();
+        return rc.name() + " (" + rc.provider().wire() + "), 最新远端基线 " + rc.baseBranch() + ", 本次工作分支 " + work;
+    }
+
+    /** Delivery instructions per writable repository (upstream {@code existingMRBlurb}). */
+    static String deliveryBlurb(Run run) {
+        StringBuilder b = new StringBuilder();
+        for (RepositoryContext rc : run.repositories()) {
+            String work = rc.writableWorkBranch();
+            if (work == null) {
+                b.append("- ")
+                        .append(rc.name())
+                        .append("：只读检出（")
+                        .append(rc.baseBranch())
+                        .append("），可以构建和测试，不要提交或推送。\n");
+                continue;
+            }
+            PullRequest existing = run.deliveries().stream()
+                    .filter(pr -> rc.repositoryId().equals(pr.repositoryId()) && pr.open())
+                    .findFirst()
+                    .orElse(null);
+            b.append("- ").append(rc.name()).append("：只在工作分支 `").append(work).append("` 上提交并 push 到 origin");
+            if (rc.requireExistingWorkBranch()) {
+                b.append("（继续已有分支，不要新建或改名）");
+            }
+            if (rc.provider().hostsPullRequests()) {
+                if (existing != null) {
+                    b.append("；已有本轮 PR ").append(existing.url()).append("，在同一分支上更新，不要另开 PR");
+                } else {
+                    b.append("；然后创建从 `")
+                            .append(work)
+                            .append("` 到 `")
+                            .append(rc.baseBranch())
+                            .append("` 的 PR（`gh pr create` 可用，凭据已注入，不要打印或保存令牌）");
+                }
+            } else {
+                b.append("；报告分支名和提交 SHA（该托管平台不支持自动创建 PR）");
+            }
+            b.append("。禁止向 ").append(rc.baseBranch()).append(" 直接推送。\n");
+        }
+        return b.toString().stripTrailing();
+    }
+
+    /** Upstream {@code appendArtifactContract} workspace layout: one checkout per first-level directory. */
+    static String appendWorkspaceLayout(String prompt, List<RepositoryContext> repositories) {
+        if (repositories.isEmpty()) {
+            return prompt;
+        }
+        StringBuilder b = new StringBuilder(prompt);
+        b.append("\n\n# Workspace layout\n\nRepository checkouts live in first-level subdirectories. Write code changes"
+                + " inside those directories. SOP deliverables such as `fix-plan.md` go at the run workspace root (the"
+                + " current working directory), never inside a repository directory.\n");
+        for (RepositoryContext rc : repositories) {
+            b.append("- `./")
+                    .append(rc.workspaceDir())
+                    .append("`: ")
+                    .append(rc.name())
+                    .append('\n');
+        }
+        return b.toString();
     }
 
     static List<String> upstreamOutputs(WorkflowDefinition workflow, WorkflowNode node, Run run) {

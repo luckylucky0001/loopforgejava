@@ -1,17 +1,31 @@
 package io.github.loopforge4j.core.engine;
 
+import io.github.loopforge4j.core.delivery.Deliveries;
+import io.github.loopforge4j.core.delivery.DeliveryException;
+import io.github.loopforge4j.core.delivery.DeliveryProvider;
 import io.github.loopforge4j.core.domain.Artifact;
+import io.github.loopforge4j.core.domain.BranchMode;
 import io.github.loopforge4j.core.domain.ExecutionContext;
 import io.github.loopforge4j.core.domain.NodeRun;
 import io.github.loopforge4j.core.domain.NodeStatus;
+import io.github.loopforge4j.core.domain.PullRequest;
+import io.github.loopforge4j.core.domain.RepositoryContext;
+import io.github.loopforge4j.core.domain.RepositoryDefinition;
+import io.github.loopforge4j.core.domain.RepositorySelection;
 import io.github.loopforge4j.core.domain.Run;
 import io.github.loopforge4j.core.domain.RunEvent;
 import io.github.loopforge4j.core.domain.RunStatus;
 import io.github.loopforge4j.core.domain.WorkflowDefinition;
 import io.github.loopforge4j.core.domain.WorkflowNode;
+import io.github.loopforge4j.core.runtime.Cancellation;
+import io.github.loopforge4j.core.runtime.CancelledException;
 import io.github.loopforge4j.core.runtime.EventSink;
 import io.github.loopforge4j.core.runtime.Telemetry;
 import io.github.loopforge4j.core.runtime.executor.ExecutorRegistry;
+import io.github.loopforge4j.core.runtime.git.GitCredentialProvider;
+import io.github.loopforge4j.core.runtime.git.GitEnvironment;
+import io.github.loopforge4j.core.runtime.git.GitException;
+import io.github.loopforge4j.core.runtime.git.GitWorkspace;
 import io.github.loopforge4j.core.runtime.sandbox.Sandbox;
 import io.github.loopforge4j.core.runtime.sandbox.SandboxProvider;
 import io.github.loopforge4j.core.store.CatalogStore;
@@ -71,6 +85,11 @@ public final class RunEngine implements AutoCloseable {
     private final Map<String, Integer> schedulerCrashes = new ConcurrentHashMap<>();
     private final Map<String, RunScheduler> schedulers = new HashMap<>();
     private final NodeRunner nodeRunner;
+    private final GitCredentialProvider gitCredentials;
+    private final DeliveryProvider delivery;
+    /** Serializes repository checkout per shared workspace (parallel first nodes, parent + child). */
+    private final ReentrantLock[] checkoutLocks = new ReentrantLock[32];
+
     private volatile boolean closed;
 
     private RunEngine(Builder builder) {
@@ -81,6 +100,11 @@ public final class RunEngine implements AutoCloseable {
         this.settings = builder.settings == null ? EngineSettings.defaults() : builder.settings;
         this.clock = builder.clock == null ? Clock.systemUTC() : builder.clock;
         this.nodeRunner = new NodeRunner(this);
+        this.gitCredentials = builder.gitCredentials == null ? GitCredentialProvider.NONE : builder.gitCredentials;
+        this.delivery = builder.delivery == null ? DeliveryProvider.NONE : builder.delivery;
+        for (int i = 0; i < checkoutLocks.length; i++) {
+            checkoutLocks[i] = new ReentrantLock();
+        }
         if (sandboxes.isEmpty()) {
             throw new IllegalArgumentException("at least one sandbox provider is required");
         }
@@ -98,31 +122,153 @@ public final class RunEngine implements AutoCloseable {
 
     /** Starts the published catalog workflow {@code workflowId}. */
     public Run start(String workflowId, String input, ExecutionContext context) {
+        return start(workflowId, input, context, List.of());
+    }
+
+    /**
+     * Starts the published catalog workflow with repositories bound to the run. Every repository is
+     * checked out into its own sub-directory before the first node runs.
+     */
+    public Run start(
+            String workflowId, String input, ExecutionContext context, List<RepositorySelection> repositories) {
         WorkflowDefinition workflow = catalog.workflow(workflowId)
                 .orElseThrow(() -> new RunNotFoundException("workflow '" + workflowId + "' not found"));
         if (workflow.status() != io.github.loopforge4j.core.domain.WorkflowStatus.PUBLISHED) {
             throw new RunStateException("workflow '" + workflowId + "' is "
                     + workflow.status().wire() + "; publish it before starting runs");
         }
-        return start(workflow, input, context);
+        String runId = newRunId();
+        return start(runId, workflow, input, context, resolveRepositories(runId, repositories, context), false);
     }
 
     /** Freezes {@code workflow} into a new run and schedules it. */
     public Run start(WorkflowDefinition workflow, String input, ExecutionContext context) {
+        return start(newRunId(), workflow, input, context, List.of(), false);
+    }
+
+    /** Child SOP run: shares the parent's workspace and its (already checked out) repositories. */
+    Run startChild(
+            WorkflowDefinition workflow,
+            String input,
+            ExecutionContext context,
+            List<RepositoryContext> repositories,
+            boolean prepared) {
+        return start(newRunId(), workflow, input, context, repositories, prepared);
+    }
+
+    private Run start(
+            String runId,
+            WorkflowDefinition workflow,
+            String input,
+            ExecutionContext context,
+            List<RepositoryContext> repositories,
+            boolean prepared) {
         ensureOpen();
         WorkflowValidator.validate(workflow);
         if (sandboxProvider(workflow.sandboxProfileId()).isEmpty()) {
             throw new WorkflowValidationException(
                     List.of("sandbox profile '" + workflow.sandboxProfileId() + "' is not available"));
         }
-        Run run = Run.create(newRunId(), workflow, input, context, clock.instant());
+        Run run = Run.create(runId, workflow, input, context, clock.instant());
         run.status(RunStatus.RUNNING);
+        run.repositories(repositories);
+        run.repositoriesPrepared(prepared || repositories.isEmpty());
         String message = context != null && context.childRun() ? "子 SOP 开始执行" : "流水线开始执行";
         runs.insert(run, List.of(RunEvent.lifecycle(run.id(), null, "run.started", message, clock.instant())));
         Run stored = runs.find(run.id()).orElseThrow();
         notifyChanged(stored);
         ensureScheduler(run.id());
         return runs.find(run.id()).orElse(stored);
+    }
+
+    /**
+     * Resolves repository selections into frozen contexts (port of upstream {@code
+     * normalizeRepositories}, {@code AssignRepositoryDirs} and {@code assignWorkBranches}).
+     */
+    List<RepositoryContext> resolveRepositories(
+            String runId, List<RepositorySelection> selections, ExecutionContext context) {
+        if (selections == null || selections.isEmpty()) {
+            return List.of();
+        }
+        List<RepositoryContext> resolved = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (RepositorySelection selection : selections) {
+            if (selection.repositoryId() == null || !seen.add(selection.repositoryId())) {
+                continue;
+            }
+            RepositoryDefinition definition = catalog.repository(selection.repositoryId())
+                    .orElseThrow(
+                            () -> new RunNotFoundException("repository '" + selection.repositoryId() + "' not found"));
+            RepositoryContext rc = RepositoryContext.of(definition, selection.baseBranch());
+            String explicit =
+                    selection.workBranch() == null || selection.workBranch().isBlank()
+                            ? null
+                            : selection.workBranch().strip();
+            switch (selection.mode()) {
+                case READ_ONLY -> rc = rc.withMode(true, false, false);
+                case CONTINUE, NEW -> {
+                    if (explicit == null) {
+                        throw new RunStateException("repository " + definition.id() + ": branch mode "
+                                + selection.mode().wire() + " needs an explicit work branch");
+                    }
+                    rc = rc.withWorkBranch(explicit)
+                            .withMode(
+                                    false, selection.mode() == BranchMode.CONTINUE, selection.mode() == BranchMode.NEW);
+                }
+                case AUTO -> rc = rc.withWorkBranch(explicit);
+            }
+            if (!GitWorkspace.validBranch(rc.baseBranch())) {
+                throw new RunStateException(
+                        "repository " + definition.id() + ": invalid base branch '" + rc.baseBranch() + "'");
+            }
+            if (rc.workBranch() != null
+                    && (!GitWorkspace.validBranch(rc.workBranch())
+                            || GitWorkspace.sharedBranch(rc.workBranch(), rc.baseBranch()))) {
+                throw new RunStateException("repository " + definition.id() + ": work branch '" + rc.workBranch()
+                        + "' is invalid or a shared branch (main, master or the base branch)");
+            }
+            resolved.add(rc);
+        }
+        // every repository without a branch shares the first repository's work branch, else a generated one
+        String shared = resolved.stream()
+                .filter(rc -> !rc.readOnly() && !rc.requireExistingWorkBranch() && !rc.createNewWorkBranch())
+                .map(RepositoryContext::workBranch)
+                .filter(java.util.Objects::nonNull)
+                .findFirst()
+                .orElse(defaultWorkBranch(runId));
+        Set<String> dirs = new HashSet<>();
+        List<RepositoryContext> out = new ArrayList<>();
+        for (RepositoryContext rc : resolved) {
+            if (!rc.readOnly() && rc.workBranch() == null) {
+                rc = rc.withWorkBranch(shared);
+            }
+            String base = directoryName(rc);
+            String dir = base;
+            for (int n = 2; !dirs.add(dir); n++) {
+                dir = base + "-" + n;
+            }
+            out.add(rc.withWorkspaceDir(dir));
+        }
+        return out;
+    }
+
+    /** {@code feature/fix-<yyyyMMdd-HHmm>-<run suffix>}: readable, and unique per run (upstream uses minutes only). */
+    private String defaultWorkBranch(String runId) {
+        String stamp = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmm")
+                .withZone(java.time.ZoneOffset.UTC)
+                .format(clock.instant());
+        String suffix = runId.replace("run-", "").replaceAll("[^a-z0-9]", "");
+        return "feature/fix-" + stamp + "-" + suffix.substring(0, Math.min(6, suffix.length()));
+    }
+
+    /** Upstream {@code NormalizeRepositoryDirName}: a safe single-level directory per repository. */
+    static String directoryName(RepositoryContext rc) {
+        String name = rc.name() == null ? "" : rc.name().strip();
+        String cleaned = name.replaceAll("[^A-Za-z0-9_-]", "-").replaceAll("^-+|-+$", "");
+        if (cleaned.isEmpty()) {
+            cleaned = rc.repositoryId().replaceAll("[^A-Za-z0-9_-]", "-");
+        }
+        return cleaned.isEmpty() ? "repo" : cleaned;
     }
 
     // --------------------------------------------------------------- queries
@@ -902,7 +1048,18 @@ public final class RunEngine implements AutoCloseable {
 
     /** Releases the workspace of the run's workspace owner once nothing uses it any more. */
     private void onTerminal(String runId) {
-        runs.find(runId).ifPresent(run -> releaseWorkspaceIfIdle(run.workspaceOwnerId()));
+        runs.find(runId).ifPresent(run -> {
+            if (run.status() == RunStatus.SUCCEEDED
+                    && !run.context().childRun()
+                    && !run.repositories().isEmpty()) {
+                try {
+                    refreshDeliveries(runId);
+                } catch (RuntimeException e) {
+                    log.warn("run {}: delivery lookup failed: {}", runId, e.toString());
+                }
+            }
+            releaseWorkspaceIfIdle(run.workspaceOwnerId());
+        });
     }
 
     private void releaseWorkspaceIfIdle(String ownerId) {
@@ -1001,6 +1158,137 @@ public final class RunEngine implements AutoCloseable {
                                     sandbox.workspace().toString())));
         }
         return sandbox;
+    }
+
+    /**
+     * Checks the run's repositories out once per shared workspace (parent and child SOP runs, and
+     * parallel first nodes, wait for the same checkout).
+     */
+    Run prepareRepositories(String runId, Sandbox sandbox, Cancellation cancellation)
+            throws NodeFailure, IOException, CancelledException {
+        Run run = require(runId);
+        if (run.repositoriesPrepared() || run.repositories().isEmpty()) {
+            return run;
+        }
+        ReentrantLock lock = checkoutLocks[Math.floorMod(run.workspaceOwnerId().hashCode(), checkoutLocks.length)];
+        lock.lock();
+        try {
+            run = require(runId);
+            if (run.repositoriesPrepared()) {
+                return run;
+            }
+            GitWorkspace git = new GitWorkspace(sandbox, processEnvironment(run, sandbox), cancellation);
+            List<RepositoryContext> prepared = new ArrayList<>();
+            for (RepositoryContext rc : run.repositories()) {
+                try {
+                    RepositoryContext checkedOut = git.prepare(rc);
+                    prepared.add(checkedOut);
+                    emit(
+                            runId,
+                            null,
+                            new Telemetry(
+                                    "sandbox",
+                                    "repository.checked_out",
+                                    "finish",
+                                    "info",
+                                    rc.name() + " @ "
+                                            + (rc.writableWorkBranch() == null
+                                                    ? rc.baseBranch() + "（只读）"
+                                                    : rc.writableWorkBranch()),
+                                    null,
+                                    null,
+                                    null,
+                                    Map.of(
+                                            "repositoryId",
+                                            rc.repositoryId(),
+                                            "dir",
+                                            rc.workspaceDir(),
+                                            "baseBranch",
+                                            rc.baseBranch(),
+                                            "baseSha",
+                                            String.valueOf(checkedOut.baseSha()))));
+                } catch (GitException e) {
+                    throw new NodeFailure(FailureKind.EXECUTOR, "repository " + rc.name() + ": " + e.getMessage());
+                }
+            }
+            mutateQuietly(runId, c -> {
+                c.run().repositories(prepared);
+                c.run().repositoriesPrepared(true);
+                return true;
+            });
+            return require(runId);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Environment for every process of the run: git credentials, commit identity, repository manifest. */
+    Map<String, String> processEnvironment(Run run, Sandbox sandbox) throws IOException {
+        return GitEnvironment.build(sandbox.workspace(), gitCredentials.credentialsFor(run), run.repositories());
+    }
+
+    DeliveryProvider delivery() {
+        return delivery;
+    }
+
+    /**
+     * Re-reads the pull requests that deliver the run's work branches (merge detection). Repositories
+     * whose host cannot be queried are skipped.
+     */
+    public Run refreshDeliveries(String runId) {
+        Run run = require(runId);
+        List<PullRequest> found = new ArrayList<>();
+        for (RepositoryContext rc : run.repositories()) {
+            String work = rc.writableWorkBranch();
+            if (work == null || !delivery.supports(rc)) {
+                continue;
+            }
+            try {
+                PullRequest pr = Deliveries.representative(delivery.pullRequests(rc, work, rc.baseBranch()));
+                if (pr != null) {
+                    found.add(pr);
+                }
+            } catch (DeliveryException e) {
+                log.warn("run {}: cannot query pull requests of {}: {}", runId, rc.repositoryId(), e.getMessage());
+                run.deliveries().stream()
+                        .filter(d -> rc.repositoryId().equals(d.repositoryId()))
+                        .forEach(found::add);
+            }
+        }
+        boolean changed = !found.equals(run.deliveries());
+        return changed
+                ? mutate(runId, c -> {
+                    c.run().deliveries(found);
+                    for (PullRequest pr : found) {
+                        c.event(null, "delivery." + pr.state(), pr.url());
+                    }
+                    return true;
+                })
+                : run;
+    }
+
+    /** Stores pull requests found by an MR gate, replacing earlier entries of the same repository. */
+    void recordDeliveries(String runId, List<PullRequest> pulls) {
+        if (pulls.isEmpty()) {
+            return;
+        }
+        mutate(runId, c -> {
+            Set<String> repositories = new HashSet<>();
+            pulls.forEach(p -> repositories.add(p.repositoryId()));
+            List<PullRequest> merged = new ArrayList<>();
+            c.run().deliveries().stream()
+                    .filter(d -> !repositories.contains(d.repositoryId()))
+                    .forEach(merged::add);
+            merged.addAll(pulls);
+            if (merged.equals(c.run().deliveries())) {
+                return false;
+            }
+            c.run().deliveries(merged);
+            for (PullRequest pr : pulls) {
+                c.event(null, "delivery." + pr.state(), pr.url());
+            }
+            return true;
+        });
     }
 
     /** Telemetry sink that appends to the run's event log. */
@@ -1160,8 +1448,20 @@ public final class RunEngine implements AutoCloseable {
         private final List<SandboxProvider> sandboxes = new ArrayList<>();
         private EngineSettings settings;
         private Clock clock;
+        private GitCredentialProvider gitCredentials;
+        private DeliveryProvider delivery;
 
         private Builder() {}
+
+        public Builder gitCredentials(GitCredentialProvider value) {
+            this.gitCredentials = value;
+            return this;
+        }
+
+        public Builder delivery(DeliveryProvider value) {
+            this.delivery = value;
+            return this;
+        }
 
         public Builder runStore(RunStore value) {
             this.runs = value;

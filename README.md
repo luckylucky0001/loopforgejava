@@ -4,7 +4,7 @@
 
 > 本项目为独立的社区移植，**与腾讯无隶属、赞助或背书关系**。上游以 MIT 许可发布，本仓库同样采用 MIT，并完整保留上游版权与许可声明，详见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-当前处于 **迭代 1（0.1.0-SNAPSHOT）**：已完成引擎核心与 REST/SSE 服务；Web UI、Git 交付、Docker 沙箱、MCP 等在 [路线图](docs/roadmap.md) 中按迭代推进。
+当前版本 0.1.0-SNAPSHOT：已完成引擎核心、REST/SSE 服务（迭代 1）与 Git 仓库交付（迭代 2）；后续迭代见 [路线图](docs/roadmap.md)。
 
 ## 已实现
 
@@ -15,6 +15,7 @@
 | 人工控制 | 审批、打回、从任意节点重试/重放、跳过失败脚本（pass）、暂停/继续、取消、拒绝重试；补充的人工上下文会进入后续提示词并留档 |
 | 产物契约 | 节点声明的产物按尝试版本快照（SHA-256），下游以只读文件接收；缺失即契约失败 |
 | 执行器 | Claude Code、Codex、CodeBuddy（stream-json / JSONL 协议归一化为统一遥测）；确定性 Mock 执行器（无需密钥的演示与测试） |
+| Git 交付 | 仓库目录；运行检出到独立工作分支（多仓库、继续/新建/只读模式）；凭据经 credential helper 注入；`executionScope=repositories` 的脚本与门禁；`mode=mr` 门禁核验 PR 覆盖最新提交；GitHub PR 记录与合并检测 |
 | 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止 |
 | 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话（当前为单实例部署） |
 | 服务 | Spring Boot 4.1 / Java 21 虚拟线程；REST + SSE（支持 `Last-Event-ID` 续传）；RFC 9457 错误；Bearer Token；Flyway；H2（开发）/ PostgreSQL（生产）；OpenAPI；Actuator 健康探针与 Prometheus 指标 |
@@ -67,6 +68,29 @@ loopforge:
       model: sonnet
 ```
 
+### 让运行改代码并提交 PR
+
+```yaml
+loopforge:
+  git:
+    https:                       # 列表形式，可用 LOOPFORGE_GIT_HTTPS_0_HOST / _TOKEN 环境变量配置
+      - host: github.com
+        token: ${GITHUB_TOKEN}
+    # ssh-private-key-file: /run/secrets/deploy_key
+  github:
+    api-url: https://api.github.com   # GitHub Enterprise: https://<host>/api/v3
+```
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT \
+  -d '{"name":"App","cloneUrl":"https://github.com/acme/app.git"}' localhost:8090/api/v1/repositories/app
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"workflowId":"claude-bugfix","input":"修复登录超时","repositories":[{"repositoryId":"app"}]}' \
+  localhost:8090/api/v1/runs
+```
+
+运行会把仓库克隆到 `./app`，检出 `feature/fix-<时间>-<运行>` 工作分支（`mode` 可选 `continue` 续用已有分支、`new` 必须新建、`read_only` 只读），Agent 提示词里会出现仓库、基线与交付要求。凭据只存在于运行进程的环境变量里，不会出现在克隆 URL、运行数据或日志中；克隆 URL 内嵌凭据会被拒绝。
+
 ### 生产部署（PostgreSQL）
 
 ```bash
@@ -84,6 +108,8 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/PUT/DELETE` | `/api/v1/agents/{id}` | 角色定义 |
 | `GET` / `POST` | `/api/v1/catalog/export` / `/import` | 目录导出 / 导入（默认不覆盖） |
 | `GET` | `/api/v1/executors` | 执行器及本机是否已安装 |
+| `GET/PUT/DELETE` | `/api/v1/repositories/{id}` | 代码仓库 |
+| `GET` / `POST` | `/api/v1/runs/{id}/deliveries` / `/deliveries/refresh` | 运行交付的 PR 与合并状态 |
 | `POST` / `GET` | `/api/v1/runs` | 启动运行 / 列表（按状态、SOP、父运行过滤） |
 | `GET` | `/api/v1/runs/{id}`、`/events`、`/artifacts`、`/artifacts/{aid}` | 运行详情、事件、产物 |
 | `GET` | `/api/v1/runs/{id}/stream` | SSE 实时流（浏览器可用 `?access_token=`） |

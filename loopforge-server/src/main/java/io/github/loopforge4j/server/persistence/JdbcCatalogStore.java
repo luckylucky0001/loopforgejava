@@ -1,6 +1,7 @@
 package io.github.loopforge4j.server.persistence;
 
 import io.github.loopforge4j.core.domain.AgentDefinition;
+import io.github.loopforge4j.core.domain.RepositoryDefinition;
 import io.github.loopforge4j.core.domain.WorkflowDefinition;
 import io.github.loopforge4j.core.json.Json;
 import io.github.loopforge4j.core.store.CatalogStore;
@@ -149,5 +150,50 @@ public class JdbcCatalogStore implements CatalogStore {
     @Override
     public boolean deleteAgent(String id) {
         return jdbc.sql("DELETE FROM agents WHERE id = :id").param("id", id).update() > 0;
+    }
+
+    @Override
+    public Optional<RepositoryDefinition> repository(String id) {
+        return jdbc.sql("SELECT payload FROM repositories WHERE id = :id")
+                .param("id", id)
+                .query((rs, row) -> Json.read(rs.getString("payload"), RepositoryDefinition.class))
+                .optional();
+    }
+
+    @Override
+    public List<RepositoryDefinition> repositories() {
+        return jdbc.sql("SELECT payload FROM repositories ORDER BY id")
+                .query((rs, row) -> Json.read(rs.getString("payload"), RepositoryDefinition.class))
+                .list();
+    }
+
+    @Override
+    public RepositoryDefinition saveRepository(RepositoryDefinition definition) {
+        return withUpsertRetry(() -> tx.execute(status -> {
+            boolean exists = jdbc.sql("SELECT id FROM repositories WHERE id = :id FOR UPDATE")
+                    .param("id", definition.id())
+                    .query(String.class)
+                    .optional()
+                    .isPresent();
+            RepositoryDefinition stamped = definition.withUpdatedAt(clock.instant());
+            String sql = exists
+                    ? "UPDATE repositories SET name = :name, payload = :payload, updated_at = :updatedAt WHERE id = :id"
+                    : "INSERT INTO repositories (id, name, payload, updated_at) VALUES (:id, :name, :payload, :updatedAt)";
+            jdbc.sql(sql)
+                    .param("id", stamped.id())
+                    .param("name", stamped.name())
+                    .param("payload", Json.write(stamped))
+                    .param("updatedAt", Timestamps.of(stamped.updatedAt()))
+                    .update();
+            return stamped;
+        }));
+    }
+
+    @Override
+    public boolean deleteRepository(String id) {
+        return jdbc.sql("DELETE FROM repositories WHERE id = :id")
+                        .param("id", id)
+                        .update()
+                > 0;
     }
 }

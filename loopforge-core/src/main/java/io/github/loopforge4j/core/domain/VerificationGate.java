@@ -7,7 +7,13 @@ import java.util.List;
  * run workspace; manual gates park the node until a human approves.
  */
 public record VerificationGate(
-        String id, String name, GateMode mode, List<String> commands, boolean required, FailurePolicy onFailure) {
+        String id,
+        String name,
+        GateMode mode,
+        List<String> commands,
+        boolean required,
+        FailurePolicy onFailure,
+        ExecutionScope executionScope) {
 
     public VerificationGate {
         mode = mode == null ? GateMode.COMMAND : mode;
@@ -16,7 +22,15 @@ public record VerificationGate(
     }
 
     public static VerificationGate command(String id, String name, FailurePolicy onFailure, String... commands) {
-        return new VerificationGate(id, name, GateMode.COMMAND, List.of(commands), true, onFailure);
+        return new VerificationGate(id, name, GateMode.COMMAND, List.of(commands), true, onFailure, null);
+    }
+
+    public ExecutionScope effectiveScope() {
+        return executionScope == null ? ExecutionScope.RUN : executionScope;
+    }
+
+    public static VerificationGate mr(String id, String name, FailurePolicy onFailure) {
+        return new VerificationGate(id, name, GateMode.MR, List.of(), true, onFailure, ExecutionScope.REPOSITORIES);
     }
 
     /** Commands joined into one shell script; empty when the gate has nothing to run. */

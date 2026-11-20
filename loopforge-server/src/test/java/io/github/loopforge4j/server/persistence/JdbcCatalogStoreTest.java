@@ -73,4 +73,23 @@ class JdbcCatalogStoreTest {
         assertThat(store.deleteAgent("dev")).isTrue();
         assertThat(store.agent("dev")).isEmpty();
     }
+
+    @Test
+    void repositoriesRoundTripAndAreReplacedInPlace() {
+        store.saveRepository(new io.github.loopforge4j.core.domain.RepositoryDefinition(
+                "app", "App", null, "https://github.com/acme/app.git", null, null, null, "p1", null));
+        store.saveRepository(new io.github.loopforge4j.core.domain.RepositoryDefinition(
+                "app", "App 2", null, "https://github.com/acme/app.git", null, "trunk", null, "p1", null));
+        assertThat(store.repositories()).hasSize(1);
+        assertThat(store.repository("app")).get().satisfies(r -> {
+            assertThat(r.name()).isEqualTo("App 2");
+            assertThat(r.defaultBranch()).isEqualTo("trunk");
+            assertThat(r.githubRepo()).isEqualTo("acme/app");
+            assertThat(r.provider()).isEqualTo(io.github.loopforge4j.core.domain.RepositoryProvider.GITHUB);
+            assertThat(r.updatedAt()).isNotNull();
+        });
+        assertThat(store.deleteRepository("app")).isTrue();
+        assertThat(store.deleteRepository("app")).isFalse();
+        assertThat(store.repository("app")).isEmpty();
+    }
 }

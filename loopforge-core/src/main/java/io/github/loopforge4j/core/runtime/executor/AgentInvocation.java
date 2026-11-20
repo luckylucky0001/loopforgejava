@@ -14,6 +14,7 @@ import java.util.Objects;
  * @param resumeSessionId native CLI session to continue, or {@code null} for a fresh session
  * @param gateResultPath workspace-relative file the agent must write its terminal decision to
  * @param artifacts contracts the node must satisfy (used by the mock executor)
+ * @param environment run environment (git credentials, repository manifest) for the CLI process
  */
 public record AgentInvocation(
         String runId,
@@ -26,12 +27,14 @@ public record AgentInvocation(
         String resumeSessionId,
         String gateResultPath,
         List<ArtifactContract> artifacts,
-        Duration timeout) {
+        Duration timeout,
+        java.util.Map<String, String> environment) {
 
     public AgentInvocation {
         Objects.requireNonNull(executor, "executor");
         Objects.requireNonNull(agent, "agent");
         Objects.requireNonNull(prompt, "prompt");
         artifacts = artifacts == null ? List.of() : List.copyOf(artifacts);
+        environment = environment == null ? java.util.Map.of() : java.util.Map.copyOf(environment);
     }
 }

@@ -28,7 +28,9 @@ public record LoopForgeProperties(
         @Valid @DefaultValue Sandbox sandbox,
         @Valid @DefaultValue Security security,
         @DefaultValue Map<String, ExecutorOverride> executors,
-        @DefaultValue Map<String, Map<String, String>> credentials) {
+        @DefaultValue Map<String, Map<String, String>> credentials,
+        @Valid @DefaultValue Git git,
+        @Valid @DefaultValue GitHub github) {
 
     /**
      * @param defaultExecutor executor id used when neither role nor node chooses one
@@ -64,6 +66,40 @@ public record LoopForgeProperties(
             @NotNull @DefaultValue("./data/api-token") Path tokenFile,
             @DefaultValue("true") boolean publicDocs,
             @NotNull @DefaultValue("8MB") org.springframework.util.unit.DataSize maxRequestSize) {}
+
+    /**
+     * Git access of runs. Tokens are injected through a credential helper into the processes of a
+     * run only; they never appear in clone URLs, run state or logs.
+     *
+     * @param https token per host, e.g. {@code [{host: github.com, token: ${GITHUB_TOKEN}}]} (a list,
+     *     so it binds from environment variables such as {@code LOOPFORGE_GIT_HTTPS_0_TOKEN})
+     * @param sshPrivateKeyFile OpenSSH key for ssh:// and scp-style remotes
+     * @param allowLocalRemotes accept file:// and local-path repositories (development and tests only)
+     */
+    public record Git(
+            @Valid @DefaultValue List<HttpsCredential> https,
+            Path sshPrivateKeyFile,
+            @DefaultValue("LoopForge4J") String authorName,
+            @DefaultValue("loopforge4j@users.noreply.local") String authorEmail,
+            @DefaultValue("false") boolean allowLocalRemotes) {}
+
+    /** Token-based credential of one Git host; username defaults to {@code x-access-token}. */
+    public record HttpsCredential(@NotBlank String host, String username, String token) {
+        @Override
+        public String toString() {
+            return "HttpsCredential[host=" + host + ", username=" + username + ", token=***]";
+        }
+    }
+
+    /**
+     * Pull request lookup for delivery tracking and MR gates.
+     *
+     * @param apiUrl REST API root; {@code https://<host>/api/v3} for GitHub Enterprise
+     * @param refreshInterval how often open pull requests of succeeded runs are re-checked for merges
+     */
+    public record GitHub(
+            @NotNull @DefaultValue("https://api.github.com") java.net.URI apiUrl,
+            @NotNull @DefaultValue("5m") Duration refreshInterval) {}
 
     /** Replaces the launch command of a built-in executor (e.g. an absolute binary path). */
     public record ExecutorOverride(String binary, List<String> args, String model, String effort) {}

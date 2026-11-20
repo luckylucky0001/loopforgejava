@@ -98,3 +98,26 @@ curl -s -X POST "localhost:8090/api/v1/catalog/import?overwrite=false" \
 ```
 
 上游 LoopForge 导出的 workflow JSON（`nodes`/`edges`/`artifactOutputs` 等字段）可以直接放进 `workflows` 数组导入；未移植的字段会被忽略。
+
+## 7. 代码仓库与 PR 交付
+
+先在服务端配置 Git 凭据（见 README「让运行改代码并提交 PR」），再登记仓库：
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT \
+  -d '{"name":"App","cloneUrl":"https://github.com/acme/app.git","defaultBranch":"main"}' \
+  localhost:8090/api/v1/repositories/app
+```
+
+SOP 中的脚本与命令门禁可以设置 `"executionScope":"repositories"`，在每个仓库目录各执行一次（`$LOOPFORGE_WORK_BRANCH`、`$LOOPFORGE_REPOSITORY_DIR` 等变量可用）。角色的 `verification` 里加入 `{"id":"pr","name":"PR 已创建","mode":"mr"}`，Agent 推送提交后必须创建覆盖最新提交的 PR 才能通过：
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"workflowId":"claude-bugfix","input":"修复登录超时",
+       "repositories":[{"repositoryId":"app","mode":"auto"}]}' localhost:8090/api/v1/runs
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8090/api/v1/runs/<runId>/deliveries          # PR 编号、链接、open/merged/closed
+curl -s -H "Authorization: Bearer $TOKEN" -X POST localhost:8090/api/v1/runs/<runId>/deliveries/refresh
+```
+
+`mode` 取值：`auto`（默认，工作分支存在则续用，否则新建）、`continue`（必须已存在）、`new`（必须不存在）、`read_only`（不允许推送，MR 门禁跳过）。服务端每 5 分钟（`loopforge.github.refresh-interval`）刷新已成功运行的未合并 PR。
+

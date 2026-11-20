@@ -59,6 +59,12 @@
 
 失败路由（上游 `nodeFailedAt`）：在尝试预算内重试（配置错误、门禁失败、轮次耗尽不重试）→ 否则失败；允许打回时自动 `reject` 到 `rejectTo`；Agent 的 `rework` 终态在返工预算耗尽时转人工决策而不是直接失败。
 
+## 代码仓库
+
+运行启动时把选择的仓库解析为冻结的 `RepositoryContext`（目录名、基线、工作分支、分支模式），之后编辑或删除仓库不会影响进行中的交付。第一个需要仓库的节点在工作区中克隆（单分支），按模式检出工作分支：远端已存在则跟踪续用（`auto`/`continue`），否则从基线新建（`auto`/`new`）；`read_only` 只检出基线。同一工作区的检出以条带锁串行，子 SOP 共享父运行的检出。
+
+`executionScope=repositories` 的脚本和命令门禁在每个仓库目录各执行一次并注入 `LOOPFORGE_REPOSITORY_*`、`LOOPFORGE_WORK_BRANCH` 等变量。`mode=mr` 门禁对每个推送了新提交的可写仓库调用 `DeliveryProvider`，要求存在从工作分支到基线、覆盖最新推送提交的 PR；平台不可查询时转人工确认。找到的 PR 记录在运行的 `deliveries` 中，成功的运行由定时任务刷新合并状态。
+
 ## 安全
 
 - API：无状态 Bearer Token（仅保存 SHA-256 摘要、常量时间比较），未配置时生成随机 Token 写入仅属主可读的文件。CSRF 关闭（无 Cookie/会话）。SSE 端点额外接受 `access_token` 查询参数（浏览器 EventSource 无法设置请求头），其他端点不接受。
@@ -69,6 +75,8 @@
 - 错误响应不包含 SQL、驱动或内部 Java 类型信息；存储故障统一为 503，数据冲突为 409。
 - SSE 每个运行最多 32 个订阅、全局 1000 个；停机时先关闭所有流，再进入 Web 服务器的优雅停机，保证引擎有时间挂起运行。
 - 只有 `/actuator/health/**` 公开；`/actuator/info`、`/actuator/prometheus` 需要 Token。
+
+- Git：凭据只来自服务端配置。HTTPS token 放在运行进程的环境变量里，由控制目录中的 credential helper 按主机读取（`GIT_CONFIG_COUNT` 注入 `credential.helper`，先清空用户/系统级 helper），因此不会出现在克隆 URL、`.git/config`、运行数据或日志中；SSH 私钥写入控制目录且仅属主可读，`known_hosts` 采用 `accept-new`。`GIT_TERMINAL_PROMPT=0` 防止 CLI 卡在交互式询问。克隆 URL 内嵌凭据、`file:`/本地路径和 `http://` 默认拒绝。
 
 本地沙箱是**环境**边界而非文件系统边界，适用于可信团队；不可信负载需等待 Docker 沙箱（见路线图）。
 

@@ -1,7 +1,9 @@
 package io.github.loopforge4j.server.web;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 
 /** Request bodies of the run API. */
 final class ApiRequests {
@@ -14,7 +16,25 @@ final class ApiRequests {
     record StartRun(
             @NotBlank @Size(max = 200) String workflowId,
             @Size(max = MAX_INPUT) String input,
-            @Size(max = 200) String projectId) {}
+            @Size(max = 200) String projectId,
+            @Size(max = 20) List<@Valid RepositorySelection> repositories) {
+
+        List<io.github.loopforge4j.core.domain.RepositorySelection> selections() {
+            return repositories == null
+                    ? List.of()
+                    : repositories.stream()
+                            .map(r -> new io.github.loopforge4j.core.domain.RepositorySelection(
+                                    r.repositoryId(), r.baseBranch(), r.workBranch(), r.mode()))
+                            .toList();
+        }
+    }
+
+    /** One repository a run works on; branches default to the repository and run settings. */
+    record RepositorySelection(
+            @NotBlank @Size(max = 200) String repositoryId,
+            @Size(max = 250) String baseBranch,
+            @Size(max = 250) String workBranch,
+            io.github.loopforge4j.core.domain.BranchMode mode) {}
 
     record HumanContext(@Size(max = MAX_CONTEXT) String humanContext) {}
 

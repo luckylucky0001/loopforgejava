@@ -34,6 +34,7 @@ public record WorkflowNode(
         int maxAttempts,
         int maxReworks,
         Integer timeoutSeconds,
+        ExecutionScope executionScope,
         Position position) {
 
     public WorkflowNode {
@@ -53,6 +54,10 @@ public record WorkflowNode(
     /** Effective rework budget of the {@link #rejectTo()} target (at least one). */
     public int reworkBudget() {
         return Math.max(1, maxReworks);
+    }
+
+    public ExecutionScope effectiveScope() {
+        return executionScope == null ? ExecutionScope.RUN : executionScope;
     }
 
     public ScriptLanguage effectiveScriptLanguage() {
@@ -87,6 +92,7 @@ public record WorkflowNode(
                 maxAttempts,
                 maxReworks,
                 timeoutSeconds,
+                executionScope,
                 position);
     }
 
@@ -112,6 +118,7 @@ public record WorkflowNode(
         private int maxAttempts = 1;
         private int maxReworks;
         private Integer timeoutSeconds;
+        private ExecutionScope executionScope;
 
         private Builder(String id, NodeType type) {
             this.id = id;
@@ -185,6 +192,11 @@ public record WorkflowNode(
             return this;
         }
 
+        public Builder scope(ExecutionScope value) {
+            this.executionScope = value;
+            return this;
+        }
+
         public Builder timeoutSeconds(int value) {
             this.timeoutSeconds = value;
             return this;
@@ -209,6 +221,7 @@ public record WorkflowNode(
                     maxAttempts,
                     maxReworks,
                     timeoutSeconds,
+                    executionScope,
                     Position.ORIGIN);
         }
     }

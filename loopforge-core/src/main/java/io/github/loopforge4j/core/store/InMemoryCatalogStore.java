@@ -1,6 +1,7 @@
 package io.github.loopforge4j.core.store;
 
 import io.github.loopforge4j.core.domain.AgentDefinition;
+import io.github.loopforge4j.core.domain.RepositoryDefinition;
 import io.github.loopforge4j.core.domain.WorkflowDefinition;
 import java.time.Clock;
 import java.util.Comparator;
@@ -15,6 +16,7 @@ public final class InMemoryCatalogStore implements CatalogStore {
     private final Clock clock;
     private final Map<String, WorkflowDefinition> workflows = new ConcurrentHashMap<>();
     private final Map<String, AgentDefinition> agents = new ConcurrentHashMap<>();
+    private final Map<String, RepositoryDefinition> repositories = new ConcurrentHashMap<>();
 
     public InMemoryCatalogStore() {
         this(Clock.systemUTC());
@@ -87,5 +89,29 @@ public final class InMemoryCatalogStore implements CatalogStore {
     @Override
     public boolean deleteAgent(String id) {
         return agents.remove(id) != null;
+    }
+
+    @Override
+    public Optional<RepositoryDefinition> repository(String id) {
+        return Optional.ofNullable(repositories.get(id));
+    }
+
+    @Override
+    public List<RepositoryDefinition> repositories() {
+        return repositories.values().stream()
+                .sorted(Comparator.comparing(RepositoryDefinition::id))
+                .toList();
+    }
+
+    @Override
+    public RepositoryDefinition saveRepository(RepositoryDefinition definition) {
+        RepositoryDefinition stamped = definition.withUpdatedAt(clock.instant());
+        repositories.put(stamped.id(), stamped);
+        return stamped;
+    }
+
+    @Override
+    public boolean deleteRepository(String id) {
+        return repositories.remove(id) != null;
     }
 }

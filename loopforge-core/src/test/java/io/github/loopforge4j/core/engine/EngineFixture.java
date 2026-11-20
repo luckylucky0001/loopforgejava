@@ -2,6 +2,7 @@ package io.github.loopforge4j.core.engine;
 
 import static org.awaitility.Awaitility.await;
 
+import io.github.loopforge4j.core.delivery.DeliveryProvider;
 import io.github.loopforge4j.core.domain.AgentDefinition;
 import io.github.loopforge4j.core.domain.ExecutionContext;
 import io.github.loopforge4j.core.domain.NodeRun;
@@ -11,6 +12,7 @@ import io.github.loopforge4j.core.domain.WorkflowDefinition;
 import io.github.loopforge4j.core.runtime.executor.CredentialProvider;
 import io.github.loopforge4j.core.runtime.executor.ExecutorRegistry;
 import io.github.loopforge4j.core.runtime.executor.MockAgentExecutor;
+import io.github.loopforge4j.core.runtime.git.GitCredentialProvider;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxOptions;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxProvider;
 import io.github.loopforge4j.core.store.InMemoryCatalogStore;
@@ -33,6 +35,11 @@ final class EngineFixture implements AutoCloseable {
     }
 
     EngineFixture(Path root, RunStore runs, boolean releaseWorkspace) {
+        this(root, runs, releaseWorkspace, GitCredentialProvider.NONE, DeliveryProvider.NONE);
+    }
+
+    EngineFixture(
+            Path root, RunStore runs, boolean releaseWorkspace, GitCredentialProvider git, DeliveryProvider delivery) {
         this.root = root;
         this.runs = runs;
         ExecutorRegistry registry = ExecutorRegistry.withBuiltIns(CredentialProvider.NONE)
@@ -44,6 +51,8 @@ final class EngineFixture implements AutoCloseable {
                 .catalogStore(catalog)
                 .executors(registry)
                 .sandbox(new LocalSandboxProvider(options))
+                .gitCredentials(git)
+                .delivery(delivery)
                 .settings(new EngineSettings(
                         "test", "mock", Duration.ofMinutes(2), Duration.ofMillis(25), releaseWorkspace))
                 .build();

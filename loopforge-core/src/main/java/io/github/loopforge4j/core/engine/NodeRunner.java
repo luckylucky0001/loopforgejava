@@ -1,9 +1,12 @@
 package io.github.loopforge4j.core.engine;
 
+import io.github.loopforge4j.core.delivery.Deliveries;
+import io.github.loopforge4j.core.delivery.DeliveryException;
 import io.github.loopforge4j.core.domain.AgentDefinition;
 import io.github.loopforge4j.core.domain.Artifact;
 import io.github.loopforge4j.core.domain.ArtifactContract;
 import io.github.loopforge4j.core.domain.ExecutionContext;
+import io.github.loopforge4j.core.domain.ExecutionScope;
 import io.github.loopforge4j.core.domain.ExecutorDefinition;
 import io.github.loopforge4j.core.domain.FailurePolicy;
 import io.github.loopforge4j.core.domain.GateDecision;
@@ -14,6 +17,8 @@ import io.github.loopforge4j.core.domain.InterventionStage;
 import io.github.loopforge4j.core.domain.LoopExhaustedPolicy;
 import io.github.loopforge4j.core.domain.NodeRun;
 import io.github.loopforge4j.core.domain.NodeStatus;
+import io.github.loopforge4j.core.domain.PullRequest;
+import io.github.loopforge4j.core.domain.RepositoryContext;
 import io.github.loopforge4j.core.domain.Run;
 import io.github.loopforge4j.core.domain.RunStatus;
 import io.github.loopforge4j.core.domain.ScriptLanguage;
@@ -28,6 +33,9 @@ import io.github.loopforge4j.core.runtime.executor.AgentExecutor;
 import io.github.loopforge4j.core.runtime.executor.AgentInvocation;
 import io.github.loopforge4j.core.runtime.executor.AgentResult;
 import io.github.loopforge4j.core.runtime.executor.ExecutorException;
+import io.github.loopforge4j.core.runtime.git.GitEnvironment;
+import io.github.loopforge4j.core.runtime.git.GitException;
+import io.github.loopforge4j.core.runtime.git.GitWorkspace;
 import io.github.loopforge4j.core.runtime.sandbox.CommandSpec;
 import io.github.loopforge4j.core.runtime.sandbox.ExecResult;
 import io.github.loopforge4j.core.runtime.sandbox.LineListener;
@@ -275,6 +283,8 @@ final class NodeRunner {
             throws NodeFailure, IOException, CancelledException {
         Run run = currentRun(runId);
         Sandbox sandbox = engine.sandbox(run);
+        run = engine.prepareRepositories(runId, sandbox, cancellation);
+        Map<String, String> runEnvironment = engine.processEnvironment(run, sandbox);
         ArtifactSupport.materializeInputs(
                 sandbox.workspace(), run, node, engine.runs().artifacts(runId));
         ScriptLanguage language = node.effectiveScriptLanguage();
@@ -283,40 +293,65 @@ final class NodeRunner {
         Path file = sandbox.workspace().resolve(relative);
         Files.createDirectories(file.getParent());
         Files.writeString(file, node.script(), StandardCharsets.UTF_8);
-        List<String> argv =
-                language == ScriptLanguage.PYTHON ? List.of("python3", relative) : List.of("sh", "-l", relative);
-        CommandSpec spec =
-                new CommandSpec(argv, null, scriptEnvironment(runId, node, attempt), null, timeout(node), "script");
+        // absolute path: repository-scoped scripts run inside the checkout directory
+        List<String> argv = language == ScriptLanguage.PYTHON
+                ? List.of("python3", file.toString())
+                : List.of("sh", "-l", file.toString());
         EventSink sink = engine.sink(runId, node.id());
         sink.emit(Telemetry.of("script", "script.started", "start", language.wire() + " 脚本开始执行"));
-        ExecResult result = sandbox.exec(spec, LineListener.NONE, cancellation);
-        String status = result.succeeded() ? "成功" : "失败";
+        List<ScopeTarget> targets = targets(run, node.effectiveScope());
+        StringBuilder combined = new StringBuilder();
+        long durationMillis = 0;
+        for (ScopeTarget target : targets) {
+            Map<String, String> env = new java.util.HashMap<>(runEnvironment);
+            env.putAll(scriptEnvironment(runId, node, attempt));
+            env.putAll(target.environment());
+            CommandSpec spec = new CommandSpec(argv, target.directory(), env, null, timeout(node), "script");
+            ExecResult result = sandbox.exec(spec, LineListener.NONE, cancellation);
+            durationMillis += result.duration().toMillis();
+            if (targets.size() > 1) {
+                combined.append("## ").append(target.label()).append("\n\n");
+            }
+            combined.append(result.output().strip()).append(targets.size() > 1 ? "\n\n" : "");
+            if (!result.succeeded()) {
+                sink.emit(new Telemetry(
+                        "script",
+                        "script.completed",
+                        "finish",
+                        "error",
+                        language.wire() + " 脚本执行失败 · " + target.label(),
+                        null,
+                        null,
+                        null,
+                        Map.of("exitCode", result.exitCode(), "durationMs", durationMillis)));
+                String reason = result.timedOut()
+                        ? "script timed out after " + timeout(node).toSeconds() + "s"
+                        : "script exited with code " + result.exitCode();
+                String where = targets.size() > 1 ? target.label() + ": " : "";
+                throw new NodeFailure(FailureKind.SCRIPT, where + reason + ": " + tail(result.output()));
+            }
+        }
         sink.emit(new Telemetry(
                 "script",
                 "script.completed",
                 "finish",
-                result.succeeded() ? "info" : "error",
-                language.wire() + " 脚本执行" + status + " · " + result.duration().toMillis() + " ms",
+                "info",
+                language.wire() + " 脚本执行成功 · " + durationMillis + " ms",
                 null,
                 null,
                 null,
                 Map.of(
                         "exitCode",
-                        result.exitCode(),
+                        0,
                         "durationMs",
-                        result.duration().toMillis(),
+                        durationMillis,
                         "outputBytes",
-                        result.output().length())));
-        if (!result.succeeded()) {
-            String reason = result.timedOut()
-                    ? "script timed out after " + timeout(node).toSeconds() + "s"
-                    : "script exited with code " + result.exitCode();
-            throw new NodeFailure(FailureKind.SCRIPT, reason + ": " + tail(result.output()));
-        }
-        String output = result.output().isBlank()
-                ? "# 脚本执行结果\n\n- 语言：" + language.wire() + "\n- 状态：成功\n- 耗时："
-                        + result.duration().toMillis() + " ms\n- 标准输出：无\n"
-                : result.output();
+                        combined.length(),
+                        "targets",
+                        targets.size())));
+        String output = combined.toString().isBlank()
+                ? "# 脚本执行结果\n\n- 语言：" + language.wire() + "\n- 状态：成功\n- 耗时：" + durationMillis + " ms\n- 标准输出：无\n"
+                : combined.toString().strip() + "\n";
         List<Artifact> artifacts = ArtifactSupport.collect(
                 sandbox.workspace(),
                 currentRun(runId),
@@ -326,6 +361,23 @@ final class NodeRunner {
                 output,
                 engine.clock().instant());
         commitSuccess(runId, generation, attempt, node, output, artifacts, null);
+    }
+
+    /** Where a command runs: the workspace root, or each repository checkout (upstream executionTargets). */
+    private record ScopeTarget(String label, String directory, Map<String, String> environment) {}
+
+    private static List<ScopeTarget> targets(Run run, ExecutionScope scope) throws NodeFailure {
+        if (scope == ExecutionScope.RUN) {
+            return List.of(new ScopeTarget("workspace", null, Map.of()));
+        }
+        if (run.repositories().isEmpty()) {
+            throw new NodeFailure(
+                    FailureKind.CONFIGURATION,
+                    "executionScope=repositories requires the run to bind at least one repository");
+        }
+        return run.repositories().stream()
+                .map(rc -> new ScopeTarget(rc.name(), rc.workspaceDir(), GitEnvironment.forRepository(rc)))
+                .toList();
     }
 
     private static Map<String, String> scriptEnvironment(String runId, WorkflowNode node, int attempt) {
@@ -356,7 +408,8 @@ final class NodeRunner {
         List<ArtifactContract> contracts = ArtifactSupport.merge(agent.artifactOutputs(), node.artifactOutputs());
         FailurePolicy defaultFailure = node.rejectsOnFailure() ? FailurePolicy.REJECT : FailurePolicy.FAIL;
         List<GateRun> gates = agent.verification().stream()
-                .filter(g -> g.mode() == GateMode.COMMAND && !g.script().isBlank())
+                .filter(g -> g.mode() == GateMode.MR
+                        || g.mode() == GateMode.COMMAND && !g.script().isBlank())
                 .map(g -> new GateRun(g, g.onFailure() == null ? defaultFailure : g.onFailure()))
                 .toList();
         String manualGate = manualGateName(agent);
@@ -364,6 +417,8 @@ final class NodeRunner {
 
         Run run = currentRun(runId);
         Sandbox sandbox = engine.sandbox(run);
+        run = engine.prepareRepositories(runId, sandbox, cancellation);
+        Map<String, String> runEnvironment = engine.processEnvironment(run, sandbox);
         String manifest = ArtifactSupport.materializeInputs(
                 sandbox.workspace(), run, node, engine.runs().artifacts(runId));
         String gatePath = GateResults.path(node.id(), attempt);
@@ -380,7 +435,8 @@ final class NodeRunner {
                 sink,
                 cancellation,
                 contracts,
-                gatePath);
+                gatePath,
+                runEnvironment);
 
         NodeFailure failure = null;
         AgentResult last = null;
@@ -560,7 +616,8 @@ final class NodeRunner {
             EventSink sink,
             Cancellation cancellation,
             List<ArtifactContract> contracts,
-            String gatePath) {}
+            String gatePath,
+            Map<String, String> environment) {}
 
     private String freshPrompt(Run current, AgentCall call, String manifest) {
         return PromptCompiler.compile(
@@ -615,7 +672,8 @@ final class NodeRunner {
                 resume,
                 call.gatePath(),
                 call.contracts(),
-                timeout(call.node()));
+                timeout(call.node()),
+                call.environment());
         try {
             AgentResult result = call.adapter().execute(invocation, call.sandbox(), call.sink(), call.cancellation());
             recordInvocation(call, result);
@@ -715,16 +773,101 @@ final class NodeRunner {
         call.sink()
                 .emit(new Telemetry(
                         "verification", "gate.started", "start", "info", "门禁开始：" + name, null, null, null, attributes));
-        ExecResult result = call.sandbox()
-                .exec(
-                        CommandSpec.shell(gate.gate().script(), "verification", timeout(call.node())),
-                        LineListener.NONE,
-                        call.cancellation());
-        if (result.succeeded()) {
+        if (gate.gate().mode() == GateMode.MR) {
+            runPullRequestGate(call, gate, attributes);
+            return;
+        }
+        Run run = currentRun(call.runId());
+        for (ScopeTarget target : targets(run, gate.gate().effectiveScope())) {
+            Map<String, String> env = new java.util.HashMap<>(call.environment());
+            env.putAll(target.environment());
+            CommandSpec spec = new CommandSpec(
+                    List.of("sh", "-lc", gate.gate().script()),
+                    target.directory(),
+                    env,
+                    null,
+                    timeout(call.node()),
+                    "verification");
+            ExecResult result = call.sandbox().exec(spec, LineListener.NONE, call.cancellation());
+            if (!result.succeeded()) {
+                call.sink()
+                        .emit(new Telemetry(
+                                "verification",
+                                "gate.failed",
+                                "finish",
+                                "error",
+                                "门禁未通过：" + name,
+                                null,
+                                null,
+                                null,
+                                attributes));
+                String detail = result.output().isBlank() ? "no command output" : tail(result.output());
+                String where = target.directory() == null ? "" : " in " + target.label();
+                throw new NodeFailure(
+                        FailureKind.VERIFICATION,
+                        "verification " + name + where + " command failed (exit " + result.exitCode() + "): " + detail,
+                        gate.onFailure());
+            }
+        }
+        call.sink()
+                .emit(new Telemetry(
+                        "verification", "gate.passed", "finish", "info", "门禁通过：" + name, null, null, null, attributes));
+    }
+
+    /**
+     * mode=mr (upstream {@code verifyRunMRs}): every writable repository whose remote work branch
+     * carries commits beyond the base branch needs a PR from the work branch into the base branch that
+     * carries the pushed tip. When the hosting platform cannot be queried a human has to confirm.
+     */
+    private void runPullRequestGate(AgentCall call, GateRun gate, Map<String, Object> attributes)
+            throws NodeFailure, CancelledException {
+        Run run = currentRun(call.runId());
+        GitWorkspace git = new GitWorkspace(call.sandbox(), call.environment(), call.cancellation());
+        List<String> problems = new ArrayList<>();
+        List<PullRequest> delivered = new ArrayList<>();
+        boolean unverifiable = false;
+        for (RepositoryContext rc : run.repositories()) {
+            String work = rc.writableWorkBranch();
+            if (work == null) {
+                continue;
+            }
+            GitWorkspace.PushedWork pushed;
+            try {
+                pushed = git.pushedWork(rc);
+            } catch (GitException e) {
+                problems.add(rc.name() + "：" + e.getMessage());
+                continue;
+            }
+            if (pushed.ahead() == 0) {
+                continue;
+            }
+            if (!engine.delivery().supports(rc)) {
+                problems.add(rc.name() + "：托管平台不支持自动核验 PR，请人工确认已创建 " + work + " → " + rc.baseBranch() + " 的 PR");
+                unverifiable = true;
+                continue;
+            }
+            try {
+                List<PullRequest> pulls = engine.delivery().pullRequests(rc, work, rc.baseBranch());
+                String problem = Deliveries.coverageProblem(pulls, pushed.tip());
+                PullRequest representative = Deliveries.representative(pulls);
+                if (representative != null) {
+                    delivered.add(representative);
+                }
+                if (problem != null) {
+                    problems.add(rc.name() + "：" + work + " → " + rc.baseBranch() + " " + problem);
+                }
+            } catch (DeliveryException e) {
+                problems.add(rc.name() + "：查询 " + work + " → " + rc.baseBranch() + " 的 PR 失败：" + e.getMessage());
+                unverifiable = true;
+            }
+        }
+        String name = gate.gate().name();
+        engine.recordDeliveries(call.runId(), delivered);
+        if (problems.isEmpty()) {
             call.sink()
                     .emit(new Telemetry(
                             "verification",
-                            "gate.passed",
+                            "gate.mr.passed",
                             "finish",
                             "info",
                             "门禁通过：" + name,
@@ -737,7 +880,7 @@ final class NodeRunner {
         call.sink()
                 .emit(new Telemetry(
                         "verification",
-                        "gate.failed",
+                        "gate.mr.failed",
                         "finish",
                         "error",
                         "门禁未通过：" + name,
@@ -745,11 +888,10 @@ final class NodeRunner {
                         null,
                         null,
                         attributes));
-        String detail = result.output().isBlank() ? "no command output" : tail(result.output());
         throw new NodeFailure(
                 FailureKind.VERIFICATION,
-                "verification " + name + " command failed (exit " + result.exitCode() + "): " + detail,
-                gate.onFailure());
+                "verification " + name + ": " + String.join("；", problems),
+                unverifiable ? FailurePolicy.HUMAN : gate.onFailure());
     }
 
     private static String manualGateName(AgentDefinition agent) {
@@ -807,7 +949,13 @@ final class NodeRunner {
                         .filter(c -> c.workflowId().equals(childWorkflow.id()))
                         .orElse(null);
         if (child == null) {
-            child = engine.start(childWorkflow, childInput(parent, node), ExecutionContext.childOf(parent, node.id()));
+            // the child works in the parent's checkout: same repositories, already prepared
+            child = engine.startChild(
+                    childWorkflow,
+                    childInput(parent, node),
+                    ExecutionContext.childOf(parent, node.id()),
+                    parent.repositories(),
+                    parent.repositoriesPrepared());
             String startedId = child.id();
             engine.mutateQuietly(runId, c -> {
                 Run r = c.run();
