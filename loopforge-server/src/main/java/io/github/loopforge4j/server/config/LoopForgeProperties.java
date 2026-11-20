@@ -32,7 +32,9 @@ public record LoopForgeProperties(
         @Valid @DefaultValue Git git,
         @Valid @DefaultValue GitHub github,
         @Valid @DefaultValue Mcp mcp,
-        @Valid @DefaultValue Retention retention) {
+        @Valid @DefaultValue Retention retention,
+        @DefaultValue List<GitLabHost> gitlab,
+        @DefaultValue List<ModelPrice> pricing) {
 
     /**
      * @param defaultExecutor executor id used when neither role nor node chooses one
@@ -44,6 +46,8 @@ public record LoopForgeProperties(
      * @param workspaceHost name of the file system holding workspaces (host name by default)
      * @param sharedWorkspaces every instance mounts the workspace root at the same path, so runs may
      *     move between hosts
+     * @param maxActiveRuns running top-level runs in the deployment before new ones queue (0: no limit)
+     * @param maxActiveRunsPerProject the same per project
      */
     public record Engine(
             @NotBlank @DefaultValue("claude") String defaultExecutor,
@@ -54,7 +58,9 @@ public record LoopForgeProperties(
             @NotNull @DefaultValue("60s") Duration leaseTtl,
             @NotNull @DefaultValue("10s") Duration claimInterval,
             String workspaceHost,
-            @DefaultValue("false") boolean sharedWorkspaces) {}
+            @DefaultValue("false") boolean sharedWorkspaces,
+            @DefaultValue("0") int maxActiveRuns,
+            @DefaultValue("0") int maxActiveRunsPerProject) {}
 
     /**
      * @param passthroughEnv host variables forwarded to processes; never list secrets here
@@ -159,6 +165,26 @@ public record LoopForgeProperties(
             @NotNull @DefaultValue("30d") Duration telemetry,
             @NotNull @DefaultValue("0s") Duration runs,
             @NotNull @DefaultValue("1h") Duration interval) {}
+
+    /**
+     * A GitLab or GitLab-compatible host (e.g. 工蜂) for MR delivery; its token comes from the
+     * matching {@code loopforge.git.https} entry.
+     *
+     * @param apiUrl API root; {@code https://<host>/api/v4} when empty
+     */
+    public record GitLabHost(@NotBlank String host, java.net.URI apiUrl) {}
+
+    /**
+     * Price per million tokens of a model, replacing or extending the built-in table used to
+     * estimate cost when a CLI reports none.
+     */
+    public record ModelPrice(
+            @NotBlank String model,
+            @DefaultValue("USD") String currency,
+            double input,
+            double output,
+            double cacheRead,
+            double cacheWrite) {}
 
     /** Replaces the launch command of a built-in executor (e.g. an absolute binary path). */
     public record ExecutorOverride(String binary, List<String> args, String model, String effort) {}

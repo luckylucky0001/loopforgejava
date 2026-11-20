@@ -20,6 +20,8 @@
 
 - 迭代 5 — 协作：账户（首个为管理员、bcrypt、登录锁定、会话/个人 Token）、项目与四级成员角色、全 API 授权与运行可见性过滤；需求（编号、`feature/requirement-N` 工作分支、状态随运行/PR 推进）；cron 定时任务（多实例单次触发）；Webhook 通知（签名、重试）；Web 控制台（`/`，严格 CSP、无第三方依赖）。
 
+- 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
+
 ### Fixed (并发审查)
 - 暂停后继续父运行会重复启动子 SOP 并遗留旧子运行。
 - 自动打回会清除待处理的取消/暂停；取消待处理时其他人工操作也会清除它。

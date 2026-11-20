@@ -10,6 +10,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
  */
 public enum RepositoryProvider implements WireEnum {
     GITHUB("github"),
+    /** GitLab and GitLab-compatible hosts (e.g. 工蜂): MR delivery through the GitLab API. */
+    GITLAB("gitlab"),
     HTTPS("https"),
     SSH("ssh"),
     /** Local path or file:// URL; used for tests and air-gapped mirrors. */
@@ -34,6 +36,6 @@ public enum RepositoryProvider implements WireEnum {
 
     /** Hosting API actions (PR/MR) are available. */
     public boolean hostsPullRequests() {
-        return this == GITHUB;
+        return this == GITHUB || this == GITLAB;
     }
 }

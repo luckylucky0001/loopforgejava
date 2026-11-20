@@ -91,4 +91,35 @@ class PromptCompilerTest {
                 .contains("不要重复执行任务")
                 .contains("g.json");
     }
+
+    @org.junit.jupiter.api.Test
+    void gitlabRepositoriesAskForAMergeRequest() {
+        io.github.loopforge4j.core.domain.Run run = io.github.loopforge4j.core.domain.Run.create(
+                "r",
+                io.github.loopforge4j.core.domain.WorkflowDefinition.builder("wf")
+                        .node(io.github.loopforge4j.core.domain.WorkflowNode.builder(
+                                        "a", io.github.loopforge4j.core.domain.NodeType.SCRIPT)
+                                .script("true")
+                                .build())
+                        .build(),
+                "",
+                io.github.loopforge4j.core.domain.ExecutionContext.EMPTY,
+                java.time.Instant.now());
+        run.repositories(java.util.List.of(new io.github.loopforge4j.core.domain.RepositoryContext(
+                "app",
+                "app",
+                io.github.loopforge4j.core.domain.RepositoryProvider.GITLAB,
+                "https://gitlab.example.com/g/app.git",
+                null,
+                "main",
+                "feature/x",
+                "app",
+                false,
+                false,
+                false,
+                null)));
+        assertThat(PromptCompiler.deliveryBlurb(run))
+                .contains("的 MR（`glab mr create`")
+                .doesNotContain("gh pr create");
+    }
 }

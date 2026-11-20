@@ -77,9 +77,12 @@ final class LeaseKeeper {
             }
             heartbeat();
             renewLeases();
-            if (claiming && System.nanoTime() >= nextClaim) {
+            if (System.nanoTime() >= nextClaim) {
                 nextClaim = System.nanoTime() + claim.toNanos();
-                safely(engine::claimOrphanedRuns);
+                if (claiming) {
+                    safely(engine::claimOrphanedRuns);
+                    safely(engine::promoteQueuedRuns);
+                }
             }
         }
     }

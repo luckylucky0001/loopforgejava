@@ -84,6 +84,8 @@ loopforge:
     # ssh-private-key-file: /run/secrets/deploy_key
   github:
     api-url: https://api.github.com   # GitHub Enterprise: https://<host>/api/v3
+  gitlab:                        # GitLab / 工蜂：仓库设置 "provider": "gitlab"，凭据同样放在 git.https
+    - host: gitlab.example.com   # api-url 默认 https://<host>/api/v4
 ```
 
 ```bash
@@ -123,6 +125,8 @@ loopforge:
   engine:
     lease-ttl: 60s
     claim-interval: 10s
+    max-active-runs: 20          # 超出的新运行排队，按先后自动启动；0 = 不限
+    max-active-runs-per-project: 5
   retention:
     telemetry: 30d      # 执行器输出/工具/进程/Hook 事件；生命周期与门禁审计事件保留
     runs: 180d          # 删除终态运行（含事件、产物与工作区）；默认 0 = 永久保留

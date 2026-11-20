@@ -166,14 +166,26 @@ public final class PromptCompiler {
                 b.append("（继续已有分支，不要新建或改名）");
             }
             if (rc.provider().hostsPullRequests()) {
+                boolean gitlab = rc.provider() == io.github.loopforge4j.core.domain.RepositoryProvider.GITLAB;
+                String kind = gitlab ? "MR" : "PR";
                 if (existing != null) {
-                    b.append("；已有本轮 PR ").append(existing.url()).append("，在同一分支上更新，不要另开 PR");
+                    b.append("；已有本轮 ")
+                            .append(kind)
+                            .append(" ")
+                            .append(existing.url())
+                            .append("，在同一分支上更新，不要另开 ")
+                            .append(kind);
                 } else {
                     b.append("；然后创建从 `")
                             .append(work)
                             .append("` 到 `")
                             .append(rc.baseBranch())
-                            .append("` 的 PR（`gh pr create` 可用，凭据已注入，不要打印或保存令牌）");
+                            .append("` 的 ")
+                            .append(kind)
+                            .append(
+                                    gitlab
+                                            ? "（`glab mr create` 或 GitLab API 可用，凭据已注入，不要打印或保存令牌）"
+                                            : "（`gh pr create` 可用，凭据已注入，不要打印或保存令牌）");
                 }
             } else {
                 b.append("；报告分支名和提交 SHA（该托管平台不支持自动创建 PR）");

@@ -14,6 +14,7 @@ import io.github.loopforge4j.core.runtime.sandbox.LocalSandboxProvider;
 import io.github.loopforge4j.core.store.CatalogStore;
 import io.github.loopforge4j.core.store.RunStore;
 import io.github.loopforge4j.server.delivery.GitHubDeliveryProvider;
+import io.github.loopforge4j.server.delivery.GitLabDeliveryProvider;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Clock;
@@ -125,7 +126,28 @@ class EngineConfiguration {
                 .filter(c -> c.host().equalsIgnoreCase(host))
                 .findFirst()
                 .orElse(null);
-        return new GitHubDeliveryProvider(api, () -> credential == null ? null : credential.token());
+        GitHubDeliveryProvider github =
+                new GitHubDeliveryProvider(api, () -> credential == null ? null : credential.token());
+        Map<String, java.net.URI> gitlabHosts = new java.util.LinkedHashMap<>();
+        for (LoopForgeProperties.GitLabHost gitlabHost : properties.gitlab()) {
+            String name = gitlabHost.host().strip().toLowerCase(java.util.Locale.ROOT);
+            gitlabHosts.put(
+                    name,
+                    gitlabHost.apiUrl() != null
+                            ? gitlabHost.apiUrl()
+                            : java.net.URI.create("https://" + name + "/api/v4"));
+        }
+        if (gitlabHosts.isEmpty()) {
+            return github;
+        }
+        GitLabDeliveryProvider gitlab = new GitLabDeliveryProvider(
+                gitlabHosts,
+                name -> properties.git().https().stream()
+                        .filter(c -> c.host().equalsIgnoreCase(name))
+                        .map(LoopForgeProperties.HttpsCredential::token)
+                        .findFirst()
+                        .orElse(null));
+        return DeliveryProvider.composite(List.of(github, gitlab));
     }
 
     @Bean(destroyMethod = "close")
@@ -159,6 +181,14 @@ class EngineConfiguration {
                 .sandbox(sandbox);
         docker.ifPresent(builder::sandbox);
         RunEngine runEngine = builder.instances(instances)
+                .pricing(io.github.loopforge4j.core.pricing.TokenPricing.withOverrides(properties.pricing().stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                LoopForgeProperties.ModelPrice::model,
+                                p -> new io.github.loopforge4j.core.pricing.TokenPricing.Price(
+                                        p.currency(), p.input(), p.output(), p.cacheRead(), p.cacheWrite()),
+                                (a, b) -> b))))
+                .admission(new io.github.loopforge4j.core.engine.AdmissionPolicy(
+                        engine.maxActiveRuns(), engine.maxActiveRunsPerProject()))
                 .claimOrphans(engine.recoverOnStartup())
                 .gitCredentials(gitCredentials)
                 .mcpSecrets(properties.mcp().secrets()::get)

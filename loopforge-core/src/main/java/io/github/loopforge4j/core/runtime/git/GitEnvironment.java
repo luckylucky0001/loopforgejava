@@ -63,6 +63,22 @@ public final class GitEnvironment {
             if (github != null) {
                 env.put("GH_TOKEN", github.token());
             }
+            // the GitLab CLI (glab) of the first GitLab repository with a configured token
+            for (RepositoryContext rc : repositories) {
+                if (rc.provider() != io.github.loopforge4j.core.domain.RepositoryProvider.GITLAB) {
+                    continue;
+                }
+                String host = RepositoryRemote.parse(rc.cloneUrl())
+                        .map(RepositoryRemote::host)
+                        .orElse(null);
+                GitCredentials.HttpsCredential gitlab =
+                        host == null ? null : credentials.https().get(host);
+                if (gitlab != null) {
+                    env.put("GITLAB_TOKEN", gitlab.token());
+                    env.put("GITLAB_HOST", host);
+                    break;
+                }
+            }
         }
         if (credentials.sshPrivateKey() != null && !credentials.sshPrivateKey().isBlank()) {
             Path ssh = control.resolve("ssh");

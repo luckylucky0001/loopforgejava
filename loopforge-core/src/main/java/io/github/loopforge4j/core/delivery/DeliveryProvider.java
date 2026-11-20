@@ -24,4 +24,26 @@ public interface DeliveryProvider {
 
     /** Pull requests from {@code head} into {@code base}, newest first, any state. */
     List<PullRequest> pullRequests(RepositoryContext repository, String head, String base) throws DeliveryException;
+
+    /** Routes each repository to the first provider that supports it (GitHub, GitLab, ...). */
+    static DeliveryProvider composite(List<DeliveryProvider> providers) {
+        List<DeliveryProvider> copy = List.copyOf(providers);
+        return new DeliveryProvider() {
+            @Override
+            public boolean supports(RepositoryContext repository) {
+                return copy.stream().anyMatch(p -> p.supports(repository));
+            }
+
+            @Override
+            public List<PullRequest> pullRequests(RepositoryContext repository, String head, String base)
+                    throws DeliveryException {
+                for (DeliveryProvider provider : copy) {
+                    if (provider.supports(repository)) {
+                        return provider.pullRequests(repository, head, base);
+                    }
+                }
+                return List.of();
+            }
+        };
+    }
 }

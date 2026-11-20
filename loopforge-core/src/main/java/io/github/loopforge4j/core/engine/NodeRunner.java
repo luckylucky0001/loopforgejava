@@ -767,6 +767,10 @@ final class NodeRunner {
     }
 
     private void recordInvocation(AgentCall call, AgentResult result) {
+        String model = result.model() != null ? result.model() : call.executor().model();
+        // Codex counts cached tokens inside input tokens (OpenAI semantics)
+        io.github.loopforge4j.core.domain.TokenUsage usage = engine.pricing()
+                .price(model, result.usage(), "codex".equals(call.executor().kind()));
         engine.mutateQuietly(call.runId(), c -> {
             Run r = c.run();
             NodeRun nr = r.requireNode(call.node().id());
@@ -777,10 +781,10 @@ final class NodeRunner {
                 nr.sessionId(result.sessionId());
             }
             nr.provider(call.executor().kind());
-            nr.model(result.model() != null ? result.model() : call.executor().model());
+            nr.model(model);
             nr.resumeSessionId(null);
-            nr.addUsage(result.usage(), result.toolCalls());
-            r.addUsage(result.usage(), result.toolCalls());
+            nr.addUsage(usage, result.toolCalls());
+            r.addUsage(usage, result.toolCalls());
             return true;
         });
     }

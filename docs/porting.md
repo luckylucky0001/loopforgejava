@@ -20,7 +20,10 @@
 | `migrations/seed/001_public_catalog.sql`（welcome-workflow） | `catalog/welcome.json` | 已移植 |
 | `internal/engine/repository_workspace.go`、`git_*.go` | `core.runtime.git.GitWorkspace`、`GitEnvironment` | 已移植（克隆、工作分支、分支模式、空远端初始化） |
 | `internal/engine/mr_gate.go`（`verifyRunMRs`、`mrCoverageProblem`） | `NodeRunner.runPullRequestGate`、`core.delivery.Deliveries` | 已移植 |
-| `internal/tracker/github.go` | `server.delivery.GitHubDeliveryProvider` | PR 查询与合并检测（GitLab/工蜂待补） |
+| `internal/tracker/github.go` | `server.delivery.GitHubDeliveryProvider` | PR 查询与合并检测 |
+| `internal/tracker/external_mr.go`（GitLab 兼容 API） | `server.delivery.GitLabDeliveryProvider`、`core.runtime.git.RepositoryRemote` | MR 查询与合并检测（GitLab / 工蜂） |
+| `internal/repo/run_admission.go`（`PromoteQueuedRuns`） | `core.engine.AdmissionPolicy`、`RunEngine.promoteQueuedRuns` | 全局与每项目上限（未移植按执行器分桶） |
+| `internal/domain/token_pricing.go` | `core.pricing.TokenPricing` | 价格表版本 public-standard-2026-11-05，可配置覆盖 |
 | `internal/httpapi/repositories.go` | `server.web.RepositoryController` | 已移植 |
 | `internal/gatemcp`、`cmd/agentflow-gate-mcp`、`runtime/gate_mcp.go` | `core.mcp.GateMcpServer`、`GateMcpPackage` | 已移植（Go 二进制 → 仅依赖 JDK 的 jar） |
 | `internal/runtime/materialize.go`、`skill_md.go`、`hooks.go` | `core.runtime.materialize` | 已移植（Python Hook 包装器 → POSIX sh） |
@@ -63,4 +66,4 @@
 
 ## 尚未移植
 
-Chat/Main Bot 与会话工作区、GitLab/工蜂 MR 交付与 Issue 同步、执行机器（runner）与云端池、平台 MCP 与知识库 MCP、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、OAuth/企业身份、企业微信等 Bot 通知、成本定价表与分析看板、预览构建、运行排队准入与限流桶、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。
+Chat/Main Bot 与会话工作区、工蜂/TAPD Issue 同步、执行机器（runner）与云端池、平台 MCP 与知识库 MCP、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、OAuth/企业身份、企业微信等 Bot 通知、分析看板、预览构建、按执行器分桶的准入、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。

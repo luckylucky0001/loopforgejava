@@ -88,6 +88,8 @@ public final class RunEngine implements AutoCloseable {
     private final NodeRunner nodeRunner;
     private final GitCredentialProvider gitCredentials;
     private final LeaseKeeper leases;
+    private final AdmissionPolicy admission;
+    private final io.github.loopforge4j.core.pricing.TokenPricing pricing;
     private final TelemetryBuffer telemetry;
     private final java.util.function.UnaryOperator<String> mcpSecrets;
     private final java.nio.file.Path gateMcpJava;
@@ -121,6 +123,9 @@ public final class RunEngine implements AutoCloseable {
                 runs,
                 builder.telemetryFlushInterval == null ? Duration.ofMillis(200) : builder.telemetryFlushInterval,
                 (runId, stored) -> listeners.forEach(l -> safely(() -> l.eventsAppended(runId, stored))));
+        this.admission = builder.admission == null ? AdmissionPolicy.UNLIMITED : builder.admission;
+        this.pricing =
+                builder.pricing == null ? io.github.loopforge4j.core.pricing.TokenPricing.defaults() : builder.pricing;
         this.leases = new LeaseKeeper(
                 this,
                 builder.instances == null
@@ -176,6 +181,62 @@ public final class RunEngine implements AutoCloseable {
             log.info("retention: pruned {} telemetry event(s), deleted {} run(s)", pruned, deleted);
         }
         return new RetentionResult(pruned, deleted);
+    }
+
+    /** Whether a new top-level run of {@code projectId} may start now. */
+    private boolean admits(String projectId) {
+        if (admission.unlimited()) {
+            return true;
+        }
+        List<Run> active = runs.list(RunQuery.withStatus(Set.of(RunStatus.RUNNING))).stream()
+                .filter(r -> !r.context().childRun())
+                .toList();
+        if (admission.maxActiveRuns() > 0 && active.size() >= admission.maxActiveRuns()) {
+            return false;
+        }
+        if (admission.maxActiveRunsPerProject() > 0 && projectId != null) {
+            long inProject = active.stream()
+                    .filter(r -> projectId.equals(r.context().projectId()))
+                    .count();
+            return inProject < admission.maxActiveRunsPerProject();
+        }
+        return true;
+    }
+
+    /**
+     * Starts queued runs, oldest first, while the admission policy allows (upstream {@code
+     * PromoteQueuedRuns}). Called when runs settle and periodically.
+     *
+     * @return ids of the runs that started
+     */
+    public List<String> promoteQueuedRuns() {
+        if (closed) {
+            return List.of();
+        }
+        List<Run> queued = new ArrayList<>(runs.list(RunQuery.withStatus(Set.of(RunStatus.QUEUED))));
+        queued.sort(java.util.Comparator.comparing(Run::createdAt).thenComparing(Run::id));
+        List<String> started = new ArrayList<>();
+        for (Run run : queued) {
+            if (run.cancelRequested() || !admits(run.context().projectId())) {
+                continue;
+            }
+            boolean[] promoted = {false};
+            mutateQuietly(run.id(), c -> {
+                promoted[0] = false;
+                if (c.run().status() != RunStatus.QUEUED) {
+                    return false;
+                }
+                c.run().status(RunStatus.RUNNING);
+                c.event(null, "run.started", "获得执行名额，流水线开始执行");
+                promoted[0] = true;
+                return true;
+            });
+            if (promoted[0]) {
+                ensureScheduler(run.id());
+                started.add(run.id());
+            }
+        }
+        return started;
     }
 
     /** Number of runs this instance currently executes. */
@@ -265,14 +326,20 @@ public final class RunEngine implements AutoCloseable {
                     List.of("sandbox profile '" + workflow.sandboxProfileId() + "' is not available"));
         }
         Run run = Run.create(runId, workflow, input, context, clock.instant());
-        run.status(RunStatus.RUNNING);
+        boolean child = context != null && context.childRun();
+        boolean admitted = child || admits(run.context().projectId());
+        run.status(admitted ? RunStatus.RUNNING : RunStatus.QUEUED);
         run.repositories(repositories);
         run.repositoriesPrepared(prepared || repositories.isEmpty());
-        String message = context != null && context.childRun() ? "子 SOP 开始执行" : "流水线开始执行";
-        runs.insert(run, List.of(RunEvent.lifecycle(run.id(), null, "run.started", message, clock.instant())));
+        RunEvent first = admitted
+                ? RunEvent.lifecycle(run.id(), null, "run.started", child ? "子 SOP 开始执行" : "流水线开始执行", clock.instant())
+                : RunEvent.lifecycle(run.id(), null, "run.queued", "执行名额已满，排队等待", clock.instant());
+        runs.insert(run, List.of(first));
         Run stored = runs.find(run.id()).orElseThrow();
         notifyChanged(stored);
-        ensureScheduler(run.id());
+        if (admitted) {
+            ensureScheduler(run.id());
+        }
         return runs.find(run.id()).orElse(stored);
     }
 
@@ -750,7 +817,9 @@ public final class RunEngine implements AutoCloseable {
      * @return ids of the recovered runs
      */
     public List<String> recoverInterruptedRuns() {
-        return claimOrphanedRuns();
+        List<String> recovered = new ArrayList<>(claimOrphanedRuns());
+        recovered.addAll(promoteQueuedRuns());
+        return recovered;
     }
 
     /**
@@ -763,7 +832,7 @@ public final class RunEngine implements AutoCloseable {
      */
     public List<String> claimOrphanedRuns() {
         List<String> recovered = new ArrayList<>();
-        for (Run run : runs.list(RunQuery.withStatus(Set.of(RunStatus.RUNNING, RunStatus.QUEUED)))) {
+        for (Run run : runs.list(RunQuery.withStatus(Set.of(RunStatus.RUNNING)))) {
             if (closed || scheduling(run.id())) {
                 continue;
             }
@@ -783,9 +852,6 @@ public final class RunEngine implements AutoCloseable {
             }
             mutate(run.id(), c -> {
                 Run r = c.run();
-                if (r.status() == RunStatus.QUEUED) {
-                    r.status(RunStatus.RUNNING);
-                }
                 parkInFlightNodes(r, "实例重启，等待恢复");
                 String previous = r.ownerInstanceId();
                 c.event(
@@ -938,6 +1004,16 @@ public final class RunEngine implements AutoCloseable {
             schedulerLock.unlock();
         }
         releaseLease(scheduler.runId(), scheduler.generation());
+        if (!admission.unlimited()) {
+            // a slot may have opened; promote off the scheduler thread
+            Thread.ofVirtual().name("promote-queued").start(() -> {
+                try {
+                    promoteQueuedRuns();
+                } catch (RuntimeException e) {
+                    log.warn("promoting queued runs failed: {}", e.toString());
+                }
+            });
+        }
         return true;
     }
 
@@ -1438,6 +1514,10 @@ public final class RunEngine implements AutoCloseable {
         return GitEnvironment.build(sandbox.workspace(), gitCredentials.credentialsFor(run), run.repositories());
     }
 
+    io.github.loopforge4j.core.pricing.TokenPricing pricing() {
+        return pricing;
+    }
+
     DeliveryProvider delivery() {
         return delivery;
     }
@@ -1670,6 +1750,8 @@ public final class RunEngine implements AutoCloseable {
         private io.github.loopforge4j.core.store.InstanceRegistry instances;
         private boolean claimOrphans;
         private Duration telemetryFlushInterval;
+        private AdmissionPolicy admission;
+        private io.github.loopforge4j.core.pricing.TokenPricing pricing;
         private java.util.function.UnaryOperator<String> mcpSecrets;
         private java.nio.file.Path gateMcpJava;
         private DeliveryProvider delivery;
@@ -1697,6 +1779,18 @@ public final class RunEngine implements AutoCloseable {
         /** How long telemetry is batched before it is written; zero writes every event at once. */
         public Builder telemetryFlushInterval(Duration value) {
             this.telemetryFlushInterval = value;
+            return this;
+        }
+
+        /** Price table for usage the CLIs do not price themselves. */
+        public Builder pricing(io.github.loopforge4j.core.pricing.TokenPricing value) {
+            this.pricing = value;
+            return this;
+        }
+
+        /** Limits on concurrently running runs; excess runs are queued. */
+        public Builder admission(AdmissionPolicy value) {
+            this.admission = value;
             return this;
         }
 
