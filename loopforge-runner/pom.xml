@@ -59,7 +59,7 @@
         <!-- one executable jar: java -jar loopforge-runner-<version>-all.jar -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
-        <version>3.6.0</version>
+        <version>3.6.2</version>
         <executions>
           <execution>
             <phase>package</phase>
