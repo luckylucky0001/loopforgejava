@@ -146,6 +146,11 @@ class WorkIntegrationTest {
         }
     }
 
+    String requirementRun(Map<String, Object> run) {
+        return String.valueOf(
+                send("GET", "/api/v1/runs/" + run.get("id"), null, 200).get("status"));
+    }
+
     @Test
     void requirementsFollowTheirRuns() {
         Map<String, Object> created = send(
@@ -166,15 +171,26 @@ class WorkIntegrationTest {
                 .until(() -> "blocked".equals(requirement(number).get("status")));
         assertThat(String.valueOf(requirement(number).get("runIds"))).isEqualTo("[" + run.get("id") + "]");
 
+        // the same SOP runs again only as an explicit rerun
+        send("POST", "/api/v1/projects/work/requirements/" + number + "/runs", Map.of(), 409);
+        Map<String, Object> rerun = send(
+                "POST",
+                "/api/v1/projects/work/requirements/" + number + "/runs",
+                Map.of("workflowId", "broken", "rerun", true),
+                201);
+        await().atMost(Duration.ofSeconds(30)).until(() -> requirementRun(rerun).equals("failed"));
+        // another SOP is another lane; the failed lane still needs attention
         Map<String, Object> retry = send(
                 "POST",
                 "/api/v1/projects/work/requirements/" + number + "/runs",
                 Map.of("workflowId", "echo", "input", "请重试"),
                 201);
-        await().atMost(Duration.ofSeconds(30))
-                .until(() -> "in_review".equals(requirement(number).get("status")));
-        assertThat(requirement(number)).containsEntry("latestRunId", retry.get("id"));
+        await().atMost(Duration.ofSeconds(30)).until(() -> requirementRun(retry).equals("succeeded"));
+        assertThat(requirement(number))
+                .containsEntry("latestRunId", retry.get("id"))
+                .containsEntry("status", "blocked");
         assertThat(String.valueOf(retry.get("input"))).contains("## 补充说明", "请重试");
+        send("POST", "/api/v1/projects/work/requirements/" + number + "/runs", Map.of("workflowId", "echo"), 409);
 
         send("PUT", "/api/v1/projects/work/requirements/" + number, Map.of("title", "登录超时", "status", "closed"), 200);
         send("POST", "/api/v1/projects/work/requirements/" + number + "/runs", Map.of("workflowId", "echo"), 409);

@@ -2,6 +2,7 @@ package io.github.loopforge4j.server.work;
 
 import io.github.loopforge4j.server.persistence.SqlTime;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -53,7 +54,9 @@ public class RequirementStore {
                             draft.external(),
                             draft.createdBy(),
                             now,
-                            now);
+                            now,
+                            draft.playbookId(),
+                            draft.sopBindings());
                     jdbc.sql(
                                     "INSERT INTO requirements (id, project_id, number, status, latest_run_id, external_key, payload,"
                                             + " created_at, updated_at) VALUES (:id, :p, :n, :s, NULL, :key, :payload, :now, :now)")
@@ -150,7 +153,9 @@ public class RequirementStore {
                     changed.external(),
                     changed.createdBy(),
                     changed.createdAt(),
-                    clock.instant());
+                    clock.instant(),
+                    changed.playbookId(),
+                    changed.sopBindings());
             jdbc.sql(
                             "UPDATE requirements SET status = :s, latest_run_id = :run, external_key = :key, payload = :payload,"
                                     + " updated_at = :now WHERE id = :id")
@@ -174,5 +179,70 @@ public class RequirementStore {
                         .param("id", id)
                         .update()
                 > 0;
+    }
+
+    /** A run of a requirement and the SOP lane it ran. */
+    public record LinkedRun(String runId, String workflowId, Instant createdAt) {}
+
+    public void linkRun(String requirementId, String runId, String workflowId) {
+        jdbc.sql("INSERT INTO requirement_runs (run_id, requirement_id, workflow_id, created_at)"
+                        + " VALUES (:run, :req, :wf, :now)")
+                .param("run", runId)
+                .param("req", requirementId)
+                .param("wf", workflowId)
+                .param("now", io.github.loopforge4j.server.persistence.SqlTime.of(clock.instant()))
+                .update();
+    }
+
+    /** The requirement's linked runs, oldest first. */
+    public List<LinkedRun> linkedRuns(String requirementId) {
+        return jdbc.sql("SELECT run_id, workflow_id, created_at FROM requirement_runs WHERE requirement_id = :req"
+                        + " ORDER BY created_at, run_id")
+                .param("req", requirementId)
+                .query((rs, i) -> new LinkedRun(
+                        rs.getString("run_id"),
+                        rs.getString("workflow_id"),
+                        io.github.loopforge4j.server.persistence.SqlTime.read(rs, "created_at")))
+                .list();
+    }
+
+    /** The requirement a run belongs to: linked, or (before lanes) as its latest run. */
+    public Optional<Requirement> byRun(String runId) {
+        Optional<Requirement> linked = jdbc.sql("SELECT r.payload FROM requirements r JOIN requirement_runs l"
+                        + " ON l.requirement_id = r.id WHERE l.run_id = :run")
+                .param("run", runId)
+                .query((rs, i) -> JsonRows.read(rs.getString("payload"), Requirement.class))
+                .optional();
+        return linked.isPresent() ? linked : byLatestRun(runId);
+    }
+
+    /**
+     * Reserves the {@code generation}-th start of a lane.
+     *
+     * @return false when someone else reserved it first
+     */
+    public boolean reserveLane(String requirementId, String workflowId, int generation) {
+        try {
+            jdbc.sql("INSERT INTO requirement_lane_starts (requirement_id, workflow_id, generation, created_at)"
+                            + " VALUES (:req, :wf, :gen, :now)")
+                    .param("req", requirementId)
+                    .param("wf", workflowId)
+                    .param("gen", generation)
+                    .param("now", io.github.loopforge4j.server.persistence.SqlTime.of(clock.instant()))
+                    .update();
+            return true;
+        } catch (DuplicateKeyException e) {
+            return false;
+        }
+    }
+
+    /** Frees a reservation whose run could not be started. */
+    public void releaseLane(String requirementId, String workflowId, int generation) {
+        jdbc.sql("DELETE FROM requirement_lane_starts WHERE requirement_id = :req AND workflow_id = :wf"
+                        + " AND generation = :gen")
+                .param("req", requirementId)
+                .param("wf", workflowId)
+                .param("gen", generation)
+                .update();
     }
 }

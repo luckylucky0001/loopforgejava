@@ -33,7 +33,8 @@
 | `internal/engine/run_recovery.go`（租约、接管、工作区主机绑定）、`internal/repo/run_admission.go`（租约 SQL） | `core.engine.LeaseKeeper`、`RunEngine.claimOrphanedRuns`、`server.persistence.JdbcInstanceRegistry` | 已移植（排队准入/桶限流未移植） |
 | `internal/observability`（遥测批量）、分析统计 | `core.engine.TelemetryBuffer`、`server.ops.RunMetrics` | 指标以 Micrometer 暴露 |
 | `internal/domain/user.go`、`project.go`、`internal/httpapi` 账户/项目部分 | `server.account` | 密码账户 + Token；未移植 OAuth/企业身份、个人凭据库 |
-| `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*`、`ExternalRef` | 平台需求与外部来源；未移植多泳道 |
+| `internal/domain/issue.go`、`requirement.go`、`work_branch.go` | `server.work.Requirement*`、`ExternalRef` | 平台需求与外部来源 |
+| `internal/domain/issue_sop.go`、`sop_lane.go`、`internal/repo/requirement.go`（快照）、`internal/httpapi/dispatch.go`（泳道派发与交接） | `server.work.SopBinding`、`SopPlaybook`、`RequirementSnapshot`、`RequirementService`、`PlaybookController`、`core.domain.SopLanes` | 需求 SOP 链与项目套餐、按泳道派发（重跑需显式指定、交接说明）、泳道快照（节点阶段、子 SOP、用量、整体状态与生命周期）、泳道标签与推断 |
 | `internal/repo/revisions*`、`internal/httpapi`（revisions / publish / clone / logs / schedule-job-executions） | `server.persistence.DefinitionRevision*`、`RevisionSummary`、`web.WorkflowController`、`RunController`、`work.ScheduleExecution*` | SOP 与角色历史版本（保留 100 个、作者、变化摘要）与恢复、发布与复制、运行日志分页与下载、删除已结束运行、定时任务执行记录（保留 200 条） |
 | `internal/repo` 个人配置（执行器凭据、Git 连接）、`internal/runtime/agent_cli.go`（凭据映射） | `server.account.PersonalCredentials*`、`CredentialCipher`、`core.runtime.executor.PersonalCredentialVariables` | 个人模型凭据与 Git Token：加密保存、按负责人（运行发起人、定时任务创建人、发言人、澄清发起人）解析，执行器凭据整体替代平台凭据 |
 | `internal/httpapi/assistant_schedule.go`、`assistant_tasks.go`、调度触发配置 | `server.work.ScheduleService`（`kind` = `assistant` / `dispatch`）、`AssistantService.runScheduled` | AI 定时任务（以最后保存人的身份与凭据、完全权限运行一轮助手对话）与按状态自动派发需求的 SOP |
@@ -95,8 +96,9 @@
 | SkillHub 安装范围 | 安装到项目 | 安装为全局技能（管理员） | 本项目的技能目录是全局的，由管理员维护 |
 | 运行日志 | Worker 的 stdout / stderr 日志表 | 运行事件即日志；脚本 stdout 与 stderr 合并后逐行写入 `output` 事件（每次最多 2,000 行） | 事件已有游标、保留策略与实时流，不需要第二张日志表 |
 | 澄清结果提交 | Agent 调用 `submit_clarification` MCP 工具 | 回复末尾的 JSON 代码块，无效时在同一会话里重试一次 | 不需要为每轮签发 MCP 凭据；校验规则（问题非空、选择题至少两个不同选项、结论必须有 summary）与上游一致 |
+| 泳道负责人 | 派发时以泳道负责人作为运行责任人（用其个人凭据） | 负责人只做展示，运行始终以发起人（或定时任务的执行身份）运行 | 避免开发者把别人设为负责人，借用其个人模型与 Git 凭据 |
 | 澄清读取外部原单 | 通过 TAPD / 工蜂 MCP 读原单与评论 | 提示词附原单链接，由 Agent 用自己的工具读取 | 本项目的外部同步不提供读原单的 MCP 服务 |
 
 ## 尚未移植
 
-对话的群协作与浏览器工具、对话内自动登记 PR、需求多泳道、云端执行池的自动扩缩容、浏览器 MCP、macOS seatbelt 沙箱、企业微信智能机器人长连接与 AI 运行报告、业务域报表、预览构建。排期见 [roadmap.md](roadmap.md)。
+对话的群协作与浏览器工具、对话内自动登记 PR、云端执行池的自动扩缩容、浏览器 MCP、macOS seatbelt 沙箱、企业微信智能机器人长连接与 AI 运行报告、业务域报表、预览截图。排期见 [roadmap.md](roadmap.md)。

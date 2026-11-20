@@ -442,7 +442,9 @@ class TrackerIntegrationTest {
                                 r.external(),
                                 r.createdBy(),
                                 r.createdAt(),
-                                r.updatedAt()))
+                                r.updatedAt(),
+                                r.playbookId(),
+                                r.sopBindings()))
                 .orElseThrow();
         trackerService.deliveriesChanged(delivered);
         await().atMost(Duration.ofSeconds(10)).until(() -> comments.stream().anyMatch(c -> c.contains("pull/7")));

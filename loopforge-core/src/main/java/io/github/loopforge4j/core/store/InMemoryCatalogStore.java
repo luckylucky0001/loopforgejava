@@ -60,7 +60,8 @@ public final class InMemoryCatalogStore implements CatalogStore {
                             definition.edges(),
                             previous.createdAt(),
                             definition.updatedAt(),
-                            definition.preview());
+                            definition.preview(),
+                            definition.sopLane());
             return base.nextRevision(clock.instant());
         });
     }

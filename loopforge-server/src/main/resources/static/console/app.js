@@ -231,7 +231,7 @@ const ROUTES = [
   [/^#\/repositories\/new$/, () => definitionPage('repositories', null)],
   [/^#\/repositories\/([^/]+)$/, (id) => definitionPage('repositories', id)],
   [/^#\/repositories$/, () => listPage('repositories', '代码仓库', ['id', 'name', 'provider', 'cloneUrl', 'projectId'])],
-  [/^#\/projects\/([^/]+)\/requirements\/(\d+)\/clarify$/, clarifyPage], [/^#\/projects\/([^/]+)$/, projectPage], [/^#\/projects$/, projectsPage],
+  [/^#\/projects\/([^/]+)\/requirements\/(\d+)\/clarify$/, clarifyPage], [/^#\/projects\/([^/]+)\/requirements\/(\d+)$/, requirementPage], [/^#\/projects\/([^/]+)$/, projectPage], [/^#\/projects$/, projectsPage],
   [/^#\/executors$/, executorsPage], [/^#\/settings$/, settingsPage], [/^#\/users$/, usersPage],
   [/^#\/analytics$/, analyticsPage], [/^#\/knowledge$/, knowledgePage], [/^#\/runners$/, runnersPage],
   [/^#\/chat\/([^/]+)$/, chatPage], [/^#\/chat$/, () => chatPage(null)],
@@ -704,6 +704,7 @@ function designer(wf, catalog, onChange) {
         ...(['local', 'docker', 'bwrap'].includes(wf.sandboxProfileId || 'local') || (catalog.sandboxes || []).some((p) => p.id === wf.sandboxProfileId) ? [] : [[wf.sandboxProfileId, wf.sandboxProfileId]])],
       (v) => { wf.sandboxProfileId = v || undefined; })),
       field('描述', bind(h('textarea', { rows: 3 }, wf.description || ''), (v) => { wf.description = v || undefined; })),
+      field('泳道标签', select(wf.sopLane || '', [['', '自动推断'], ...Object.entries(SOP_LANES)], (v) => { wf.sopLane = v || undefined; })),
       previewContractFields(),
       h('p', { class: 'muted' }, '拖动节点调整位置；从节点右侧的圆点拖到另一个节点即可连线；点选节点或连线后在这里编辑，Delete 键删除。'));
   }
@@ -1012,7 +1013,7 @@ async function projectPage(projectId) {
     h('h1', {}, project.name), h('p', { class: 'muted' }, project.description || ''),
     h('div', { class: 'row' }, h('h2', {}, '需求'), h('span', { class: 'spacer' }), h('button', { class: 'primary', onclick: newRequirement }, '新需求')),
     h('table', {}, h('tr', {}, ['#', '标题', '状态', '优先级', 'SOP', '最近运行', '操作'].map((t) => h('th', {}, t))),
-      requirements.map((r) => h('tr', {}, h('td', {}, r.number), h('td', {}, r.title,
+      requirements.map((r) => h('tr', {}, h('td', {}, r.number), h('td', {}, h('a', { href: `#/projects/${encodeURIComponent(projectId)}/requirements/${r.number}` }, r.title),
         r.external ? h('div', { class: 'muted' }, h('a', { href: safeHref(r.external.url), target: '_blank', rel: 'noopener noreferrer' },
           `${r.external.source} ${r.external.kind}${r.external.number ? ' #' + r.external.number : ' ' + r.external.externalId}`), ` · ${r.external.state || ''}`) : null),
         h('td', {}, badge(r.status)), h('td', {}, r.priority),
@@ -1020,6 +1021,7 @@ async function projectPage(projectId) {
         h('td', {}, h('div', { class: 'row' }, h('a', { class: 'btn', href: `#/projects/${encodeURIComponent(projectId)}/requirements/${r.number}/clarify` }, '澄清'),
           h('button', { onclick: () => startRequirement(r), disabled: ['closed', 'cancelled', 'done'].includes(r.status) }, '启动'),
           r.external ? null : h('button', { onclick: () => pushRequirement(r) }, '推送')))))),
+    playbooksSection(projectId, workflows.filter((w) => w.status === 'published'), refresh),
     h('div', { class: 'row' }, h('h2', {}, '外部需求同步'), h('span', { class: 'spacer' }),
       h('button', { onclick: importTapd }, '导入 TAPD 链接'), h('button', { onclick: syncNow }, '立即同步'), h('button', { onclick: editTracker }, '设置')),
     h('p', { class: 'muted' }, tracker && (tracker.issueRepositoryIds.length || tracker.tapdWorkspaceId)
@@ -1605,6 +1607,103 @@ function analystEntry(content) {
     (result.questions || []).length ? h('ol', {}, result.questions.map((q) => h('li', {}, q.question,
       (q.options || []).length ? h('span', { class: 'muted' }, `（${q.options.join(' / ')}）`) : null))) : null,
     result.ready ? h('div', { class: 'notice' }, '分析师给出了结论') : null);
+}
+
+// ------------------------------------------------------------------ requirement lanes
+
+const LANE_STATUS = { not_started: '未开始', active: '进行中', waiting: '等待处理', attention: '需关注', succeeded: '已完成', closed: '已关闭' };
+const LANE_BADGE = { not_started: 'pending', active: 'running', waiting: 'waiting', attention: 'failed', succeeded: 'succeeded', closed: 'cancelled' };
+const SOP_LANES = { product: '产品', frontend: '前端', backend: '后端', design: '设计', repair: '修复', other: '其他' };
+
+function chainEditor(bindings, workflows, onChange) {
+  const rows = bindings.map((b) => ({ ...b, dependsOn: [...(b.dependsOn || [])], handoff: [...(b.handoff || [])] }));
+  const box = h('div', {});
+  const emit = () => onChange(rows.map((r, i) => ({ id: r.id || undefined, workflowId: r.workflowId, order: i + 1, assignee: r.assignee || undefined,
+    dependsOn: r.dependsOn.filter(Boolean), handoff: r.handoff.filter(Boolean) })));
+  const render = () => {
+    box.replaceChildren(...rows.map((r, i) => {
+      const wf = h('select', {}, workflows.map((w) => h('option', { value: w.id, selected: w.id === r.workflowId }, `${w.name}（${w.id}）`)));
+      wf.addEventListener('change', () => { r.workflowId = wf.value; r.id = undefined; emit(); });
+      const who = h('input', { value: r.assignee || '', placeholder: '负责人' });
+      who.addEventListener('change', () => { r.assignee = who.value.trim(); emit(); });
+      const deps = h('input', { value: r.dependsOn.join(','), placeholder: '依赖步骤 id（逗号分隔，默认上一步）' });
+      deps.addEventListener('change', () => { r.dependsOn = deps.value.split(',').map((x) => x.trim()); emit(); });
+      const hand = h('input', { value: r.handoff.join(','), placeholder: '交接产物（逗号分隔，如 prd.md）' });
+      hand.addEventListener('change', () => { r.handoff = hand.value.split(',').map((x) => x.trim()); emit(); });
+      return h('div', { class: 'row mb' }, h('span', { class: 'mono' }, `${i + 1}. ${r.id || 'sop-' + r.workflowId}`), wf, who, deps, hand,
+        h('button', { disabled: i === 0, onclick: () => { [rows[i - 1], rows[i]] = [rows[i], rows[i - 1]]; emit(); render(); } }, '↑'),
+        h('button', { class: 'danger', onclick: () => { rows.splice(i, 1); emit(); render(); } }, '移除'));
+    }), h('button', { disabled: workflows.length === 0, onclick: () => { rows.push({ workflowId: workflows[0].id, dependsOn: [], handoff: [] }); emit(); render(); } }, '+ SOP 步骤'));
+  };
+  render();
+  return box;
+}
+
+function playbooksSection(projectId, workflows, refresh) {
+  const panel = h('div', {}, h('div', { class: 'row' }, h('h2', {}, '流程套餐')));
+  api(`/projects/${projectId}/playbooks`).then((books) => {
+    const edit = () => {
+      let draft = books.map((b) => ({ ...b }));
+      const body = h('div', {});
+      const render = () => body.replaceChildren(...draft.map((b, i) => {
+        const name = h('input', { value: b.name || '' });
+        name.addEventListener('change', () => { b.name = name.value; });
+        const def = h('input', { type: 'radio', name: 'default-book', checked: !!b.default });
+        def.addEventListener('change', () => { draft.forEach((x) => { x.default = x === b; }); });
+        return h('div', { class: 'panel' }, h('div', { class: 'row' }, name, h('label', { class: 'row' }, def, '默认'), h('span', { class: 'spacer' }),
+          h('button', { class: 'danger', onclick: () => { draft.splice(i, 1); render(); } }, '删除套餐')),
+        chainEditor(b.bindings || [], workflows, (next) => { b.bindings = next; }));
+      }), h('button', { onclick: () => { draft.push({ name: '新套餐', default: draft.length === 0, bindings: [] }); render(); } }, '+ 套餐'));
+      render();
+      modal('流程套餐', h('div', {}, h('p', { class: 'muted' }, '新需求默认使用「默认」套餐的 SOP 链；每条 SOP 是需求的一条泳道，可以并行，后面的步骤会在输入里收到前序步骤与预期产物。'), body),
+        (dialog) => h('button', { class: 'primary', onclick: () => attempt(() => api(`/projects/${projectId}/playbooks`, { method: 'PUT', body: draft }), () => { dialog.close(); refresh(); }) }, '保存'));
+    };
+    panel.replaceChildren(h('div', { class: 'row' }, h('h2', {}, '流程套餐'), h('span', { class: 'spacer' }), h('button', { onclick: edit }, '编辑')),
+      books.length === 0 ? h('p', { class: 'muted' }, '还没有套餐：新需求只用自己选的 SOP。') : h('table', {}, h('tr', {}, ['套餐', 'SOP 链'].map((t) => h('th', {}, t))),
+        books.map((b) => h('tr', {}, h('td', {}, b.name, b.default ? h('span', { class: 'muted' }, '（默认）') : null),
+          h('td', { class: 'mono' }, (b.bindings || []).map((x) => x.workflowId).join(' → '))))));
+  }).catch(() => panel.replaceChildren());
+  return panel;
+}
+
+async function requirementPage(projectId, number) {
+  const base = `/projects/${encodeURIComponent(projectId)}/requirements/${number}`;
+  const [snap, sops, workflows] = await Promise.all([api(`${base}/snapshot`), api(`${base}/sops`), api('/workflows').catch(() => [])]);
+  const refresh = () => requirementPage(projectId, number);
+  const r = snap.requirement;
+  const o = snap.overall;
+  const published = workflows.filter((w) => w.status === 'published' && (!w.projectId || w.projectId === projectId));
+  const start = (lane, rerun) => prompted(`${rerun ? '重新运行' : '运行'} · ${lane.label}`, [{ name: 'input', label: '补充说明', type: 'textarea', rows: 3 }],
+    (v) => api(`${base}/runs`, { method: 'POST', body: { workflowId: lane.workflowId, input: v.input || undefined, rerun } }).then((run) => { location.hash = `#/runs/${run.id}`; return run; }));
+  const stages = (list) => h('div', { class: 'row' }, (list || []).map((st) => h('span', { class: `chip st-${st.status}` }, `${st.name}${st.durationMs ? ' · ' + Math.round(st.durationMs / 1000) + 's' : ''}`,
+    st.children ? h('span', { class: 'muted' }, ` [${st.children.map((c) => c.name).join(' / ')}]`) : null)));
+  const laneCard = (l) => h('div', { class: 'panel' },
+    h('div', { class: 'row' }, h('strong', {}, l.label), h('span', { class: 'chip' }, SOP_LANES[l.lane] || l.lane), badge(LANE_BADGE[l.status] || 'pending', LANE_STATUS[l.status] || l.status),
+      l.orphan ? h('span', { class: 'muted' }, '（不在 SOP 链中）') : null, h('span', { class: 'spacer' }),
+      l.latestRunId ? h('a', { class: 'btn', href: `#/runs/${l.latestRunId}` }, '最近运行') : null,
+      !l.started ? h('button', { class: 'primary', onclick: () => start(l, false) }, '运行')
+        : ['active', 'waiting'].includes(l.status) ? null : h('button', { onclick: () => start(l, true) }, '重新运行')),
+    h('p', { class: 'muted' }, [l.order ? `第 ${l.order} 步` : null, l.assignee ? `负责人 ${l.assignee}` : null, (l.dependsOn || []).length ? `依赖 ${l.dependsOn.join('、')}` : null,
+      (l.handoff || []).length ? `交接 ${l.handoff.join('、')}` : null, l.started ? `${l.runCount} 次运行${l.failedRuns ? `（失败 ${l.failedRuns}）` : ''} · ${l.tokens} tokens` : null].filter(Boolean).join(' · ')),
+    stages(l.stages));
+  let chain = sops.bindings || [];
+  const playbook = h('select', {}, [h('option', { value: '' }, '—'), ...sops.playbooks.map((b) => h('option', { value: b.id, selected: b.id === sops.playbookId }, b.name))]);
+  shell([
+    h('div', { class: 'row' }, h('h1', {}, `#${r.number} ${r.title}`), badge(r.status), h('span', { class: 'spacer' }),
+      h('a', { class: 'btn', href: `#/projects/${encodeURIComponent(projectId)}/requirements/${number}/clarify` }, '澄清'),
+      h('a', { class: 'btn', href: `#/projects/${encodeURIComponent(projectId)}` }, '返回项目')),
+    r.description ? h('details', { class: 'panel' }, h('summary', {}, '描述'), h('pre', {}, r.description)) : null,
+    h('p', { class: 'muted' }, `整体 ${LANE_STATUS[o.status] || o.status} · ${o.runCount} 次运行 · 完成 ${o.succeededLanes} 条泳道 · 进行中 ${o.activeLanes} · ${o.tokens} tokens${o.cycleDurationMs ? ' · 周期 ' + Math.round(o.cycleDurationMs / 60000) + ' 分钟' : ''}`),
+    (snap.stages || []).length ? h('div', { class: 'panel' }, h('h2', {}, '阶段'), stages(snap.stages.map((st) => ({ name: st.label, status: st.status })))) : null,
+    h('h2', {}, 'SOP 泳道'),
+    snap.lanes.length === 0 ? h('p', { class: 'muted' }, '还没有绑定 SOP：在下方选择套餐或添加 SOP 步骤。') : null,
+    ...snap.lanes.map(laneCard),
+    h('div', { class: 'panel' }, h('h2', {}, 'SOP 链'),
+      h('div', { class: 'row mb' }, h('span', {}, '套餐'), playbook,
+        h('button', { onclick: () => attempt(() => api(`${base}/sops`, { method: 'PUT', body: { playbookId: playbook.value } }), refresh), disabled: sops.playbooks.length === 0 }, '应用套餐')),
+      chainEditor(chain, published, (next) => { chain = next; }),
+      h('div', { class: 'row' }, h('span', { class: 'spacer' }), h('button', { class: 'primary', onclick: () => attempt(() => api(`${base}/sops`, { method: 'PUT', body: { bindings: chain } }), refresh) }, '保存 SOP 链'))),
+  ]);
 }
 
 async function clarifyPage(projectId, number) {

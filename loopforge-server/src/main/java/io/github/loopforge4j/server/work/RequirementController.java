@@ -46,7 +46,37 @@ class RequirementController {
 
     record StartRequest(
             @Size(max = 200) String workflowId,
-            @Size(max = 8_000) String input) {}
+            @Size(max = 8_000) String input,
+            Boolean rerun) {}
+
+    /** A playbook to apply and/or an explicit SOP chain. */
+    record SopsRequest(@Size(max = 100) String playbookId, List<SopBinding> bindings) {}
+
+    @Operation(summary = "The requirement's SOP lanes with node stages, usage and overall status")
+    @GetMapping("/{number}/snapshot")
+    RequirementSnapshot snapshot(@PathVariable String projectId, @PathVariable int number, Principal principal) {
+        access.requireProject(principal, projectId, ProjectRole.VIEWER);
+        return requirements.snapshot(projectId, number);
+    }
+
+    @Operation(summary = "The requirement's SOP chain, its playbook and the project's playbooks")
+    @GetMapping("/{number}/sops")
+    java.util.Map<String, Object> sops(@PathVariable String projectId, @PathVariable int number, Principal principal) {
+        access.requireProject(principal, projectId, ProjectRole.VIEWER);
+        return requirements.sops(projectId, number);
+    }
+
+    @Operation(
+            summary = "Apply a playbook and/or set the requirement's SOP chain (order, owner, dependencies, handoff)")
+    @PutMapping("/{number}/sops")
+    Requirement setSops(
+            @PathVariable String projectId,
+            @PathVariable int number,
+            @Valid @RequestBody SopsRequest body,
+            Principal principal) {
+        access.requireProject(principal, projectId, ProjectRole.DEVELOPER);
+        return requirements.setSops(projectId, number, body.playbookId(), body.bindings());
+    }
 
     @GetMapping
     List<Requirement> list(
@@ -90,7 +120,9 @@ class RequirementController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "Start an SOP for the requirement on its repositories (work branch feature/requirement-N-…)")
+    @Operation(
+            summary = "Start one SOP lane of the requirement on its repositories (work branch feature/requirement-N-…);"
+                    + " a lane that already ran needs rerun=true")
     @PostMapping("/{number}/runs")
     ResponseEntity<Run> start(
             @PathVariable String projectId,
@@ -108,7 +140,8 @@ class RequirementController {
                 number,
                 body == null ? null : body.workflowId(),
                 body == null ? null : body.input(),
-                access.current(principal).username());
+                access.current(principal).username(),
+                body != null && Boolean.TRUE.equals(body.rerun()));
         return ResponseEntity.status(HttpStatus.CREATED).body(run);
     }
 }

@@ -24,7 +24,8 @@ public record WorkflowDefinition(
         List<WorkflowEdge> edges,
         Instant createdAt,
         Instant updatedAt,
-        PreviewContract preview) {
+        PreviewContract preview,
+        String sopLane) {
 
     public static final String DEFAULT_SANDBOX_PROFILE = "local";
 
@@ -40,6 +41,8 @@ public record WorkflowDefinition(
         edges = edges == null ? List.of() : List.copyOf(edges);
         // a disabled contract is the same as none
         preview = preview == null || !preview.enabled() ? null : preview;
+        // the role-chain tag is controlled: unknown values are stored as the normalized lane
+        sopLane = sopLane == null || sopLane.isBlank() ? null : SopLanes.normalize(sopLane);
     }
 
     /** A copy with other nodes and edges (the preview build step is attached or removed this way). */
@@ -59,7 +62,8 @@ public record WorkflowDefinition(
                 newEdges,
                 createdAt,
                 updatedAt,
-                preview);
+                preview,
+                sopLane);
     }
 
     public Optional<WorkflowNode> node(String nodeId) {
@@ -87,7 +91,8 @@ public record WorkflowDefinition(
                 edges,
                 createdAt == null ? now : createdAt,
                 now,
-                preview);
+                preview,
+                sopLane);
     }
 
     public static Builder builder(String id) {
@@ -102,6 +107,7 @@ public record WorkflowDefinition(
         private WorkflowStatus status = WorkflowStatus.PUBLISHED;
         private String sandboxProfileId;
         private PreviewContract preview;
+        private String sopLane;
         private final List<WorkflowNode> nodes = new ArrayList<>();
         private final List<WorkflowEdge> edges = new ArrayList<>();
 
@@ -126,6 +132,11 @@ public record WorkflowDefinition(
 
         public Builder sandbox(String value) {
             this.sandboxProfileId = value;
+            return this;
+        }
+
+        public Builder sopLane(String value) {
+            this.sopLane = value;
             return this;
         }
 
@@ -168,7 +179,8 @@ public record WorkflowDefinition(
                     edges,
                     null,
                     null,
-                    preview);
+                    preview,
+                    sopLane);
         }
     }
 }

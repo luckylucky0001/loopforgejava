@@ -182,7 +182,8 @@ class WorkflowController {
                 w.edges(),
                 null,
                 null,
-                w.preview());
+                w.preview(),
+                w.sopLane());
     }
 
     @Operation(summary = "Validate a workflow without saving it")
@@ -232,6 +233,7 @@ class WorkflowController {
                 body.edges(),
                 body.createdAt(),
                 body.updatedAt(),
-                body.preview());
+                body.preview(),
+                body.sopLane());
     }
 }

@@ -119,6 +119,16 @@ loopforge:
 
 已结束的运行页面有「质量评测」：AI 根据这次运行的事实（每个节点的尝试、返工、耗时、Token、重复失败的工具、反复出现的错误、A→B→A 打回）按控制流、耗时、工具、Token、错误恢复、交付六个加权维度打分（准入线 70），列出发现，并给出受限的改进建议：调整节点的尝试 / 返工 / 失败策略 / 超时，给角色加或删门禁，给角色提示词追加一段话。建议只应用到当前的 SOP 或角色（不改这次运行），改 SOP 需要项目维护者、改角色需要管理员，每次修改都留有历史版本。评测使用发起人的凭据。
 
+### 需求多泳道
+
+需求可以绑定一条 SOP 链（上游 SOP bindings）：每一步是一条泳道，有顺序、负责人、依赖的前序步骤和预期的交接产物。项目页「流程套餐」可以定义多个命名的 SOP 链（如「完整需求」「仅后端」），新需求自动使用默认套餐；需求页可以换套餐或单独编辑自己的链。SOP 可标注泳道标签（产品 / 前端 / 后端 / 设计 / 修复 / 其他，不标时按名称推断）。
+
+- 每条泳道单独启动，不同泳道可以并行；同一条 SOP 再跑一次需要选择「重新运行」；
+- 后续步骤的运行输入会写明它接续的前序 SOP 与预期产物，要求在其交付物上继续；
+- 需求页显示每条泳道的状态（未开始 / 进行中 / 等待处理 / 需关注 / 已完成）、节点阶段（含子 SOP）、运行次数、Token 与整体进度；不在链里的 SOP 运行显示为单独的泳道；
+- 需求状态取各泳道最近一次运行：有进行中的就是进行中，有失败的就是受阻，全部完成后按 PR 判断待评审或已完成；
+- 自动派发只处理还没跑过 SOP 的需求，后续泳道由人决定。
+
 ### 定时任务
 
 项目页「定时任务」有三种类型，都按 cron（可指定时区）触发，也可「立即运行」，每次触发都记入执行记录：
@@ -314,7 +324,8 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET/POST/DELETE` | `/api/v1/me`、`/me/tokens`、`/me/password`；`/api/v1/users` | 当前账户与个人 Token；账户管理（管理员） |
 | `GET/PUT/DELETE` | `/api/v1/me/credentials[/{kind}\|/kinds]` | 个人凭据：`executor:<kind>`（apiKey、baseUrl、variables）与 `git:<host>`（token、username）；从不返回密钥 |
 | `GET/PUT/DELETE` | `/api/v1/projects/{id}`、`/members/{user}` | 项目与成员 |
-| `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs]]` | 需求与启动需求运行 |
+| `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/requirements[/{n}[/runs\|/snapshot\|/sops]]` | 需求、启动泳道（`workflowId`、`rerun`）、泳道快照、SOP 链与套餐 |
+| `GET/PUT` | `/api/v1/projects/{id}/playbooks` | 项目的流程套餐（写入需要维护者） |
 | `GET/POST/PUT/DELETE` | `/api/v1/projects/{id}/schedules[/{sid}[/run\|/executions]]` | 定时任务（`kind`：`sop` / `assistant` / `dispatch`）与执行记录（结果、启动的运行、AI 回复与对话） |
 | `GET/POST/PUT/DELETE` | `/api/v1/notifications[/{id}]` | Webhook 通知 |
 | `GET` / `POST` | `/api/v1/runs/{id}/deliveries` / `/deliveries/refresh` | 运行交付的 PR 与合并状态 |

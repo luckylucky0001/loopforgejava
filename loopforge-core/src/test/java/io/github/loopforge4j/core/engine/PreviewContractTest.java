@@ -160,6 +160,7 @@ class PreviewContractTest {
                 attached.edges(),
                 null,
                 null,
+                null,
                 null);
         assertThat(PreviewBuild.attach(off).nodes())
                 .extracting(WorkflowNode::id)

@@ -155,3 +155,10 @@ meter { width: 160px; }
 /* skills market */
 .market { max-height: 55vh; overflow: auto; margin-top: 10px; display: grid; gap: 8px; }
 .market-item { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); }
+/* requirement lanes */
+.chip { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); background: var(--panel); }
+.chip.st-succeeded { border-color: var(--ok); color: var(--ok); }
+.chip.st-running { border-color: var(--accent); color: var(--accent); }
+.chip.st-waiting_approval { border-color: var(--warn); color: var(--warn); }
+.chip.st-failed, .chip.st-cancelled { border-color: var(--err); color: var(--err); }
+.chip.st-pending { color: var(--muted, #888); }

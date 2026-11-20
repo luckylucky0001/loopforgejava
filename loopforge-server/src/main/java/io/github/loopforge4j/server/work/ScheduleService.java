@@ -244,7 +244,9 @@ public class ScheduleService {
         }
         List<Requirement> due = requirementStore.list(schedule.projectId(), null).stream()
                 .filter(r -> schedule.dispatchStatuses().contains(r.status()))
-                .filter(r -> !active(r))
+                // a schedule only picks up untouched requirements; another SOP lane is a person's call
+                .filter(r -> r.runIds().isEmpty()
+                        && requirementStore.linkedRuns(r.id()).isEmpty())
                 .sorted(java.util.Comparator.comparingInt((Requirement r) -> PRIORITY.indexOf(r.priority()))
                         .thenComparingInt(Requirement::number))
                 .toList();
@@ -286,17 +288,6 @@ public class ScheduleService {
     }
 
     private static final List<String> PRIORITY = List.of("urgent", "high", "medium", "low");
-
-    private boolean active(Requirement r) {
-        if (r.latestRunId() == null) {
-            return false;
-        }
-        try {
-            return !engine.require(r.latestRunId()).status().terminal();
-        } catch (RunNotFoundException e) {
-            return false;
-        }
-    }
 
     /**
      * Runs the task's prompt as an assistant turn in the project, as the account that last saved it;

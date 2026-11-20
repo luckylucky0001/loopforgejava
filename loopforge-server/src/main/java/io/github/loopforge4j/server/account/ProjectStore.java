@@ -127,4 +127,26 @@ public class ProjectStore {
                 SqlTime.read(rs, "created_at"),
                 SqlTime.read(rs, "updated_at"));
     }
+
+    /** The project's named SOP chains (JSON; empty when none were saved). */
+    public java.util.List<io.github.loopforge4j.server.work.SopPlaybook> playbooks(String projectId) {
+        String raw = jdbc.sql("SELECT sop_playbooks FROM projects WHERE id = :id")
+                .param("id", projectId)
+                .query(String.class)
+                .optional()
+                .orElse(null);
+        if (raw == null || raw.isBlank()) {
+            return java.util.List.of();
+        }
+        return java.util.List.of(
+                io.github.loopforge4j.core.json.Json.read(raw, io.github.loopforge4j.server.work.SopPlaybook[].class));
+    }
+
+    public void savePlaybooks(String projectId, java.util.List<io.github.loopforge4j.server.work.SopPlaybook> books) {
+        jdbc.sql("UPDATE projects SET sop_playbooks = :books, updated_at = :now WHERE id = :id")
+                .param("id", projectId)
+                .param("books", books.isEmpty() ? null : io.github.loopforge4j.core.json.Json.write(books))
+                .param("now", io.github.loopforge4j.server.persistence.SqlTime.of(clock.instant()))
+                .update();
+    }
 }
