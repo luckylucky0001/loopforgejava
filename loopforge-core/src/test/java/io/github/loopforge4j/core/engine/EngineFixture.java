@@ -40,6 +40,20 @@ final class EngineFixture implements AutoCloseable {
 
     EngineFixture(
             Path root, RunStore runs, boolean releaseWorkspace, GitCredentialProvider git, DeliveryProvider delivery) {
+        this(root, runs, releaseWorkspace, git, delivery, io.github.loopforge4j.core.mcp.PlatformMcp.NONE);
+    }
+
+    EngineFixture(Path root, io.github.loopforge4j.core.mcp.PlatformMcp platform) {
+        this(root, new InMemoryRunStore(), true, GitCredentialProvider.NONE, DeliveryProvider.NONE, platform);
+    }
+
+    EngineFixture(
+            Path root,
+            RunStore runs,
+            boolean releaseWorkspace,
+            GitCredentialProvider git,
+            DeliveryProvider delivery,
+            io.github.loopforge4j.core.mcp.PlatformMcp platform) {
         this.root = root;
         this.runs = runs;
         ExecutorRegistry registry = ExecutorRegistry.withBuiltIns(CredentialProvider.NONE)
@@ -53,6 +67,7 @@ final class EngineFixture implements AutoCloseable {
                 .sandbox(new LocalSandboxProvider(options))
                 .gitCredentials(git)
                 .delivery(delivery)
+                .platformMcp(platform)
                 .settings(new EngineSettings(
                         "test", "mock", Duration.ofMinutes(2), Duration.ofMillis(25), releaseWorkspace))
                 .build();

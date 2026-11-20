@@ -60,6 +60,8 @@ class AgentController {
                         body.interventions(),
                         body.artifactOutputs(),
                         body.verification(),
+                        body.platformMcp(),
+                        body.knowledgeBase(),
                         body.updatedAt());
         return catalog.saveAgent(agent);
     }

@@ -92,6 +92,7 @@ public final class RunEngine implements AutoCloseable {
     private final io.github.loopforge4j.core.pricing.TokenPricing pricing;
     private final TelemetryBuffer telemetry;
     private final java.util.function.UnaryOperator<String> mcpSecrets;
+    private final io.github.loopforge4j.core.mcp.PlatformMcp platformMcp;
     private final java.nio.file.Path gateMcpJava;
     private final DeliveryProvider delivery;
     /** Serializes repository checkout per shared workspace (parallel first nodes, parent + child). */
@@ -109,6 +110,8 @@ public final class RunEngine implements AutoCloseable {
         this.nodeRunner = new NodeRunner(this);
         this.gitCredentials = builder.gitCredentials == null ? GitCredentialProvider.NONE : builder.gitCredentials;
         this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
+        this.platformMcp =
+                builder.platformMcp == null ? io.github.loopforge4j.core.mcp.PlatformMcp.NONE : builder.platformMcp;
         this.gateMcpJava = builder.gateMcpJava == null
                 ? io.github.loopforge4j.core.mcp.GateMcpPackage.currentJava()
                 : builder.gateMcpJava;
@@ -1548,6 +1551,10 @@ public final class RunEngine implements AutoCloseable {
         return delivery;
     }
 
+    io.github.loopforge4j.core.mcp.PlatformMcp platformMcp() {
+        return platformMcp;
+    }
+
     java.util.function.UnaryOperator<String> mcpSecrets() {
         return mcpSecrets;
     }
@@ -1779,10 +1786,17 @@ public final class RunEngine implements AutoCloseable {
         private AdmissionPolicy admission;
         private io.github.loopforge4j.core.pricing.TokenPricing pricing;
         private java.util.function.UnaryOperator<String> mcpSecrets;
+        private io.github.loopforge4j.core.mcp.PlatformMcp platformMcp;
         private java.nio.file.Path gateMcpJava;
         private DeliveryProvider delivery;
 
         private Builder() {}
+
+        /** Platform-served MCP servers for roles with {@code platformMcp} / {@code knowledgeBase}. */
+        public Builder platformMcp(io.github.loopforge4j.core.mcp.PlatformMcp value) {
+            this.platformMcp = value;
+            return this;
+        }
 
         /** Resolves {@code ${secret:NAME}} placeholders of MCP server definitions. */
         public Builder mcpSecrets(java.util.function.UnaryOperator<String> value) {

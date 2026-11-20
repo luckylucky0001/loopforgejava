@@ -49,6 +49,19 @@ public record AgentAssets(
         return new AgentAssets(rules, skills, servers);
     }
 
+    /** These assets plus platform-served servers and their usage rules. */
+    public AgentAssets with(List<McpServerDefinition> extraServers, List<RuleDefinition> extraRules) {
+        if (extraServers.isEmpty() && extraRules.isEmpty()) {
+            return this;
+        }
+        List<RuleDefinition> allRules = new ArrayList<>(rules);
+        allRules.addAll(extraRules);
+        allRules.sort(Comparator.comparingInt(RuleDefinition::priority).reversed());
+        List<McpServerDefinition> allServers = new ArrayList<>(mcpServers);
+        allServers.addAll(extraServers);
+        return new AgentAssets(allRules, skills, allServers);
+    }
+
     /** Rule entries of the role that are inline text rather than catalog references. */
     public static List<String> inlineRules(AgentDefinition agent, CatalogStore catalog) {
         return agent.rules().stream()

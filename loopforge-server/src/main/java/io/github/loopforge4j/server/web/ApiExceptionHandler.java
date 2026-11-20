@@ -39,6 +39,11 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(HttpStatus.UNAUTHORIZED, "Unauthorized", e.getMessage());
     }
 
+    @ExceptionHandler(ApiException.class)
+    ProblemDetail api(ApiException e) {
+        return problem(e.status(), e.status().getReasonPhrase(), e.getMessage());
+    }
+
     @ExceptionHandler(RunStateException.class)
     ProblemDetail conflict(RunStateException e) {
         return problem(HttpStatus.CONFLICT, "Operation not allowed in the current state", e.getMessage());

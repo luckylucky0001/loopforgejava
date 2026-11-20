@@ -24,6 +24,7 @@ class SecurityConfiguration {
             HttpSecurity http,
             ApiTokens tokens,
             io.github.loopforge4j.server.account.TokenStore accountTokens,
+            io.github.loopforge4j.server.mcp.RunTokens runTokens,
             LoopForgeProperties properties)
             throws Exception {
         boolean publicDocs = properties.security().publicDocs();
@@ -65,12 +66,18 @@ class SecurityConfiguration {
                                     "/api/v1/auth/login",
                                     "/api/v1/auth/logout")
                             .permitAll();
+                    // agents' knowledge proxy verifies its own run tokens (they are not API credentials)
+                    auth.requestMatchers(
+                                    org.springframework.http.HttpMethod.POST,
+                                    io.github.loopforge4j.server.knowledge.KnowledgeProxyController.PATH)
+                            .permitAll();
                     // the web console is static; every API call it makes needs a token
                     auth.requestMatchers("/", "/index.html", "/console/**", "/favicon.svg")
                             .permitAll();
                     auth.anyRequest().authenticated();
                 })
-                .addFilterBefore(new ApiTokenFilter(tokens, accountTokens), AnonymousAuthenticationFilter.class)
+                .addFilterBefore(
+                        new ApiTokenFilter(tokens, accountTokens, runTokens), AnonymousAuthenticationFilter.class)
                 .addFilterBefore(
                         new RequestSizeLimitFilter(
                                 properties.security().maxRequestSize().toBytes()),

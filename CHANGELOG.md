@@ -22,6 +22,13 @@
 
 - 迭代 6 — 对齐补充：GitLab / 工蜂 MR 交付（`loopforge.gitlab[]`，仓库 `provider: gitlab`）；运行准入（`loopforge.engine.max-active-runs`、`max-active-runs-per-project`，超出排队）；成本估算（上游价格表，`loopforge.pricing[]` 覆盖）。
 
+### Added (迭代 7，进行中)
+- 平台 MCP：`/mcp`（无状态 Streamable HTTP）把公开 API 作为工具提供，按调用者本人的权限执行；`/api/v1/capabilities` 操作清单；JDK-only 的 stdio 桥 `PlatformMcpBridge`。
+- 角色开关 `platformMcp` / `knowledgeBase`：每次调用签发只在运行期间有效、只读、限定本项目的运行令牌（`lfr1.`）；无法注入时只告警不失败。
+- 团队知识库：接入配置（Token 只写不读）、按项目授权来源的检索/阅读、Agent 只读代理 MCP、`knowledge.md` 沉淀候选与审核写回队列、调用记录。
+- 分析：`/api/v1/analytics`（概览、趋势、按 SOP/项目/执行器/模型拆分、失败聚类、周×小时热力）与 `/api/v1/workflow-metrics`。
+- 待完成：服务端端到端测试、控制台页面、文档。
+
 ### Fixed (迭代 2–5 独立审查)
 - Agent 在工作区预置符号链接时，引擎清理过期 Skills/Hooks、写提示词与脚本、物化输入产物、读取/清理门禁结果、写凭据助手会跟随链接读写或删除宿主机文件；现在统一经过拒绝符号链接的 `ManagedFiles`。
 - 运行可以使用其他项目的 SOP 和代码仓库（借服务端凭据推送别人的仓库）；现在只能使用全局或本项目的定义。

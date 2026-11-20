@@ -121,10 +121,11 @@ public final class WorkflowValidator {
         agent.rules().forEach(r -> checkLength(who + " rule", r, MAX_TEXT, problems));
         agent.skills().forEach(id -> checkId("skill", id, problems));
         agent.mcpServers().forEach(id -> checkId("MCP server", id, problems));
-        if (agent.mcpServers().contains(io.github.loopforge4j.core.mcp.GateMcpServer.SERVER_ID)) {
-            problems.add(
-                    who + ": MCP server id " + io.github.loopforge4j.core.mcp.GateMcpServer.SERVER_ID + " is reserved");
-        }
+        agent.mcpServers().stream()
+                .filter(io.github.loopforge4j.core.mcp.PlatformMcp::reserved)
+                .distinct()
+                .forEach(id -> problems.add(
+                        who + ": MCP server id " + id + " is reserved (use platformMcp / knowledgeBase on the role)"));
         java.util.Set<String> hookIds = new java.util.HashSet<>();
         if (agent.hooks().size() > 20) {
             problems.add(who + " may define at most 20 hooks");
@@ -189,7 +190,7 @@ public final class WorkflowValidator {
                 }
             }
             case io.github.loopforge4j.core.domain.McpServerDefinition server -> {
-                if (server.id().equals(io.github.loopforge4j.core.mcp.GateMcpServer.SERVER_ID)) {
+                if (io.github.loopforge4j.core.mcp.PlatformMcp.reserved(server.id())) {
                     problems.add("MCP server id " + server.id() + " is reserved");
                 }
                 if (!server.transport().equals("stdio") && !server.transport().equals("http")) {

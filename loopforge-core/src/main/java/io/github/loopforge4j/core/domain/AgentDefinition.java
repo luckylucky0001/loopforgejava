@@ -6,6 +6,10 @@ import java.util.List;
 /**
  * Reusable role: one free-form brief plus the executor, gates and artifacts it owns. The engine
  * wraps {@link #prompt()} into a task book (see upstream {@code compileTaskPrompt}).
+ *
+ * @param platformMcp bind the deployment's read-only platform MCP to every invocation
+ * @param knowledgeBase bind the read-only team knowledge base and its usage rule; the role may
+ *     leave distilled knowledge in {@code knowledge.md} for review
  */
 public record AgentDefinition(
         String id,
@@ -24,6 +28,8 @@ public record AgentDefinition(
         List<HumanInterventionPoint> interventions,
         List<ArtifactContract> artifactOutputs,
         List<VerificationGate> verification,
+        boolean platformMcp,
+        boolean knowledgeBase,
         Instant updatedAt) {
 
     public AgentDefinition {
@@ -58,6 +64,8 @@ public record AgentDefinition(
                 interventions,
                 artifactOutputs,
                 verification,
+                platformMcp,
+                knowledgeBase,
                 updatedAt);
     }
 
@@ -83,6 +91,8 @@ public record AgentDefinition(
                 interventions,
                 artifactOutputs,
                 verification,
+                platformMcp,
+                knowledgeBase,
                 instant);
     }
 
@@ -103,6 +113,8 @@ public record AgentDefinition(
         private List<String> skills = List.of();
         private List<String> mcpServers = List.of();
         private List<AgentHook> hooks = List.of();
+        private boolean platformMcp;
+        private boolean knowledgeBase;
 
         private Builder(String id) {
             this.id = id;
@@ -178,6 +190,18 @@ public record AgentDefinition(
             return this;
         }
 
+        /** Binds the read-only platform MCP ({@code loopforge-platform}). */
+        public Builder platformMcp(boolean value) {
+            this.platformMcp = value;
+            return this;
+        }
+
+        /** Binds the read-only team knowledge base MCP ({@code loopforge-knowledge}). */
+        public Builder knowledgeBase(boolean value) {
+            this.knowledgeBase = value;
+            return this;
+        }
+
         public AgentDefinition build() {
             return new AgentDefinition(
                     id,
@@ -196,6 +220,8 @@ public record AgentDefinition(
                     interventions,
                     artifacts,
                     verification,
+                    platformMcp,
+                    knowledgeBase,
                     null);
         }
     }

@@ -35,7 +35,8 @@ public record LoopForgeProperties(
         @Valid @DefaultValue Retention retention,
         @DefaultValue List<GitLabHost> gitlab,
         @DefaultValue List<ModelPrice> pricing,
-        @Valid @DefaultValue Notifications notifications) {
+        @Valid @DefaultValue Notifications notifications,
+        @Valid @DefaultValue Knowledge knowledge) {
 
     /**
      * @param defaultExecutor executor id used when neither role nor node chooses one
@@ -153,11 +154,38 @@ public record LoopForgeProperties(
     /**
      * @param secrets values for {@code ${secret:NAME}} placeholders in MCP server definitions; they
      *     reach only the MCP server processes of an invocation, never the catalog or run data
+     * @param platformEnabled serve {@code /mcp} and let roles bind the platform MCP
+     * @param sandboxUrl base URL sandboxed agents reach this server at (for example {@code
+     *     http://host.docker.internal:8080}); without it only local-sandbox agents get platform
+     *     servers, at the loopback address
+     * @param internalUrl base URL {@code /mcp} forwards tool calls to (default: loopback, the
+     *     server's own port)
+     * @param agentTokenTtl lifetime of the run tokens agents get; a token also dies with its run
      */
-    public record Mcp(@DefaultValue Map<String, String> secrets) {
+    public record Mcp(
+            @DefaultValue Map<String, String> secrets,
+            @DefaultValue("true") boolean platformEnabled,
+            String sandboxUrl,
+            String internalUrl,
+            @NotNull @DefaultValue("12h") Duration agentTokenTtl) {
         @Override
         public String toString() {
-            return "Mcp[secrets=" + secrets.keySet() + "]";
+            return "Mcp[secrets=" + secrets.keySet() + ", platformEnabled=" + platformEnabled + ", sandboxUrl="
+                    + sandboxUrl + "]";
+        }
+    }
+
+    /**
+     * @param token upstream knowledge base token; when set it overrides the one saved in settings
+     *     and is never stored in the database
+     * @param timeout limit for one upstream knowledge base call
+     */
+    public record Knowledge(
+            String token, @NotNull @DefaultValue("30s") Duration timeout) {
+        @Override
+        public String toString() {
+            return "Knowledge[token=" + (token == null || token.isBlank() ? "unset" : "***") + ", timeout=" + timeout
+                    + "]";
         }
     }
 

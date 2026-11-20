@@ -57,7 +57,7 @@ public class AccessPolicy {
         if (user.admin() || projectId == null || projectId.isBlank()) {
             return true;
         }
-        return projects.rolesOf(user.id()).containsKey(projectId);
+        return rolesOf(user).containsKey(projectId);
     }
 
     public CurrentUser current(Principal principal) {
@@ -86,7 +86,7 @@ public class AccessPolicy {
         if (projectId == null || projectId.isBlank()) {
             throw new AccessDeniedException("administrator rights required");
         }
-        ProjectRole actual = projects.rolesOf(user.id()).get(projectId);
+        ProjectRole actual = rolesOf(user).get(projectId);
         if (actual == null || !actual.atLeast(role)) {
             throw new AccessDeniedException("project '" + projectId + "' requires role " + role.wire());
         }
@@ -111,7 +111,7 @@ public class AccessPolicy {
     /** Projects whose runs the account may list, {@code null} for all (administrators). */
     public Set<String> visibleProjects(Principal principal) {
         CurrentUser user = current(principal);
-        return user.admin() ? null : projects.rolesOf(user.id()).keySet();
+        return user.admin() ? null : rolesOf(user).keySet();
     }
 
     private boolean allowed(Principal principal, Run run, ProjectRole role) {
@@ -124,9 +124,18 @@ public class AccessPolicy {
             // only administrators start runs without a project, so only they may see them
             return false;
         }
-        Map<String, ProjectRole> roles = projects.rolesOf(user.id());
+        Map<String, ProjectRole> roles = rolesOf(user);
         ProjectRole actual = roles.get(project);
         return actual != null && actual.atLeast(role);
+    }
+
+    /** Project roles of the caller: an agent views exactly its run's project. */
+    public Map<String, ProjectRole> rolesOf(CurrentUser user) {
+        if (user.agent() != null) {
+            String project = user.agent().projectId();
+            return project == null || project.isBlank() ? Map.of() : Map.of(project, ProjectRole.VIEWER);
+        }
+        return user.id() == null ? Map.of() : projects.rolesOf(user.id());
     }
 
     /** Thrown for authenticated callers without permission (403). */

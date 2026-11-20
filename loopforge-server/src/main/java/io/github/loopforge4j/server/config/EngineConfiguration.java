@@ -159,6 +159,7 @@ class EngineConfiguration {
             GitCredentialProvider gitCredentials,
             DeliveryProvider delivery,
             java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.DockerSandboxProvider> docker,
+            org.springframework.beans.factory.ObjectProvider<io.github.loopforge4j.core.mcp.PlatformMcp> platformMcp,
             io.github.loopforge4j.core.store.InstanceRegistry instances,
             LoopForgeProperties properties,
             Clock clock,
@@ -192,6 +193,7 @@ class EngineConfiguration {
                 .claimOrphans(engine.recoverOnStartup())
                 .gitCredentials(gitCredentials)
                 .mcpSecrets(properties.mcp().secrets()::get)
+                .platformMcp(platformMcp.getIfAvailable())
                 .delivery(delivery)
                 .settings(settings)
                 .clock(clock)

@@ -405,7 +405,8 @@ final class NodeRunner {
                 .adapter(executor.kind())
                 .orElseThrow(() -> new NodeFailure(
                         FailureKind.CONFIGURATION, "executor kind '" + executor.kind() + "' is not supported"));
-        List<ArtifactContract> contracts = ArtifactSupport.merge(agent.artifactOutputs(), node.artifactOutputs());
+        List<ArtifactContract> contracts =
+                withKnowledgeFile(agent, ArtifactSupport.merge(agent.artifactOutputs(), node.artifactOutputs()));
         FailurePolicy defaultFailure = node.rejectsOnFailure() ? FailurePolicy.REJECT : FailurePolicy.FAIL;
         List<GateRun> gates = agent.verification().stream()
                 .filter(g -> g.mode() == GateMode.MR
@@ -430,6 +431,9 @@ final class NodeRunner {
                 sandbox.workspace(), run, node, engine.runs().artifacts(runId));
         String gatePath = GateResults.path(node.id(), attempt);
         EventSink sink = sessionRecordingSink(engine.sink(runId, node.id()), runId, generation, attempt, node.id());
+        if (agent.platformMcp() || agent.knowledgeBase()) {
+            assets = bindPlatformMcp(run, node, agent, assets, sink);
+        }
         AgentCall call = new AgentCall(
                 runId,
                 generation,
@@ -611,6 +615,47 @@ final class NodeRunner {
                 output,
                 engine.clock().instant());
         commitSuccess(runId, generation, attempt, node, output, artifacts, manualGate);
+    }
+
+    /** Workspace-root file a knowledge-enabled role leaves distilled knowledge in (upstream). */
+    static final String KNOWLEDGE_FILE = "knowledge.md";
+
+    /** Distilled knowledge the usage rule asks for is kept for review when the role leaves it. */
+    static List<ArtifactContract> withKnowledgeFile(AgentDefinition agent, List<ArtifactContract> contracts) {
+        if (!agent.knowledgeBase()
+                || contracts.stream()
+                        .anyMatch(c -> KNOWLEDGE_FILE.equals(c.path().strip()))) {
+            return contracts;
+        }
+        List<ArtifactContract> out = new ArrayList<>(contracts);
+        out.add(new ArtifactContract("knowledge", KNOWLEDGE_FILE, ArtifactContract.DEFAULT_MEDIA_TYPE, false));
+        return out;
+    }
+
+    private AgentAssets bindPlatformMcp(
+            Run run, WorkflowNode node, AgentDefinition agent, AgentAssets assets, EventSink sink) {
+        io.github.loopforge4j.core.mcp.PlatformMcp.Binding binding;
+        try {
+            binding = engine.platformMcp()
+                    .bind(new io.github.loopforge4j.core.mcp.PlatformMcp.Invocation(
+                            run.id(),
+                            run.context().projectId(),
+                            node.id(),
+                            agent.id(),
+                            run.context().triggeredBy(),
+                            run.workflow().sandboxProfileId(),
+                            agent.platformMcp(),
+                            agent.knowledgeBase()));
+        } catch (RuntimeException e) {
+            log.warn("cannot bind platform MCP servers for run {}: {}", run.id(), e.toString());
+            binding = new io.github.loopforge4j.core.mcp.PlatformMcp.Binding(
+                    List.of(), List.of(), List.of("平台 MCP 注入失败：" + e.getClass().getSimpleName()));
+        }
+        for (String warning : binding.warnings()) {
+            sink.emit(Telemetry.of("runtime", "mcp.platform.skipped", "progress", warning)
+                    .withLevel("warn"));
+        }
+        return assets.with(binding.servers(), binding.rules());
     }
 
     private record AgentCall(

@@ -98,6 +98,13 @@ class AccountController {
         if (user.service()) {
             return Map.of("username", user.username(), "role", user.role(), "service", true, "projects", List.of());
         }
+        if (user.agent() != null) {
+            return Map.of(
+                    "username", user.username(),
+                    "service", false,
+                    "agent", user.agent(),
+                    "projects", access.rolesOf(user));
+        }
         return Map.of(
                 "user", users.byId(user.id()).orElseThrow(),
                 "service", false,
