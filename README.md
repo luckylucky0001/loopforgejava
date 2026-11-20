@@ -4,7 +4,7 @@
 
 > 本项目为独立的社区移植，**与腾讯无隶属、赞助或背书关系**。上游以 MIT 许可发布，本仓库同样采用 MIT，并完整保留上游版权与许可声明，详见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-当前版本 0.1.0-SNAPSHOT：已完成引擎核心、REST/SSE 服务（迭代 1）与 Git 仓库交付（迭代 2）；后续迭代见 [路线图](docs/roadmap.md)。
+当前版本 0.1.0-SNAPSHOT：已完成引擎核心与 REST/SSE 服务（迭代 1）、Git 仓库交付（迭代 2）、MCP / Skills / Hooks / 全部 10 种 CLI / Docker 沙箱（迭代 3）；后续迭代见 [路线图](docs/roadmap.md)。
 
 ## 已实现
 
@@ -14,9 +14,10 @@
 | 门禁与路由 | Agent 必须提交 `pass / rework / fail / human` 终态；命令门禁（`onFailure=loop/reject/fail/human`）；Agent 自修正循环；`rejectTo` 受控返工与返工预算；尝试次数预算 |
 | 人工控制 | 审批、打回、从任意节点重试/重放、跳过失败脚本（pass）、暂停/继续、取消、拒绝重试；补充的人工上下文会进入后续提示词并留档 |
 | 产物契约 | 节点声明的产物按尝试版本快照（SHA-256），下游以只读文件接收；缺失即契约失败 |
-| 执行器 | Claude Code、Codex、CodeBuddy（stream-json / JSONL 协议归一化为统一遥测）；确定性 Mock 执行器（无需密钥的演示与测试） |
+| 执行器 | Claude Code、Codex、CodeBuddy、OpenCode、Cursor、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode（原生流协议归一化为统一遥测）；确定性 Mock 执行器（无需密钥的演示与测试） |
+| MCP / Skills / Hooks | 门禁 MCP 工具 `submit_gate_result`；规则、Skills（SKILL.md 树）、MCP 服务器目录，按角色白名单物化为各 CLI 的原生配置；Hooks 编译为原生 Hook 配置并上报执行事件；MCP 密钥用 `${secret:NAME}` 引用 |
 | Git 交付 | 仓库目录；运行检出到独立工作分支（多仓库、继续/新建/只读模式）；凭据经 credential helper 注入；`executionScope=repositories` 的脚本与门禁；`mode=mr` 门禁核验 PR 覆盖最新提交；GitHub PR 记录与合并检测 |
-| 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止 |
+| 沙箱 | 本地沙箱：每个运行独立工作区、**不继承服务端环境变量**、私有 HOME、超时与进程树终止；Docker 沙箱：每个运行一个容器、资源限制、只读根文件系统、变量不上命令行 |
 | 可靠性 | 乐观并发（revision）+ 原子提交（状态/事件/产物同事务）；代际（generation）写栅栏；进程组终止；调度器崩溃自愈；优雅停机挂起运行、重启后自动恢复并续接 CLI 会话（当前为单实例部署） |
 | 服务 | Spring Boot 4.1 / Java 21 虚拟线程；REST + SSE（支持 `Last-Event-ID` 续传）；RFC 9457 错误；Bearer Token；Flyway；H2（开发）/ PostgreSQL（生产）；OpenAPI；Actuator 健康探针与 Prometheus 指标 |
 
@@ -91,6 +92,24 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 
 运行会把仓库克隆到 `./app`，检出 `feature/fix-<时间>-<运行>` 工作分支（`mode` 可选 `continue` 续用已有分支、`new` 必须新建、`read_only` 只读），Agent 提示词里会出现仓库、基线与交付要求。凭据只存在于运行进程的环境变量里，不会出现在克隆 URL、运行数据或日志中；克隆 URL 内嵌凭据会被拒绝。
 
+### MCP、Skills 与 Docker 沙箱
+
+```yaml
+loopforge:
+  mcp:
+    secrets:                      # MCP 定义里写 ${secret:TRACKER}，值只在这里
+      TRACKER: ${TRACKER_TOKEN}
+  sandbox:
+    docker:
+      enabled: true               # 工作流设置 "sandboxProfileId": "docker" 即可使用
+      image: ghcr.io/acme/agent-image:1   # 需包含 sh、sleep 与 SOP 用到的 CLI；glibc 镜像
+      memory: 4g
+      cpus: "2"
+      read-only-root: true
+```
+
+角色通过 `rules`、`skills`、`mcpServers`、`hooks` 绑定资产；每次调用都会把它们编译成对应 CLI 的原生配置（只包含白名单内容，不读取仓库或用户级 CLI 配置）。Agent 用 MCP 工具 `submit_gate_result` 提交节点终态。
+
 ### 生产部署（PostgreSQL）
 
 ```bash
@@ -109,6 +128,7 @@ LOOPFORGE_API_TOKEN=$(openssl rand -hex 32) POSTGRES_PASSWORD=$(openssl rand -he
 | `GET` / `POST` | `/api/v1/catalog/export` / `/import` | 目录导出 / 导入（默认不覆盖） |
 | `GET` | `/api/v1/executors` | 执行器及本机是否已安装 |
 | `GET/PUT/DELETE` | `/api/v1/repositories/{id}` | 代码仓库 |
+| `GET/PUT/DELETE` | `/api/v1/rules/{id}`、`/skills/{id}`、`/mcp-servers/{id}` | 角色可绑定的规则、Skills、MCP 服务器 |
 | `GET` / `POST` | `/api/v1/runs/{id}/deliveries` / `/deliveries/refresh` | 运行交付的 PR 与合并状态 |
 | `POST` / `GET` | `/api/v1/runs` | 启动运行 / 列表（按状态、SOP、父运行过滤） |
 | `GET` | `/api/v1/runs/{id}`、`/events`、`/artifacts`、`/artifacts/{aid}` | 运行详情、事件、产物 |

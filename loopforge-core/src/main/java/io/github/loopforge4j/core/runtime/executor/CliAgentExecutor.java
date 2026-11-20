@@ -4,6 +4,7 @@ import io.github.loopforge4j.core.runtime.Cancellation;
 import io.github.loopforge4j.core.runtime.CancelledException;
 import io.github.loopforge4j.core.runtime.EventSink;
 import io.github.loopforge4j.core.runtime.Telemetry;
+import io.github.loopforge4j.core.runtime.materialize.CompiledAgent;
 import io.github.loopforge4j.core.runtime.sandbox.CommandSpec;
 import io.github.loopforge4j.core.runtime.sandbox.ExecResult;
 import io.github.loopforge4j.core.runtime.sandbox.LocalSandbox;
@@ -32,6 +33,11 @@ public abstract class CliAgentExecutor implements AgentExecutor {
     /** Builds argv without the prompt; the prompt is appended or sent on stdin by the base class. */
     protected abstract List<String> arguments(AgentInvocation invocation);
 
+    /** Argument builder with access to the sandbox (e.g. the CLI's private HOME). */
+    protected List<String> arguments(AgentInvocation invocation, Sandbox sandbox) {
+        return arguments(invocation);
+    }
+
     protected abstract StreamParser parser(EventSink sink);
 
     /** Extra non-secret environment for the CLI process. */
@@ -48,18 +54,46 @@ public abstract class CliAgentExecutor implements AgentExecutor {
     }
 
     @Override
+    public boolean materializes() {
+        return true;
+    }
+
+    /**
+     * Task prompt with the role's system instructions ahead of it (upstream {@code
+     * AgentCLITaskPrompt}); a resumed session already has them.
+     */
+    protected static String taskPrompt(AgentInvocation invocation) {
+        CompiledAgent compiled = invocation.compiled();
+        boolean resumed = invocation.resumeSessionId() != null
+                && !invocation.resumeSessionId().isBlank();
+        if (compiled == null || resumed || compiled.systemInstructions().isBlank()) {
+            return invocation.prompt();
+        }
+        return "<system_instructions>\n" + compiled.systemInstructions().strip() + "\n</system_instructions>\n\n"
+                + invocation.prompt();
+    }
+
+    /** Prepares CLI-specific files (e.g. MCP configuration in the private HOME) before launch. */
+    protected void prepare(AgentInvocation invocation, Sandbox sandbox, EventSink sink) throws IOException {}
+
+    @Override
     public AgentResult execute(AgentInvocation invocation, Sandbox sandbox, EventSink sink, Cancellation cancellation)
             throws ExecutorException, IOException, CancelledException {
-        writePromptFile(sandbox.workspace(), invocation);
+        String prompt = taskPrompt(invocation);
+        writePromptFile(sandbox.workspace(), invocation.invocationId(), prompt);
+        prepare(invocation, sandbox, sink);
         // The prompt always travels on stdin as UTF-8: argv is encoded with the JVM's native charset
         // (ASCII under a POSIX locale, which mangles Chinese task books), is limited to 128 KiB per
         // argument on Linux and is visible to every local user through ps.
-        List<String> argv = new ArrayList<>(arguments(invocation));
+        List<String> argv = new ArrayList<>(arguments(invocation, sandbox));
         if (stdinPromptMarker() != null) {
             argv.add(stdinPromptMarker());
         }
-        String stdin = invocation.prompt();
+        String stdin = stdinPrompt(invocation, prompt);
         Map<String, String> env = new HashMap<>(invocation.environment());
+        if (invocation.compiled() != null) {
+            env.putAll(invocation.compiled().environment());
+        }
         env.putAll(environment(invocation, sandbox));
         env.putAll(credentials.environmentFor(kind()));
         CommandSpec spec = new CommandSpec(argv, null, env, stdin, invocation.timeout(), kind());
@@ -75,7 +109,10 @@ public abstract class CliAgentExecutor implements AgentExecutor {
                 null,
                 Map.of("binary", argv.getFirst(), "invocationId", invocation.invocationId())));
         ExecResult exec;
-        try {
+        try (HookObserver hooks =
+                invocation.compiled() == null || invocation.compiled().hooks().isEmpty()
+                        ? null
+                        : HookObserver.watch(invocation.compiled().hookOutput(), sink)) {
             exec = sandbox.exec(spec, parser::accept, cancellation);
         } catch (IOException e) {
             throw new ExecutorException("failed to start " + argv.getFirst() + ": " + e.getMessage(), null);
@@ -113,11 +150,23 @@ public abstract class CliAgentExecutor implements AgentExecutor {
         return result;
     }
 
-    private static void writePromptFile(Path workspace, AgentInvocation invocation) throws IOException {
-        Path dir = workspace.resolve(LocalSandbox.CONTROL_DIR).resolve("prompts");
-        Files.createDirectories(dir);
-        String name = invocation.invocationId().replaceAll("[^A-Za-z0-9._-]", "_") + ".md";
-        Files.writeString(dir.resolve(name), invocation.prompt(), StandardCharsets.UTF_8);
+    /** What goes to stdin; CLIs that take the prompt as an argument return {@code null}. */
+    protected String stdinPrompt(AgentInvocation invocation, String prompt) {
+        return prompt;
+    }
+
+    /** Workspace file holding the full task prompt of an invocation. */
+    protected static Path promptFile(Path workspace, String invocationId) {
+        return workspace
+                .resolve(LocalSandbox.CONTROL_DIR)
+                .resolve("prompts")
+                .resolve(invocationId.replaceAll("[^A-Za-z0-9._-]", "_") + ".md");
+    }
+
+    private static void writePromptFile(Path workspace, String invocationId, String prompt) throws IOException {
+        Path file = promptFile(workspace, invocationId);
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, prompt, StandardCharsets.UTF_8);
     }
 
     private static String tail(String output) {
@@ -134,6 +183,32 @@ public abstract class CliAgentExecutor implements AgentExecutor {
         if (effortFlag && effort != null && !effort.isBlank() && !argv.contains("--effort")) {
             argv.add("--effort");
             argv.add(effort);
+        }
+    }
+
+    /**
+     * Claude-style flags for a compiled role: strict MCP allowlist, hook settings and the skills
+     * plugin directory.
+     */
+    protected static void addCompiledArgs(List<String> argv, CompiledAgent compiled, String pluginFlag) {
+        if (compiled == null) {
+            return;
+        }
+        dropFlag(argv, "--mcp-config");
+        argv.add("--mcp-config");
+        argv.add(compiled.mcpConfig().toString());
+        if (!argv.contains("--strict-mcp-config")) {
+            argv.add("--strict-mcp-config");
+        }
+        if (compiled.hookSettings() != null) {
+            dropFlag(argv, "--settings");
+            argv.add("--settings");
+            argv.add(compiled.hookSettings().toString());
+        }
+        if (compiled.hasSkills()) {
+            dropFlag(argv, pluginFlag);
+            argv.add(pluginFlag);
+            argv.add(compiled.agentDir().toString());
         }
     }
 

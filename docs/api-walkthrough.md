@@ -121,3 +121,27 @@ curl -s -H "Authorization: Bearer $TOKEN" -X POST localhost:8090/api/v1/runs/<ru
 
 `mode` 取值：`auto`（默认，工作分支存在则续用，否则新建）、`continue`（必须已存在）、`new`（必须不存在）、`read_only`（不允许推送，MR 门禁跳过）。服务端每 5 分钟（`loopforge.github.refresh-interval`）刷新已成功运行的未合并 PR。
 
+## 8. 规则、Skills、MCP 服务器与 Hooks
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT \
+  -d '{"name":"禁止删除","content":"不得删除生产数据","priority":9}' localhost:8090/api/v1/rules/no-delete
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT \
+  -d '{"description":"测试先行","content":"先写失败的测试，再实现","files":{"scripts/check.sh":"./mvnw -q test\n"}}' \
+  localhost:8090/api/v1/skills/tdd
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -X PUT \
+  -d '{"command":"tracker-mcp","environment":{"TRACKER_TOKEN":"${secret:TRACKER}"}}' \
+  localhost:8090/api/v1/mcp-servers/tracker
+```
+
+角色引用它们（`rules` 里不是目录 id 的条目按内联规则文本处理）：
+
+```json
+{"name":"开发","executorId":"claude","prompt":"……",
+ "rules":["no-delete","提交信息用中文"],"skills":["tdd"],"mcpServers":["tracker"],
+ "hooks":[{"id":"guard","event":"PreToolUse","matcher":"Bash","language":"shell",
+           "script":"cat > /dev/null; exit 0","timeoutSec":30}]}
+```
+
+敏感值（变量名含 TOKEN/SECRET/PASSWORD/KEY、`Authorization` 头）必须写成 `${secret:NAME}`，值配置在 `loopforge.mcp.secrets.NAME`。运行事件中会出现 `agent.materialized`（本次注入的 MCP、Skills、Hooks 数量）与 `hook.started`/`hook.finished`（Hook id、退出码、耗时）。
+

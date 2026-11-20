@@ -112,7 +112,131 @@ public final class WorkflowValidator {
             }
             checkLength("agent " + clip(agent.id()) + " gate", gate.script(), MAX_TEXT, problems);
         }
+        String who = "agent " + clip(agent.id());
+        if (agent.rules().size() > 50
+                || agent.skills().size() > 50
+                || agent.mcpServers().size() > 50) {
+            problems.add(who + " may bind at most 50 rules, skills and MCP servers each");
+        }
+        agent.rules().forEach(r -> checkLength(who + " rule", r, MAX_TEXT, problems));
+        agent.skills().forEach(id -> checkId("skill", id, problems));
+        agent.mcpServers().forEach(id -> checkId("MCP server", id, problems));
+        if (agent.mcpServers().contains(io.github.loopforge4j.core.mcp.GateMcpServer.SERVER_ID)) {
+            problems.add(
+                    who + ": MCP server id " + io.github.loopforge4j.core.mcp.GateMcpServer.SERVER_ID + " is reserved");
+        }
+        java.util.Set<String> hookIds = new java.util.HashSet<>();
+        if (agent.hooks().size() > 20) {
+            problems.add(who + " may define at most 20 hooks");
+        }
+        for (io.github.loopforge4j.core.domain.AgentHook hook : agent.hooks()) {
+            checkId("hook", hook.id(), problems);
+            if (!hookIds.add(hook.id())) {
+                problems.add(who + " hook id " + clip(hook.id()) + " is duplicated");
+            }
+            if (!io.github.loopforge4j.core.domain.AgentHook.EVENTS.contains(hook.event())) {
+                problems.add(who + " hook " + clip(hook.id()) + " event must be one of "
+                        + new java.util.TreeSet<>(io.github.loopforge4j.core.domain.AgentHook.EVENTS));
+            }
+            if (hook.script().isBlank()) {
+                problems.add(who + " hook " + clip(hook.id()) + " needs a script");
+            }
+            checkLength(who + " hook script", hook.script(), MAX_TEXT, problems);
+            checkLength(who + " hook matcher", hook.matcher(), MAX_NAME, problems);
+        }
         return problems;
+    }
+
+    /** Validates a rule, skill or MCP server definition. */
+    public static List<String> assetProblems(io.github.loopforge4j.core.domain.CatalogAsset asset) {
+        List<String> problems = new ArrayList<>();
+        String kind = switch (asset) {
+            case io.github.loopforge4j.core.domain.RuleDefinition r -> "rule";
+            case io.github.loopforge4j.core.domain.SkillDefinition s -> "skill";
+            case io.github.loopforge4j.core.domain.McpServerDefinition m -> "MCP server";
+            default -> "asset";
+        };
+        checkId(kind, asset.id(), problems);
+        checkLength(kind + " name", asset.name(), MAX_NAME, problems);
+        switch (asset) {
+            case io.github.loopforge4j.core.domain.RuleDefinition rule -> {
+                if (rule.content().isBlank()) {
+                    problems.add("rule content is required");
+                }
+                checkLength("rule content", rule.content(), MAX_TEXT, problems);
+            }
+            case io.github.loopforge4j.core.domain.SkillDefinition skill -> {
+                if (skill.content().isBlank() && !skill.files().containsKey("SKILL.md")) {
+                    problems.add("skill content (SKILL.md) is required");
+                }
+                if (skill.files().size() > 200) {
+                    problems.add("skill may have at most 200 files");
+                }
+                long size = skill.content().length();
+                for (Map.Entry<String, String> file : skill.files().entrySet()) {
+                    size += file.getValue() == null ? 0 : file.getValue().length();
+                    try {
+                        if (!file.getKey().equals("SKILL.md")) {
+                            io.github.loopforge4j.core.runtime.materialize.AgentMaterializer.checkSkillPath(
+                                    file.getKey());
+                        }
+                    } catch (IllegalArgumentException e) {
+                        problems.add(e.getMessage());
+                    }
+                }
+                if (size > 2_000_000) {
+                    problems.add("skill files may total at most 2 MB");
+                }
+            }
+            case io.github.loopforge4j.core.domain.McpServerDefinition server -> {
+                if (server.id().equals(io.github.loopforge4j.core.mcp.GateMcpServer.SERVER_ID)) {
+                    problems.add("MCP server id " + server.id() + " is reserved");
+                }
+                if (!server.transport().equals("stdio") && !server.transport().equals("http")) {
+                    problems.add("MCP server transport must be stdio or http");
+                } else if (server.http()) {
+                    String url = server.url() == null ? "" : server.url().strip();
+                    if (!url.startsWith("https://") && !url.startsWith("http://")) {
+                        problems.add("http MCP server needs an http(s) url");
+                    }
+                } else if (server.command() == null || server.command().isBlank()) {
+                    problems.add("stdio MCP server needs a command");
+                }
+                for (String key : server.environment().keySet()) {
+                    if (!key.matches("[A-Za-z_][A-Za-z0-9_]{0,99}")) {
+                        problems.add("MCP server environment variable name is invalid: " + clip(key));
+                    }
+                }
+                for (Map.Entry<String, String> e : server.environment().entrySet()) {
+                    if (looksLikeSecret(e.getKey())
+                            && e.getValue() != null
+                            && !e.getValue().contains("${secret:")) {
+                        problems.add("MCP server " + server.id() + ": put the value of " + e.getKey()
+                                + " in server configuration and reference it as ${secret:NAME}");
+                    }
+                }
+                for (Map.Entry<String, String> h : server.headers().entrySet()) {
+                    if (h.getKey().equalsIgnoreCase("authorization")
+                            && !h.getValue().contains("${secret:")) {
+                        problems.add(
+                                "MCP server " + server.id() + ": reference the Authorization value as ${secret:NAME}");
+                    }
+                }
+                if (server.timeoutSec() < 0 || server.timeoutSec() > 3600) {
+                    problems.add("MCP server timeoutSec must be between 0 and 3600");
+                }
+            }
+            default -> {}
+        }
+        return problems;
+    }
+
+    private static boolean looksLikeSecret(String name) {
+        String upper = name.toUpperCase(java.util.Locale.ROOT);
+        return upper.contains("TOKEN")
+                || upper.contains("SECRET")
+                || upper.contains("PASSWORD")
+                || upper.endsWith("KEY");
     }
 
     public static void validate(WorkflowDefinition workflow) {

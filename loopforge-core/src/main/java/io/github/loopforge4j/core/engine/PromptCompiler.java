@@ -245,19 +245,22 @@ public final class PromptCompiler {
                 "{\"decision\": \"pass|rework|fail|human\", \"reason\": \"事实依据\", \"actionRequired\": \"需要人或上游做什么\","
                         + " \"summary\": \"可选摘要\", \"findings\": [{\"severity\": \"high\", \"title\": \"问题\", \"evidence\": \"证据\"}]}";
         if (retry) {
-            return prompt + "\n\n刚才没有收到有效的节点终态。不要重复执行任务，也不要只输出文字；请立刻把终态写入 `" + path + "`，内容为 JSON：" + schema
+            return prompt + "\n\n刚才没有收到有效的节点终态。不要重复执行任务，也不要只输出文字；请立刻调用 MCP 工具 `submit_gate_result` 提交终态，"
+                    + "没有该工具时把终态写入 `" + path + "`，内容为 JSON：" + schema
                     + "。选择 human 时必须填写 actionRequired。只有该文件写入成功才算完成本节点。";
         }
         String rework = rejectTo == null
                 ? "- rework：本节点没有配置返工目标，不可选择；需要直接终止时请选择 fail；"
                 : "- rework：存在应由上游节点「" + rejectTo + "」返工的问题；平台会自动打回；";
-        return prompt.stripTrailing() + "\n\n# 必须提交节点终态\n\n完成任务后必须把唯一终态写入 JSON 文件 `" + path
-                + "`（相对当前工作目录，目录不存在时先创建），内容格式：\n\n```json\n" + schema + "\n```\n\n"
+        return prompt.stripTrailing()
+                + "\n\n# 必须提交节点终态\n\n完成任务后必须提交唯一终态：优先调用 MCP 工具 `submit_gate_result`（loopforge-gate 服务，"
+                + "调用一次即可，之后立即停止）；当前 CLI 没有该工具时，把终态写入 JSON 文件 `" + path
+                + "`（相对当前工作目录，目录不存在时先创建）。内容格式：\n\n```json\n" + schema + "\n```\n\n"
                 + "- pass：任务正常完成；平台会自动流转到下游节点；\n" + rework + "\n"
                 + "- fail：本节点无法完成或出现不可恢复错误；平台会直接标记失败，不打回上游；\n"
                 + "- human：无法可靠自动判断，或必须由人决策；平台会暂停并等待人工确认，此时 actionRequired 必填。\n\n"
                 + "必须根据当前真实情况选择，不要把 fail 当成 rework，也不要用 human 掩盖明确失败。reason 必须解释作出该终态的事实依据。"
-                + "不要用报告文本或最终回复代替该文件。只有该文件写入且内容合法，本节点才算完成。";
+                + "不要用报告文本或最终回复代替终态。只有终态提交成功且内容合法，本节点才算完成。";
     }
 
     private static void section(StringBuilder b, String title, String value) {

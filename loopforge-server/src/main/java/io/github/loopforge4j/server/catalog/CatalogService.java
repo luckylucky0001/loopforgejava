@@ -1,6 +1,8 @@
 package io.github.loopforge4j.server.catalog;
 
 import io.github.loopforge4j.core.domain.AgentDefinition;
+import io.github.loopforge4j.core.domain.AssetKind;
+import io.github.loopforge4j.core.domain.CatalogAsset;
 import io.github.loopforge4j.core.domain.RepositoryDefinition;
 import io.github.loopforge4j.core.domain.WorkflowDefinition;
 import io.github.loopforge4j.core.engine.WorkflowValidationException;
@@ -22,6 +24,18 @@ public class CatalogService {
     public CatalogService(CatalogStore store, LoopForgeProperties properties) {
         this.store = store;
         this.allowLocalRemotes = properties.git().allowLocalRemotes();
+    }
+
+    public <T extends CatalogAsset> T saveAsset(AssetKind<T> kind, T asset) {
+        validateAsset(asset);
+        return store.saveAsset(kind, asset);
+    }
+
+    private static void validateAsset(CatalogAsset asset) {
+        List<String> problems = WorkflowValidator.assetProblems(asset);
+        if (!problems.isEmpty()) {
+            throw new WorkflowValidationException(problems);
+        }
     }
 
     public RepositoryDefinition saveRepository(RepositoryDefinition repository) {
@@ -52,13 +66,29 @@ public class CatalogService {
      *
      * @return ids that were written
      */
+    private <T extends CatalogAsset> void importAssets(
+            AssetKind<T> kind, List<T> assets, boolean overwrite, List<String> written) {
+        for (T asset : assets) {
+            if (overwrite || store.asset(kind, asset.id()).isEmpty()) {
+                store.saveAsset(kind, asset);
+                written.add(kind.wire() + ":" + asset.id());
+            }
+        }
+    }
+
     @Transactional
     public List<String> importBundle(CatalogBundle bundle, boolean overwrite) {
         // validate everything first: an invalid item must not leave a half-imported bundle behind
         bundle.agents().forEach(WorkflowValidator::validateAgent);
         bundle.workflows().forEach(WorkflowValidator::validate);
         bundle.repositories().forEach(this::validateRepository);
+        bundle.rules().forEach(CatalogService::validateAsset);
+        bundle.skills().forEach(CatalogService::validateAsset);
+        bundle.mcpServers().forEach(CatalogService::validateAsset);
         List<String> written = new ArrayList<>();
+        importAssets(AssetKind.RULE, bundle.rules(), overwrite, written);
+        importAssets(AssetKind.SKILL, bundle.skills(), overwrite, written);
+        importAssets(AssetKind.MCP_SERVER, bundle.mcpServers(), overwrite, written);
         for (RepositoryDefinition repository : bundle.repositories()) {
             if (overwrite || store.repository(repository.id()).isEmpty()) {
                 store.saveRepository(repository);

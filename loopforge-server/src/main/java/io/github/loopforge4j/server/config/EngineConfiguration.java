@@ -71,6 +71,28 @@ class EngineConfiguration {
                 properties.engine().nodeTimeout()));
     }
 
+    @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty("loopforge.sandbox.docker.enabled")
+    io.github.loopforge4j.core.runtime.sandbox.DockerSandboxProvider dockerSandboxProvider(
+            LoopForgeProperties properties) {
+        LoopForgeProperties.Docker docker = properties.sandbox().docker();
+        return new io.github.loopforge4j.core.runtime.sandbox.DockerSandboxProvider(
+                new io.github.loopforge4j.core.runtime.sandbox.DockerSandboxOptions(
+                        docker.profile(),
+                        properties.workspaceRoot(),
+                        docker.image(),
+                        docker.binary(),
+                        docker.network(),
+                        docker.memory(),
+                        docker.cpus(),
+                        docker.pidsLimit(),
+                        docker.readOnlyRoot(),
+                        docker.user(),
+                        docker.mountJavaHome(),
+                        properties.sandbox().privateHome(),
+                        properties.engine().nodeTimeout()));
+    }
+
     /** Deployment-wide Git credentials (upstream resolves them per responsible user). */
     @Bean
     GitCredentialProvider gitCredentialProvider(LoopForgeProperties properties) {
@@ -114,6 +136,7 @@ class EngineConfiguration {
             LocalSandboxProvider sandbox,
             GitCredentialProvider gitCredentials,
             DeliveryProvider delivery,
+            java.util.Optional<io.github.loopforge4j.core.runtime.sandbox.DockerSandboxProvider> docker,
             LoopForgeProperties properties,
             Clock clock,
             List<RunListener> listeners) {
@@ -124,17 +147,22 @@ class EngineConfiguration {
                 engine.nodeTimeout(),
                 engine.schedulerTick(),
                 engine.releaseWorkspaceOnFinish());
-        RunEngine runEngine = RunEngine.builder()
+        RunEngine.Builder builder = RunEngine.builder()
                 .runStore(runStore)
                 .catalogStore(catalogStore)
                 .executors(executors)
-                .sandbox(sandbox)
-                .gitCredentials(gitCredentials)
+                .sandbox(sandbox);
+        docker.ifPresent(builder::sandbox);
+        RunEngine runEngine = builder.gitCredentials(gitCredentials)
+                .mcpSecrets(properties.mcp().secrets()::get)
                 .delivery(delivery)
                 .settings(settings)
                 .clock(clock)
                 .build();
         listeners.forEach(runEngine::addListener);
+        docker.ifPresent(provider -> log.info(
+                "docker sandbox profile '{}' enabled",
+                properties.sandbox().docker().profile()));
         warnOnNonUtf8Locale();
         return runEngine;
     }

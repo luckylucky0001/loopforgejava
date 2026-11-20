@@ -16,7 +16,32 @@ public final class ExecutorRegistry {
     private final Map<String, ExecutorDefinition> definitions = new LinkedHashMap<>();
     private final Map<String, AgentExecutor> adapters = new LinkedHashMap<>();
 
+    private static final Map<String, String> AGENT_CLI_NAMES = Map.of(
+            AgentCliExecutor.OPENCODE, "OpenCode",
+            AgentCliExecutor.CURSOR, "Cursor",
+            AgentCliExecutor.ANTIGRAVITY, "Antigravity",
+            AgentCliExecutor.KIMI, "Kimi Code",
+            AgentCliExecutor.PI, "Pi",
+            AgentCliExecutor.DEEPSEEK, "DeepSeek Harness",
+            AgentCliExecutor.ZCODE, "ZCode");
+
     public static List<ExecutorDefinition> builtInDefinitions() {
+        List<ExecutorDefinition> definitions = new java.util.ArrayList<>(coreDefinitions());
+        for (String kind : AgentCliExecutor.KINDS) {
+            definitions.add(new ExecutorDefinition(
+                    kind,
+                    AGENT_CLI_NAMES.get(kind),
+                    kind,
+                    AgentCliExecutor.binary(kind),
+                    List.of(),
+                    "agent-cli-stream",
+                    null,
+                    null));
+        }
+        return List.copyOf(definitions);
+    }
+
+    private static List<ExecutorDefinition> coreDefinitions() {
         return List.of(
                 new ExecutorDefinition(
                         "claude",
@@ -64,6 +89,9 @@ public final class ExecutorRegistry {
         registry.register(new CodexExecutor(credentials));
         registry.register(new CodeBuddyExecutor(credentials));
         registry.register(new MockAgentExecutor());
+        for (String kind : AgentCliExecutor.KINDS) {
+            registry.register(new AgentCliExecutor(kind, credentials));
+        }
         return registry;
     }
 

@@ -20,6 +20,14 @@ public interface Sandbox {
     Path workspace();
 
     /**
+     * Private HOME of processes launched with this label, or {@code null} when processes share the
+     * server's HOME (CLI configuration must then not be written there).
+     */
+    default Path privateHome(String label) {
+        return null;
+    }
+
+    /**
      * Runs a command to completion.
      *
      * @throws CancelledException when {@code cancellation} fired; the process tree is killed first

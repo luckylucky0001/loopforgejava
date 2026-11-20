@@ -38,7 +38,8 @@ class AgentSessionResumeTest {
                 prompt = sys.stdin.read()
                 resume = argv[argv.index("--resume") + 1] if "--resume" in argv else None
                 with open(%s, "a") as f:
-                    f.write(json.dumps({"resume": resume, "prompt": prompt[:40]}, ensure_ascii=False) + "\\n")
+                    task = prompt.split("</system_instructions>")[-1].strip()
+                    f.write(json.dumps({"resume": resume, "system": prompt.startswith("<system_instructions>"), "prompt": task[:40]}, ensure_ascii=False) + "\\n")
                 session = resume or "sess-fixed-1"
                 print(json.dumps({"type": "system", "subtype": "init", "session_id": session}), flush=True)
                 if resume is None:
@@ -90,8 +91,13 @@ class AgentSessionResumeTest {
 
             List<String> calls = Files.readAllLines(log);
             assertThat(calls).hasSize(2);
-            assertThat(calls.get(0)).contains("\"resume\": null").contains("节点任务书");
-            assertThat(calls.get(1)).contains("\"resume\": \"sess-fixed-1\"").contains(PromptCompiler.RESUME_PROMPT);
+            assertThat(calls.get(0))
+                    .contains("\"resume\": null", "\"system\": true")
+                    .contains("节点任务书");
+            // a resumed session already has the system instructions
+            assertThat(calls.get(1))
+                    .contains("\"resume\": \"sess-fixed-1\"", "\"system\": false")
+                    .contains(PromptCompiler.RESUME_PROMPT);
         }
     }
 }

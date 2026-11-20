@@ -35,6 +35,11 @@ public final class ClaudeCodeExecutor extends CliAgentExecutor {
         if ((argv.contains("-p") || argv.contains("--print")) && !argv.contains("--verbose")) {
             argv.add("--verbose");
         }
+        // Only the role's own configuration: no repository settings (hooks!) or MCP servers.
+        dropFlag(argv, "--setting-sources");
+        argv.add("--setting-sources");
+        argv.add("user");
+        addCompiledArgs(argv, invocation.compiled(), "--plugin-dir");
         if (invocation.resumeSessionId() != null
                 && !invocation.resumeSessionId().isBlank()) {
             argv.add("--resume");

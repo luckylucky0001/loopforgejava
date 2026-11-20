@@ -15,6 +15,8 @@ public record AgentDefinition(
         String prompt,
         List<String> rules,
         List<String> skills,
+        List<String> mcpServers,
+        List<AgentHook> hooks,
         String executorId,
         String model,
         String effort,
@@ -30,10 +32,33 @@ public record AgentDefinition(
         version = Math.max(1, version);
         rules = rules == null ? List.of() : List.copyOf(rules);
         skills = skills == null ? List.of() : List.copyOf(skills);
+        mcpServers = mcpServers == null ? List.of() : List.copyOf(mcpServers);
+        hooks = hooks == null ? List.of() : List.copyOf(hooks);
         loop = loop == null ? AgentLoopPolicy.DISABLED : loop;
         interventions = interventions == null ? List.of() : List.copyOf(interventions);
         artifactOutputs = artifactOutputs == null ? List.of() : List.copyOf(artifactOutputs);
         verification = verification == null ? List.of() : List.copyOf(verification);
+    }
+
+    public AgentDefinition withRules(List<String> newRules) {
+        return new AgentDefinition(
+                id,
+                name,
+                version,
+                description,
+                prompt,
+                newRules,
+                skills,
+                mcpServers,
+                hooks,
+                executorId,
+                model,
+                effort,
+                loop,
+                interventions,
+                artifactOutputs,
+                verification,
+                updatedAt);
     }
 
     public static Builder builder(String id) {
@@ -49,6 +74,8 @@ public record AgentDefinition(
                 prompt,
                 rules,
                 skills,
+                mcpServers,
+                hooks,
                 executorId,
                 model,
                 effort,
@@ -73,6 +100,9 @@ public record AgentDefinition(
         private List<ArtifactContract> artifacts = List.of();
         private List<VerificationGate> verification = List.of();
         private List<String> rules = List.of();
+        private List<String> skills = List.of();
+        private List<String> mcpServers = List.of();
+        private List<AgentHook> hooks = List.of();
 
         private Builder(String id) {
             this.id = id;
@@ -118,6 +148,21 @@ public record AgentDefinition(
             return this;
         }
 
+        public Builder skills(List<String> value) {
+            this.skills = value;
+            return this;
+        }
+
+        public Builder mcpServers(List<String> value) {
+            this.mcpServers = value;
+            return this;
+        }
+
+        public Builder hooks(List<AgentHook> value) {
+            this.hooks = value;
+            return this;
+        }
+
         public Builder interventions(List<HumanInterventionPoint> value) {
             this.interventions = value;
             return this;
@@ -141,7 +186,9 @@ public record AgentDefinition(
                     description,
                     prompt,
                     rules,
-                    List.of(),
+                    skills,
+                    mcpServers,
+                    hooks,
                     executorId,
                     model,
                     effort,

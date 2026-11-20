@@ -14,6 +14,8 @@
 
 - 迭代 2 — 代码仓库与交付：仓库目录 API；运行冻结仓库快照并检出到工作区（多仓库、工作分支、`auto/continue/new/read_only` 模式、空远端初始化）；credential helper 注入 HTTPS 凭据、SSH 私钥、提交身份；`executionScope=repositories` 的脚本与门禁；`mode=mr` 门禁；GitHub PR 交付记录、合并检测（定时 + `POST /runs/{id}/deliveries/refresh`）；`{{repository}}`/`{{existingMR}}` 占位符；目录导出/导入包含仓库。
 
+- 迭代 3 — 隔离与执行面：门禁 MCP 服务 `submit_gate_result`（仅依赖 JDK 的 jar，独立 JVM）；规则 / Skills / MCP 服务器目录与 API，`${secret:NAME}` 由 `loopforge.mcp.secrets` 解析；角色物化（系统指令、SKILL.md 与 Claude 插件、Hook 脚本与观测、严格 MCP 白名单）接入 Claude Code、CodeBuddy、Codex；Hooks 观测事件 `hook.started/finished`；OpenCode、Cursor、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode 执行器；Docker 沙箱（`loopforge.sandbox.docker.*`，工作流 `sandboxProfileId: docker`）。
+
 ### Fixed (并发审查)
 - 暂停后继续父运行会重复启动子 SOP 并遗留旧子运行。
 - 自动打回会清除待处理的取消/暂停；取消待处理时其他人工操作也会清除它。

@@ -15,6 +15,8 @@ import java.util.Objects;
  * @param gateResultPath workspace-relative file the agent must write its terminal decision to
  * @param artifacts contracts the node must satisfy (used by the mock executor)
  * @param environment run environment (git credentials, repository manifest) for the CLI process
+ * @param compiled role files of this invocation (MCP, skills, hooks), {@code null} for executors
+ *     that do not launch a CLI
  */
 public record AgentInvocation(
         String runId,
@@ -28,7 +30,8 @@ public record AgentInvocation(
         String gateResultPath,
         List<ArtifactContract> artifacts,
         Duration timeout,
-        java.util.Map<String, String> environment) {
+        java.util.Map<String, String> environment,
+        io.github.loopforge4j.core.runtime.materialize.CompiledAgent compiled) {
 
     public AgentInvocation {
         Objects.requireNonNull(executor, "executor");

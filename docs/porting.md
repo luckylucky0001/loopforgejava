@@ -22,12 +22,22 @@
 | `internal/engine/mr_gate.go`（`verifyRunMRs`、`mrCoverageProblem`） | `NodeRunner.runPullRequestGate`、`core.delivery.Deliveries` | 已移植 |
 | `internal/tracker/github.go` | `server.delivery.GitHubDeliveryProvider` | PR 查询与合并检测（GitLab/工蜂待补） |
 | `internal/httpapi/repositories.go` | `server.web.RepositoryController` | 已移植 |
+| `internal/gatemcp`、`cmd/agentflow-gate-mcp`、`runtime/gate_mcp.go` | `core.mcp.GateMcpServer`、`GateMcpPackage` | 已移植（Go 二进制 → 仅依赖 JDK 的 jar） |
+| `internal/runtime/materialize.go`、`skill_md.go`、`hooks.go` | `core.runtime.materialize` | 已移植（Python Hook 包装器 → POSIX sh） |
+| `internal/runtime/provider_claude.go`、`provider_codebuddy.go`、`provider_codex.go`（物化部分） | `CliAgentExecutor.addCompiledArgs`、`CodexMcpArgs` | 已移植 |
+| `internal/runtime/agent_cli.go`、`agent_cli_stream.go`、`agent_cli_zcode.go`、`provider_agentcli.go` | `AgentCliExecutor`、`AgentCliTranslators`、`ClaudeStream` | 已移植（模型网关与个人凭据渲染除外） |
+| `internal/runtime/sandbox_docker.go` | `core.runtime.sandbox.DockerSandbox*` | 每运行一个容器；镜像构建与环境定义未移植 |
+| `internal/domain/assets.go`（rules/skills/mcp） | `core.domain.RuleDefinition`、`SkillDefinition`、`McpServerDefinition` | 文本文件（二进制 skill 文件、市场来源未移植） |
 
 ## 有意的差异
 
 | 主题 | 上游 | 本移植 | 原因 |
 | --- | --- | --- | --- |
-| 节点终态提交 | MCP 工具 `submit_gate_result` 写 JSON 文件 | Agent 直接写同格式 JSON 文件（`.loopforge/gate-results/<node>/attempt-N.json`） | 所有 CLI 都能写文件，免去 MCP 配置；MCP 通道列入路线图 |
+| 节点终态提交 | MCP 工具 `submit_gate_result` 写 JSON 文件 | 同样提供 `submit_gate_result`（Java 实现）；提示词同时给出文件通道作为回退 | 没有 MCP 的执行器（Mock、未开私有 HOME 的 CLI）仍可提交 |
+| 系统指令传递 | Claude `--system-prompt-file`、Codex `developer_instructions`、部分 CLI 前置 | 统一以 `<system_instructions>` 前置在任务书里（续接会话时不重复） | 与 CLI 版本无关；内容不出现在命令行 |
+| Agent CLI 提示词 | argv（超长改为引用文件） | argv 只传一行 ASCII 指针，任务书在 `.loopforge/prompts/` | 不受 locale 和 argv 长度限制、不出现在 `ps` |
+| Docker 内的门禁 MCP | 交叉编译 Linux 二进制写入工作区 | 只读挂载服务端 JDK 到同一路径 | 无需额外构建产物；需要 glibc 镜像 |
+| MCP 密钥 | 解析后写入配置/argv | 只写入每次调用的运行时目录（0600，调用结束删除）；Codex 用启动脚本与 `env_http_headers`，Docker 用 `-e NAME` 按名传递 | 密钥不出现在命令行、运行数据和日志 |
 | 错误分类 | 匹配错误字符串（`"verification "`、`"max turns"`） | `FailureKind` 枚举 | 可读、可测、不怕改文案 |
 | 暂停/中断标记 | 匹配 activity 文案（"用户暂停"、"等待恢复"） | `NodeRun.paused` / `interrupted` 字段 | 同上 |
 | 人工追加尝试 | 修改冻结快照的 `maxAttempts` | `NodeRun.maxAttemptsOverride` | 快照保持不可变 |
@@ -46,4 +56,4 @@
 
 ## 尚未移植
 
-Web UI 与 Chat/Main Bot、会话工作区、GitLab/工蜂 MR 交付、Docker 沙箱、执行机器（runner）与云端池、MCP（平台 MCP、门禁 MCP、角色 MCP）、Skills 与 Hooks 物化、账户/项目/需求/Issue、定时任务与市场、通知与 Bot、分析与成本定价、预览构建、知识库、多实例租约、其余 7 种 CLI（OpenCode、Cursor、Antigravity、Kimi、Pi、DeepSeek Harness、ZCode）。排期见 [roadmap.md](roadmap.md)。
+Web UI 与 Chat/Main Bot、会话工作区、GitLab/工蜂 MR 交付、执行机器（runner）与云端池、平台 MCP 与知识库 MCP、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、bwrap/seatbelt 轻量沙箱、Agent CLI 的模型网关与个人凭据、账户/项目/需求/Issue、定时任务、通知与 Bot、分析与成本定价、预览构建、多实例租约。排期见 [roadmap.md](roadmap.md)。

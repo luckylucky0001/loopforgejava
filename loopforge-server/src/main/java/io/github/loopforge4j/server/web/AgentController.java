@@ -51,6 +51,8 @@ class AgentController {
                         body.prompt(),
                         body.rules(),
                         body.skills(),
+                        body.mcpServers(),
+                        body.hooks(),
                         body.executorId(),
                         body.model(),
                         body.effort(),

@@ -68,6 +68,17 @@ loopforge:
   security:
     token-file: ${LOOPFORGE_DATA_DIR:./data}/api-token
     public-docs: true
+  # MCP definitions reference secrets as ${secret:NAME}; values live only here.
+  # mcp:
+  #   secrets:
+  #     TRACKER: ${TRACKER_TOKEN}
+  # Docker sandbox profile, selected by workflows with "sandboxProfileId": "docker".
+  # sandbox:
+  #   docker:
+  #     enabled: true
+  #     image: debian:bookworm-slim
+  #     memory: 4g
+  #     read-only-root: true
   # Executor credentials are injected only into the CLI process of that executor kind.
   # credentials:
   #   claude-code:

@@ -77,7 +77,7 @@ public final class LocalSandbox implements Sandbox {
         // CLIs and scripts must emit UTF-8 regardless of the server's locale.
         env.putIfAbsent("LANG", "C.UTF-8");
         if (options.privateHome()) {
-            Path home = workspace.resolve(CONTROL_DIR).resolve("home").resolve(safeSegment(label));
+            Path home = privateHome(label);
             Files.createDirectories(home.resolve("tmp"));
             env.put("HOME", home.toString());
             env.put("TMPDIR", home.resolve("tmp").toString());
@@ -87,6 +87,13 @@ public final class LocalSandbox implements Sandbox {
         env.put("LOOPFORGE_WORKSPACE", workspace.toString());
         env.put("LOOPFORGE_SANDBOX_ID", id);
         return env;
+    }
+
+    @Override
+    public Path privateHome(String label) {
+        return options.privateHome()
+                ? workspace.resolve(CONTROL_DIR).resolve("home").resolve(safeSegment(label))
+                : null;
     }
 
     private Path resolveDirectory(String relative) {

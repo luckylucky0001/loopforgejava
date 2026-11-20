@@ -25,6 +25,11 @@ public final class CodeBuddyExecutor extends CliAgentExecutor {
         argv.addAll(invocation.executor().args());
         dropFlag(argv, "--resume");
         addModelArgs(argv, invocation, true);
+        if (invocation.compiled() != null) {
+            // --tools is a built-in allowlist that CodeBuddy also applies to MCP tools
+            dropFlag(argv, "--tools");
+        }
+        addCompiledArgs(argv, invocation.compiled(), "--plugin-dir");
         if (invocation.resumeSessionId() != null
                 && !invocation.resumeSessionId().isBlank()) {
             argv.add("--resume");

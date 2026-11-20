@@ -21,12 +21,14 @@
 - [x] `mode=mr` 门禁：推送了提交的工作分支必须有覆盖最新提交的 PR；平台不可查询时转人工
 - [x] GitHub（含 Enterprise）PR 查询、运行交付记录、定时合并检测与手动刷新
 
-## 迭代 3 — 隔离与执行面
+## 迭代 3 — 隔离与执行面（已完成）
 
-- Docker 沙箱（每运行一个容器、只读根文件系统选项、资源限制）
-- 门禁 MCP 服务（`submit_gate_result` 工具，基于 MCP Java SDK），保留文件通道作为回退
-- 角色级 MCP 服务器与 Skills 物化；Hooks
-- 其余 Agent CLI 适配（OpenCode、Cursor、Kimi、Pi 等）
+- [x] 门禁 MCP 服务：`submit_gate_result` 工具（JSON-RPC over stdio，只依赖 JDK，打包成小 jar 写入工作区，独立 JVM 运行），与文件通道写同一结果文件；严格的参数校验与"只能提交一次"
+- [x] 规则 / Skills / MCP 服务器目录（`/api/v1/rules`、`/skills`、`/mcp-servers`），角色按 id 绑定；`${secret:NAME}` 占位符由服务端配置解析
+- [x] 角色物化：系统指令（规则按优先级、Skills 列表、MCP 用法）、SKILL.md 树与 Claude 插件清单、Hook 脚本与观测包装器、严格 MCP 白名单；Claude Code / CodeBuddy（`--mcp-config --strict-mcp-config --settings --plugin-dir`）、Codex（`-c mcp_servers.* / hooks.* / skills.config`，密钥不上命令行）
+- [x] Hooks：`SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/Stop`，`run` 或 `repositories` 范围，执行观测转为运行事件
+- [x] 其余 7 种 Agent CLI：OpenCode、Cursor、Antigravity、Kimi Code、Pi、DeepSeek Harness、ZCode（原生流翻译为 Claude stream-json，MCP 配置写入私有 HOME）
+- [x] Docker 沙箱：每个运行一个容器、工作区同路径挂载、资源限制、只读根文件系统、`no-new-privileges`、变量按名传递不上命令行、标记进程终止
 
 ## 迭代 4 — 多实例与运维
 

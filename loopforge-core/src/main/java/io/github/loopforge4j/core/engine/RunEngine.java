@@ -86,6 +86,8 @@ public final class RunEngine implements AutoCloseable {
     private final Map<String, RunScheduler> schedulers = new HashMap<>();
     private final NodeRunner nodeRunner;
     private final GitCredentialProvider gitCredentials;
+    private final java.util.function.UnaryOperator<String> mcpSecrets;
+    private final java.nio.file.Path gateMcpJava;
     private final DeliveryProvider delivery;
     /** Serializes repository checkout per shared workspace (parallel first nodes, parent + child). */
     private final ReentrantLock[] checkoutLocks = new ReentrantLock[32];
@@ -101,6 +103,10 @@ public final class RunEngine implements AutoCloseable {
         this.clock = builder.clock == null ? Clock.systemUTC() : builder.clock;
         this.nodeRunner = new NodeRunner(this);
         this.gitCredentials = builder.gitCredentials == null ? GitCredentialProvider.NONE : builder.gitCredentials;
+        this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
+        this.gateMcpJava = builder.gateMcpJava == null
+                ? io.github.loopforge4j.core.mcp.GateMcpPackage.currentJava()
+                : builder.gateMcpJava;
         this.delivery = builder.delivery == null ? DeliveryProvider.NONE : builder.delivery;
         for (int i = 0; i < checkoutLocks.length; i++) {
             checkoutLocks[i] = new ReentrantLock();
@@ -1231,6 +1237,14 @@ public final class RunEngine implements AutoCloseable {
         return delivery;
     }
 
+    java.util.function.UnaryOperator<String> mcpSecrets() {
+        return mcpSecrets;
+    }
+
+    java.nio.file.Path gateMcpJava() {
+        return gateMcpJava;
+    }
+
     /**
      * Re-reads the pull requests that deliver the run's work branches (merge detection). Repositories
      * whose host cannot be queried are skipped.
@@ -1449,9 +1463,23 @@ public final class RunEngine implements AutoCloseable {
         private EngineSettings settings;
         private Clock clock;
         private GitCredentialProvider gitCredentials;
+        private java.util.function.UnaryOperator<String> mcpSecrets;
+        private java.nio.file.Path gateMcpJava;
         private DeliveryProvider delivery;
 
         private Builder() {}
+
+        /** Resolves {@code ${secret:NAME}} placeholders of MCP server definitions. */
+        public Builder mcpSecrets(java.util.function.UnaryOperator<String> value) {
+            this.mcpSecrets = value;
+            return this;
+        }
+
+        /** {@code java} launcher for the gate MCP server as seen inside the sandbox. */
+        public Builder gateMcpJava(java.nio.file.Path value) {
+            this.gateMcpJava = value;
+            return this;
+        }
 
         public Builder gitCredentials(GitCredentialProvider value) {
             this.gitCredentials = value;

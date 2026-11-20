@@ -149,7 +149,8 @@ class CliAgentExecutorTest {
                 null,
                 List.of(),
                 null,
-                Map.of("LOOPFORGE_WORK_BRANCHES", "repo=feature/x"));
+                Map.of("LOOPFORGE_WORK_BRANCHES", "repo=feature/x"),
+                null);
     }
 
     private Path fakeCli(String name, String body) throws Exception {

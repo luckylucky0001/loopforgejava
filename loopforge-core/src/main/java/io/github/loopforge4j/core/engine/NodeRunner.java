@@ -36,6 +36,9 @@ import io.github.loopforge4j.core.runtime.executor.ExecutorException;
 import io.github.loopforge4j.core.runtime.git.GitEnvironment;
 import io.github.loopforge4j.core.runtime.git.GitException;
 import io.github.loopforge4j.core.runtime.git.GitWorkspace;
+import io.github.loopforge4j.core.runtime.materialize.AgentAssets;
+import io.github.loopforge4j.core.runtime.materialize.AgentMaterializer;
+import io.github.loopforge4j.core.runtime.materialize.CompiledAgent;
 import io.github.loopforge4j.core.runtime.sandbox.CommandSpec;
 import io.github.loopforge4j.core.runtime.sandbox.ExecResult;
 import io.github.loopforge4j.core.runtime.sandbox.LineListener;
@@ -414,6 +417,13 @@ final class NodeRunner {
                 .toList();
         String manualGate = manualGateName(agent);
         int maxIterations = agent.loop().effectiveIterations();
+        AgentAssets assets;
+        try {
+            assets = AgentAssets.resolve(agent, engine.catalog());
+        } catch (IllegalArgumentException e) {
+            throw new NodeFailure(FailureKind.CONFIGURATION, "agent '" + agent.id() + "': " + e.getMessage());
+        }
+        List<String> inlineRules = AgentAssets.inlineRules(agent, engine.catalog());
 
         Run run = currentRun(runId);
         Sandbox sandbox = engine.sandbox(run);
@@ -436,7 +446,9 @@ final class NodeRunner {
                 cancellation,
                 contracts,
                 gatePath,
-                runEnvironment);
+                runEnvironment,
+                assets,
+                inlineRules);
 
         NodeFailure failure = null;
         AgentResult last = null;
@@ -617,13 +629,15 @@ final class NodeRunner {
             Cancellation cancellation,
             List<ArtifactContract> contracts,
             String gatePath,
-            Map<String, String> environment) {}
+            Map<String, String> environment,
+            AgentAssets assets,
+            List<String> inlineRules) {}
 
     private String freshPrompt(Run current, AgentCall call, String manifest) {
         return PromptCompiler.compile(
                 current,
                 call.node(),
-                call.agent(),
+                call.agent().withRules(call.inlineRules()),
                 call.contracts(),
                 engine.runs().artifacts(call.runId()),
                 manifest,
@@ -673,7 +687,8 @@ final class NodeRunner {
                 call.gatePath(),
                 call.contracts(),
                 timeout(call.node()),
-                call.environment());
+                call.environment(),
+                compile(call, invocationId));
         try {
             AgentResult result = call.adapter().execute(invocation, call.sandbox(), call.sink(), call.cancellation());
             recordInvocation(call, result);
@@ -692,7 +707,63 @@ final class NodeRunner {
                 recordInvocation(call, e.partial());
             }
             throw new NodeFailure(e.maxTurns() ? FailureKind.MAX_TURNS : FailureKind.EXECUTOR, e.getMessage());
+        } finally {
+            if (invocation.compiled() != null) {
+                try {
+                    invocation.compiled().cleanup();
+                } catch (IOException e) {
+                    log.warn("cannot remove runtime files of {}: {}", invocationId, e.toString());
+                }
+            }
         }
+    }
+
+    /** Compiles the role's MCP servers, skills and hooks for one CLI invocation. */
+    private CompiledAgent compile(AgentCall call, String invocationId) throws NodeFailure, IOException {
+        if (!call.adapter().materializes()) {
+            return null;
+        }
+        List<String> repositoryDirs = currentRun(call.runId()).repositories().stream()
+                .map(io.github.loopforge4j.core.domain.RepositoryContext::workspaceDir)
+                .toList();
+        CompiledAgent compiled;
+        try {
+            compiled = AgentMaterializer.materialize(new AgentMaterializer.Request(
+                    call.sandbox().workspace(),
+                    invocationId,
+                    call.executor().kind(),
+                    call.agent(),
+                    call.assets(),
+                    call.gatePath(),
+                    engine.gateMcpJava(),
+                    engine.mcpSecrets(),
+                    repositoryDirs));
+        } catch (IllegalArgumentException e) {
+            throw new NodeFailure(
+                    FailureKind.CONFIGURATION, "agent '" + call.agent().id() + "': " + e.getMessage());
+        }
+        call.sink()
+                .emit(new Telemetry(
+                        "runtime",
+                        "agent.materialized",
+                        "finish",
+                        "info",
+                        "已编译角色配置：MCP " + compiled.mcpServers().size() + "，Skills "
+                                + compiled.skills().size() + "，Hooks "
+                                + compiled.hooks().size(),
+                        null,
+                        null,
+                        null,
+                        Map.of(
+                                "mcpServers",
+                                compiled.mcpServers().stream()
+                                        .map(io.github.loopforge4j.core.domain.McpServerDefinition::id)
+                                        .toList(),
+                                "skills",
+                                compiled.skills().size(),
+                                "hooks",
+                                compiled.hooks().size())));
+        return compiled;
     }
 
     private void recordInvocation(AgentCall call, AgentResult result) {

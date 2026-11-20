@@ -1,6 +1,8 @@
 package io.github.loopforge4j.server.persistence;
 
 import io.github.loopforge4j.core.domain.AgentDefinition;
+import io.github.loopforge4j.core.domain.AssetKind;
+import io.github.loopforge4j.core.domain.CatalogAsset;
 import io.github.loopforge4j.core.domain.RepositoryDefinition;
 import io.github.loopforge4j.core.domain.WorkflowDefinition;
 import io.github.loopforge4j.core.json.Json;
@@ -192,6 +194,58 @@ public class JdbcCatalogStore implements CatalogStore {
     @Override
     public boolean deleteRepository(String id) {
         return jdbc.sql("DELETE FROM repositories WHERE id = :id")
+                        .param("id", id)
+                        .update()
+                > 0;
+    }
+
+    @Override
+    public <T extends CatalogAsset> Optional<T> asset(AssetKind<T> kind, String id) {
+        return jdbc.sql("SELECT payload FROM catalog_assets WHERE kind = :kind AND id = :id")
+                .param("kind", kind.wire())
+                .param("id", id)
+                .query((rs, row) -> Json.read(rs.getString("payload"), kind.type()))
+                .optional();
+    }
+
+    @Override
+    public <T extends CatalogAsset> List<T> assets(AssetKind<T> kind) {
+        return jdbc.sql("SELECT payload FROM catalog_assets WHERE kind = :kind ORDER BY id")
+                .param("kind", kind.wire())
+                .query((rs, row) -> Json.read(rs.getString("payload"), kind.type()))
+                .list();
+    }
+
+    @Override
+    public <T extends CatalogAsset> T saveAsset(AssetKind<T> kind, T asset) {
+        return withUpsertRetry(() -> tx.execute(status -> {
+            boolean exists = jdbc.sql("SELECT id FROM catalog_assets WHERE kind = :kind AND id = :id FOR UPDATE")
+                    .param("kind", kind.wire())
+                    .param("id", asset.id())
+                    .query(String.class)
+                    .optional()
+                    .isPresent();
+            T stamped = kind.cast(asset.withUpdatedAt(clock.instant()));
+            String sql = exists
+                    ? "UPDATE catalog_assets SET name = :name, payload = :payload, updated_at = :updatedAt"
+                            + " WHERE kind = :kind AND id = :id"
+                    : "INSERT INTO catalog_assets (kind, id, name, payload, updated_at)"
+                            + " VALUES (:kind, :id, :name, :payload, :updatedAt)";
+            jdbc.sql(sql)
+                    .param("kind", kind.wire())
+                    .param("id", stamped.id())
+                    .param("name", stamped.name())
+                    .param("payload", Json.write(stamped))
+                    .param("updatedAt", Timestamps.of(stamped.updatedAt()))
+                    .update();
+            return stamped;
+        }));
+    }
+
+    @Override
+    public boolean deleteAsset(AssetKind<?> kind, String id) {
+        return jdbc.sql("DELETE FROM catalog_assets WHERE kind = :kind AND id = :id")
+                        .param("kind", kind.wire())
                         .param("id", id)
                         .update()
                 > 0;

@@ -30,7 +30,8 @@ public record LoopForgeProperties(
         @DefaultValue Map<String, ExecutorOverride> executors,
         @DefaultValue Map<String, Map<String, String>> credentials,
         @Valid @DefaultValue Git git,
-        @Valid @DefaultValue GitHub github) {
+        @Valid @DefaultValue GitHub github,
+        @Valid @DefaultValue Mcp mcp) {
 
     /**
      * @param defaultExecutor executor id used when neither role nor node chooses one
@@ -52,7 +53,29 @@ public record LoopForgeProperties(
             @DefaultValue({"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "USER", "LOGNAME", "SHELL"})
             List<String> passthroughEnv,
 
-            @DefaultValue("true") boolean privateHome) {}
+            @DefaultValue("true") boolean privateHome,
+            @Valid @DefaultValue Docker docker) {}
+
+    /**
+     * Docker sandbox profile; workflows select it with {@code sandboxProfileId}.
+     *
+     * @param enabled register the profile (needs a reachable docker daemon)
+     * @param image image with sh, sleep and the agent CLIs the SOPs use
+     * @param mountJavaHome mount the server JDK read-only so the gate MCP server runs in the
+     *     container (glibc-based images)
+     */
+    public record Docker(
+            @DefaultValue("false") boolean enabled,
+            @DefaultValue("docker") String profile,
+            @DefaultValue("debian:bookworm-slim") String image,
+            @DefaultValue("docker") String binary,
+            @DefaultValue("bridge") String network,
+            String memory,
+            String cpus,
+            @DefaultValue("0") int pidsLimit,
+            @DefaultValue("false") boolean readOnlyRoot,
+            String user,
+            @DefaultValue("true") boolean mountJavaHome) {}
 
     /**
      * @param apiTokens accepted bearer tokens (at least 32 characters each)
@@ -100,6 +123,17 @@ public record LoopForgeProperties(
     public record GitHub(
             @NotNull @DefaultValue("https://api.github.com") java.net.URI apiUrl,
             @NotNull @DefaultValue("5m") Duration refreshInterval) {}
+
+    /**
+     * @param secrets values for {@code ${secret:NAME}} placeholders in MCP server definitions; they
+     *     reach only the MCP server processes of an invocation, never the catalog or run data
+     */
+    public record Mcp(@DefaultValue Map<String, String> secrets) {
+        @Override
+        public String toString() {
+            return "Mcp[secrets=" + secrets.keySet() + "]";
+        }
+    }
 
     /** Replaces the launch command of a built-in executor (e.g. an absolute binary path). */
     public record ExecutorOverride(String binary, List<String> args, String model, String effort) {}

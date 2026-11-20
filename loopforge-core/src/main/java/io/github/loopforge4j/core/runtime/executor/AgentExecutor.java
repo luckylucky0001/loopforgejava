@@ -11,6 +11,11 @@ public interface AgentExecutor {
 
     String kind();
 
+    /** Whether the role's MCP servers, skills and hooks are compiled into workspace files for it. */
+    default boolean materializes() {
+        return false;
+    }
+
     /**
      * Runs the agent to completion inside the sandbox workspace.
      *

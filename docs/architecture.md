@@ -65,6 +65,26 @@
 
 `executionScope=repositories` 的脚本和命令门禁在每个仓库目录各执行一次并注入 `LOOPFORGE_REPOSITORY_*`、`LOOPFORGE_WORK_BRANCH` 等变量。`mode=mr` 门禁对每个推送了新提交的可写仓库调用 `DeliveryProvider`，要求存在从工作分支到基线、覆盖最新推送提交的 PR；平台不可查询时转人工确认。找到的 PR 记录在运行的 `deliveries` 中，成功的运行由定时任务刷新合并状态。
 
+## 角色物化
+
+每次 CLI 调用前，`AgentMaterializer` 把角色编译到工作区：
+
+| 位置 | 内容 | 生命周期 |
+| --- | --- | --- |
+| `.loopforge/agents/<role>/agent-system.md` | 名称、目录规则（按优先级）、Skills 列表、MCP 用法 | 角色级，内容不变时不重写 |
+| `.loopforge/agents/<role>/skills/<id>/` | SKILL.md（补齐 front matter）与附属文件；`.claude-plugin/plugin.json` | 角色级，解绑后删除 |
+| `.loopforge/agents/<role>/hooks/` | Hook 脚本与 sh 包装器（转交 CLI 的 Hook 载荷、按仓库循环、写观测行） | 角色级 |
+| `.loopforge/runtime/<invocation>/` | `mcp.json`（含解析后的 MCP 密钥）、Hook `settings.json`、`hooks.ndjson`、Codex 启动脚本 | 单次调用，结束即删除 |
+| `.loopforge/bin/loopforge-gate-mcp.jar` | 门禁 MCP 服务 | 工作区共享 |
+
+系统指令以 `<system_instructions>` 前置在任务书里；Claude Code / CodeBuddy 用 `--mcp-config … --strict-mcp-config --settings … --plugin-dir …`，Claude 还限定 `--setting-sources user`（私有 HOME，因此不加载仓库里的 `.claude/settings.json` Hook）；Codex 用 `-c` 覆盖项；其余 CLI 的 MCP 配置写进各自私有 HOME。控制目录写入拒绝跟随符号链接（Agent 可能在工作区里预置链接），文件以临时文件 + 原子重命名替换。
+
+门禁 MCP 服务是 JSON-RPC over stdio 的最小实现（`initialize`、`tools/list`、`tools/call`、`ping`），校验规则与上游一致，以 `CREATE_NEW` 写结果文件保证只提交一次。它只依赖 JDK，引擎把它的两个类打包成 jar 写入工作区，由同一 JDK 在独立进程中启动；Docker 沙箱把 JDK 只读挂载到同一路径。
+
+## Docker 沙箱
+
+每个运行（含子 SOP 共享的工作区）一个长驻容器：`docker run -d --init --security-opt no-new-privileges -v <ws>:<ws> --user <uid:gid> … sleep infinity`。命令通过 `docker exec` 执行：变量值放在 docker 客户端自己的环境里并以 `-e NAME` 传入（命令行只有变量名）；每次 exec 带唯一的 `LOOPFORGE_EXEC_ID`，命令结束后由容器内包装器结束同标记的后台进程（否则它们会让 `docker exec` 一直不返回），取消和超时时再从外部按标记终止。引擎崩溃后恢复时删除旧容器、在同一工作区上重建。
+
 ## 安全
 
 - API：无状态 Bearer Token（仅保存 SHA-256 摘要、常量时间比较），未配置时生成随机 Token 写入仅属主可读的文件。CSRF 关闭（无 Cookie/会话）。SSE 端点额外接受 `access_token` 查询参数（浏览器 EventSource 无法设置请求头），其他端点不接受。

@@ -78,7 +78,13 @@ class WorkflowController {
     @Operation(summary = "Export the whole catalog as an importable bundle")
     @GetMapping("/catalog/export")
     CatalogBundle export() {
-        return new CatalogBundle(store.agents(), store.workflows(), store.repositories());
+        return new CatalogBundle(
+                store.agents(),
+                store.workflows(),
+                store.repositories(),
+                store.assets(io.github.loopforge4j.core.domain.AssetKind.RULE),
+                store.assets(io.github.loopforge4j.core.domain.AssetKind.SKILL),
+                store.assets(io.github.loopforge4j.core.domain.AssetKind.MCP_SERVER));
     }
 
     private static WorkflowDefinition withId(WorkflowDefinition body, String id) {
