@@ -38,6 +38,7 @@
 | `internal/domain/shared_schedule.go`、`schedule_execution.go` | `server.work.Schedule*` | cron 定时运行 |
 | `internal/domain/notification*.go`、`internal/notification` | `server.work.Notifier`、`NotificationChannel`、`BotMessages` | Webhook 与企业微信 / 飞书 / 钉钉 / Slack 群机器人；未移植企业微信智能机器人长连接（卡片内审批）与 AI 运行报告 |
 | `internal/runtime/sandbox_process.go`（bwrap） | `core.runtime.sandbox.BwrapSandboxProvider` | 已移植（Linux bwrap；macOS seatbelt 未移植） |
+| `internal/runner`、`cmd/agentflow-runner`、`internal/repo/run_admission.go`（runner 桶） | `loopforge-runner`（`RunnerAgent`、`RemoteRunStore`、`RemoteCatalogStore`）、`server.runner`、`RunEngine.runnerId` | 个人机器与共享执行池；机器本身运行完整引擎 |
 | `internal/auth`（企业身份） | `server.account.OidcService`、`OidcClient`、`OidcController` | 标准 OIDC 授权码 + PKCE（JDK 实现，RS256/ES256） |
 | `web/`（React 控制台） | `static/console`（原生 ES 模块） | 重写，不含上游前端代码与素材 |
 | `internal/mcpserver`、`internal/application/operations.go`、`cmd/agentflow-mcp` | `server.mcp.PlatformMcpController`、`PlatformOperations`、`core.mcp.PlatformMcpBridge` | 已移植（操作清单对应本移植的 API） |
@@ -76,9 +77,10 @@
 | 需求同步的通道 | 内部 MCP 网关（工蜂 `search_project_issues`、TAPD `proxy_execute_tool`） | GitHub / GitLab REST 与 TAPD 开放 API | 其他部署没有这些内部网关；开放 API 可直接用部署级凭据 |
 | 同步时已关闭的外部项 | 也导入（状态为已关闭） | 首次看到时已关闭则不导入 | 避免历史 Issue 涌入待办 |
 | TAPD 迭代对账 | 删除不在迭代里的未保留条目 | 只删除未开始（待办/待规划、无运行）的条目 | 已在执行的需求不应因外部调整而消失 |
-| bwrap 沙箱可见范围 | 只读根文件系统，其他工作区可读 | 另外隐藏工作区根目录（含其他运行）与服务端 HOME，可配置更多 | 一个运行不应读到另一个运行或服务端的登录凭据 |
+| bwrap 沙箱可见范围 | 只读挂载整个根文件系统 | 只挂载系统目录、JDK 与本运行工作区 | 只读挂载挡不住连接主机套接字（Docker、数据库），也不应读到其他运行或服务端的登录凭据 |
+| 执行机器协议 | 机器认领任务（节点）并回传结果 | 机器认领整个运行，运行完整引擎，通过版本号比较提交运行状态 | 复用引擎的所有语义（返工、门禁、恢复、遥测），无需第二套节点执行实现 |
 | 单点登录账户绑定 | 企业身份 | issuer + subject 绑定；重名时改用新用户名，邮箱关联需显式开启 | 防止身份提供方里的同名用户接管本地账户（含管理员） |
 
 ## 尚未移植
 
-Chat/Main Bot 与会话工作区、需求 AI 澄清与多泳道、执行机器（runner）与云端池（含按执行机器分桶的准入）、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、Agent CLI 的模型网关与个人凭据、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。
+Chat/Main Bot 与会话工作区、需求 AI 澄清与多泳道、云端执行池的自动扩缩容、浏览器 MCP、Skills 市场、Dockerfile/环境定义与镜像构建、macOS seatbelt 沙箱、Agent CLI 的模型网关与个人凭据、企业微信智能机器人长连接与 AI 运行报告、业务域报表与运行质量评估、预览构建、拖拽式 SOP 设计器。排期见 [roadmap.md](roadmap.md)。

@@ -68,6 +68,9 @@ class SecurityConfiguration {
                                     "/api/v1/auth/oidc/start",
                                     "/api/v1/auth/oidc/callback")
                             .permitAll();
+                    // execution machines authenticate every request with their own token in the controller
+                    auth.requestMatchers(io.github.loopforge4j.server.runner.RunnerApiController.PATH + "/**")
+                            .permitAll();
                     // agents' knowledge proxy verifies its own run tokens (they are not API credentials)
                     auth.requestMatchers(
                                     org.springframework.http.HttpMethod.POST,

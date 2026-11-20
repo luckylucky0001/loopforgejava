@@ -224,16 +224,15 @@ public class TrackerService {
             int[] counts) {
         Optional<Requirement> existing = requirements.findByExternal(projectId, ref.key());
         if (existing.isPresent()) {
-            Requirement current = existing.get();
-            ExternalRef merged = current.external() == null
-                    ? ref
-                    : current.external().refreshed(ref.url(), ref.state(), clock.instant());
-            if (ref.imported()) {
-                merged = merged.markImported();
-            }
-            ExternalRef finalRef = merged;
-            Optional<Requirement> updated = requirements.update(
-                    current.id(), r -> r.synced(clip(item.title(), 500), clip(item.description(), 100_000), finalRef));
+            Instant now = clock.instant();
+            // merged with the row as locked: a concurrent write-back's notified list must survive
+            Optional<Requirement> updated = requirements.update(existing.get().id(), r -> {
+                ExternalRef merged = r.external() == null ? ref : r.external().refreshed(ref.url(), ref.state(), now);
+                if (ref.imported()) {
+                    merged = merged.markImported();
+                }
+                return r.synced(clip(item.title(), 500), clip(item.description(), 100_000), merged);
+            });
             counts[1]++;
             return updated;
         }
@@ -330,6 +329,21 @@ public class TrackerService {
      * @param target a repository id, or {@code tapd}
      */
     public Requirement push(String projectId, int number, String target, String actor) {
+        Requirement found = requirements
+                .find(projectId, number)
+                .orElseThrow(() -> new io.github.loopforge4j.core.engine.RunNotFoundException(
+                        "requirement #" + number + " not found"));
+        // one push per requirement at a time (a double click must not create two external items)
+        ReentrantLock lock = writeBackLocks.computeIfAbsent(found.id(), k -> new ReentrantLock());
+        lock.lock();
+        try {
+            return pushLocked(projectId, number, target, actor);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private Requirement pushLocked(String projectId, int number, String target, String actor) {
         Requirement requirement = requirements
                 .find(projectId, number)
                 .orElseThrow(() -> new io.github.loopforge4j.core.engine.RunNotFoundException(
@@ -373,7 +387,23 @@ public class TrackerService {
             throw new ApiException(HttpStatus.BAD_GATEWAY, e.getMessage());
         }
         log.info("requirement {} #{} pushed to {} by {}", projectId, number, ref.url(), actor);
-        return requirements.update(requirement.id(), r -> r.withExternal(ref)).orElseThrow();
+        boolean[] linked = {false};
+        Requirement result = requirements
+                .update(requirement.id(), r -> {
+                    if (r.external() != null) {
+                        return r; // linked meanwhile by another instance: keep that link
+                    }
+                    linked[0] = true;
+                    return r.withExternal(ref);
+                })
+                .orElseThrow();
+        if (!linked[0]) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "requirement #" + number + " was linked meanwhile; " + ref.url()
+                            + " was created but is not linked");
+        }
+        return result;
     }
 
     // ------------------------------------------------------------------ write-back

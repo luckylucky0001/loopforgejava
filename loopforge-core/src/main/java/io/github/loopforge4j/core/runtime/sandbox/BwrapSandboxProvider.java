@@ -9,11 +9,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Lightweight Linux isolation with bubblewrap (upstream {@code bwrap} process sandbox): every
- * process of a run sees the host file system read-only, can write only its own workspace and a
- * private {@code /tmp}, and runs in new user, PID, IPC and UTS namespaces. Stricter than upstream,
- * the other runs' workspaces and the server's HOME are hidden behind empty mounts. The network is
- * shared unless configured otherwise, so agents still reach their model APIs.
+ * Lightweight Linux isolation with bubblewrap (upstream {@code bwrap} process sandbox): processes
+ * see only the system directories (read-only), the JDK and their own run workspace (writable),
+ * with a private {@code /tmp}, in new user, PID, IPC and UTS namespaces. Nothing else of the host is
+ * mounted: not {@code /run} or {@code /var} (host sockets such as the Docker daemon's or a
+ * database's), not the home directories, not other runs' workspaces. Stricter than upstream, which
+ * mounts the whole root read-only — a read-only mount does not stop connecting to a socket. The
+ * network is shared unless configured otherwise, so agents still reach their model APIs.
  */
 public final class BwrapSandboxProvider implements SandboxProvider {
 
@@ -28,13 +30,32 @@ public final class BwrapSandboxProvider implements SandboxProvider {
      * @param shareNetwork keep the host network (agents need their model APIs); {@code false}
      *     isolates it
      */
-    public record Options(String profile, String binary, List<Path> hiddenPaths, boolean shareNetwork) {
+    public record Options(
+            String profile, String binary, List<Path> hiddenPaths, boolean shareNetwork, List<Path> readOnlyPaths) {
         public Options {
             profile = profile == null || profile.isBlank() ? PROFILE : profile;
             binary = binary == null || binary.isBlank() ? "bwrap" : binary;
             hiddenPaths = hiddenPaths == null ? List.of() : List.copyOf(hiddenPaths);
+            readOnlyPaths =
+                    readOnlyPaths == null || readOnlyPaths.isEmpty() ? SYSTEM_PATHS : List.copyOf(readOnlyPaths);
+        }
+
+        public Options(String profile, String binary, List<Path> hiddenPaths, boolean shareNetwork) {
+            this(profile, binary, hiddenPaths, shareNetwork, null);
         }
     }
+
+    /** What processes may read by default: programs, libraries and system configuration. */
+    public static final List<Path> SYSTEM_PATHS = List.of(
+            Path.of("/usr"),
+            Path.of("/bin"),
+            Path.of("/sbin"),
+            Path.of("/lib"),
+            Path.of("/lib32"),
+            Path.of("/lib64"),
+            Path.of("/libx32"),
+            Path.of("/etc"),
+            Path.of("/opt"));
 
     private final LocalSandboxProvider local;
     private final LocalSandboxOptions localOptions;
@@ -117,16 +138,43 @@ public final class BwrapSandboxProvider implements SandboxProvider {
         if (!options.shareNetwork()) {
             out.add("--unshare-net");
         }
-        out.addAll(List.of("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"));
-        // evaluated per launch: a path created after startup is hidden too
+        for (Path path : options.readOnlyPaths()) {
+            // --ro-bind-try keeps symlinked directories (/bin -> usr/bin) and skips missing ones
+            out.addAll(List.of("--ro-bind-try", path.toString(), path.toString()));
+        }
+        Path javaHome =
+                Path.of(System.getProperty("java.home")).toAbsolutePath().normalize();
+        if (options.readOnlyPaths().stream().noneMatch(javaHome::startsWith)) {
+            // the gate MCP server runs on this JDK; only the JDK itself becomes visible, not its parent
+            out.addAll(List.of("--ro-bind", javaHome.toString(), javaHome.toString()));
+        }
+        resolvConf().ifPresent(target -> out.addAll(List.of("--ro-bind-try", target.toString(), target.toString())));
+        out.addAll(List.of("--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"));
+        // configured paths inside the mounted trees (a secrets file under /etc, say) are emptied;
+        // evaluated per launch, so a path created after startup is covered too
         for (Path path : hiddenPaths(workspaceRoot, options.hiddenPaths())) {
-            out.addAll(List.of("--tmpfs", path.toString()));
+            if (options.readOnlyPaths().stream().anyMatch(path::startsWith)) {
+                out.addAll(List.of("--tmpfs", path.toString()));
+            }
         }
         out.addAll(List.of("--bind", workspace.toString(), workspace.toString()));
         out.addAll(List.of("--chdir", (directory == null ? workspace : directory).toString()));
         out.add("--");
         out.addAll(argv);
         return out;
+    }
+
+    /**
+     * {@code /etc/resolv.conf} is often a symlink into {@code /run} (systemd-resolved): its target
+     * file alone is mounted so name resolution keeps working without exposing {@code /run}.
+     */
+    private static java.util.Optional<Path> resolvConf() {
+        try {
+            Path real = Path.of("/etc/resolv.conf").toRealPath();
+            return real.startsWith("/etc") ? java.util.Optional.empty() : java.util.Optional.of(real);
+        } catch (IOException e) {
+            return java.util.Optional.empty();
+        }
     }
 
     /**
@@ -147,7 +195,8 @@ public final class BwrapSandboxProvider implements SandboxProvider {
                 continue;
             }
             if (javaHome.startsWith(p)) {
-                log.warn("bwrap sandbox: not hiding {} because the JDK ({}) lives there", p, javaHome);
+                // emptying it would hide the JDK; it is not mounted unless it is a system path anyway
+                log.debug("bwrap sandbox: {} holds the JDK ({}); only the JDK is mounted from it", p, javaHome);
                 continue;
             }
             out.add(p);

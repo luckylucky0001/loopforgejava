@@ -17,7 +17,8 @@ final class ApiRequests {
             @NotBlank @Size(max = 200) String workflowId,
             @Size(max = MAX_INPUT) String input,
             @Size(max = 200) String projectId,
-            @Size(max = 20) List<@Valid RepositorySelection> repositories) {
+            @Size(max = 20) List<@Valid RepositorySelection> repositories,
+            @Size(max = 64) String runnerId) {
 
         List<io.github.loopforge4j.core.domain.RepositorySelection> selections() {
             return repositories == null

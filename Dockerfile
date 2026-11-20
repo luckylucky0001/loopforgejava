@@ -5,6 +5,7 @@ WORKDIR /src
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
 COPY loopforge-core/pom.xml loopforge-core/
+COPY loopforge-runner/pom.xml loopforge-runner/
 COPY loopforge-server/pom.xml loopforge-server/
 # Downloads are retried: a transient registry hiccup should not fail the image build.
 RUN --mount=type=cache,target=/root/.m2 \
@@ -13,9 +14,11 @@ RUN --mount=type=cache,target=/root/.m2 \
 RUN --mount=type=cache,target=/root/.m2 \
     for attempt in 1 2 3; do ./mvnw -B -ntp -q dependency:go-offline -DexcludeReactor=true && break; sleep 10; done || true
 COPY loopforge-core/src loopforge-core/src
+COPY loopforge-runner/src loopforge-runner/src
 COPY loopforge-server/src loopforge-server/src
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -ntp -q package -DskipTests -Dspotless.check.skip=true -Djacoco.skip=true \
-    && java -Djarmode=tools -jar loopforge-server/target/loopforge-server-*.jar extract --layers --launcher --destination /extracted
+    && java -Djarmode=tools -jar loopforge-server/target/loopforge-server-*.jar extract --layers --launcher --destination /extracted \
+    && mkdir -p /extracted/runner && cp loopforge-runner/target/loopforge-runner-*-all.jar /extracted/runner/loopforge-runner.jar
 
 FROM eclipse-temurin:21-jre
 # Scripts and agent CLIs commonly need git, python3 and a POSIX shell. Agent CLIs themselves are not
@@ -33,6 +36,8 @@ COPY --from=build /extracted/dependencies/ ./
 COPY --from=build /extracted/spring-boot-loader/ ./
 COPY --from=build /extracted/snapshot-dependencies/ ./
 COPY --from=build /extracted/application/ ./
+# the execution machine jar, downloadable from the console (执行机器)
+COPY --from=build /extracted/runner/ /app/runner/
 COPY LICENSE THIRD_PARTY_NOTICES.md /app/
 USER loopforge
 VOLUME ["/data"]

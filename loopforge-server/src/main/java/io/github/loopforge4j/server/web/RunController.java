@@ -42,9 +42,12 @@ class RunController {
     private final RunEngine engine;
     private final AccessPolicy access;
 
-    RunController(RunEngine engine, AccessPolicy access) {
+    private final io.github.loopforge4j.server.runner.RunnerService runners;
+
+    RunController(RunEngine engine, AccessPolicy access, io.github.loopforge4j.server.runner.RunnerService runners) {
         this.engine = engine;
         this.access = access;
+        this.runners = runners;
     }
 
     private Run readable(String runId, Principal principal) {
@@ -61,8 +64,15 @@ class RunController {
     @PostMapping
     ResponseEntity<Run> start(@Valid @RequestBody ApiRequests.StartRun request, Principal principal) {
         access.requireProject(principal, request.projectId(), ProjectRole.DEVELOPER);
-        access.requireIsolatedSandbox(principal, request.workflowId());
-        ExecutionContext context = new ExecutionContext(request.projectId(), actor(principal), null, null, null);
+        String runnerId = request.runnerId() == null || request.runnerId().isBlank()
+                ? null
+                : request.runnerId().strip();
+        if (runnerId == null || runners.requireUsable(runnerId, principal).shared()) {
+            // a personal machine runs scripts with its owner's own rights; the server and pool machines do not
+            access.requireIsolatedSandbox(principal, request.workflowId());
+        }
+        ExecutionContext context =
+                new ExecutionContext(request.projectId(), actor(principal), null, null, null, runnerId);
         Run run = engine.start(request.workflowId(), request.input(), context, request.selections());
         return ResponseEntity.created(URI.create("/api/v1/runs/" + run.id())).body(run);
     }

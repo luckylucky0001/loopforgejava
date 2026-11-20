@@ -50,6 +50,10 @@ public class InternalApi {
 
     @EventListener
     void onStarted(WebServerInitializedEvent event) {
+        // a separate management server (management.server.port) announces itself too: not the API
+        if (event.getApplicationContext().getServerNamespace() != null) {
+            return;
+        }
         if (event.getWebServer().getPort() > 0) {
             loopback = "http://127.0.0.1:" + event.getWebServer().getPort() + contextPath;
         }
@@ -58,6 +62,11 @@ public class InternalApi {
     /** Base URL of this server on the loopback interface, {@code null} before it listens. */
     public String loopbackBase() {
         return loopback;
+    }
+
+    /** How processes on this host reach the API: the configured internal URL, else loopback. */
+    public String localBase() {
+        return configured != null ? configured : loopback;
     }
 
     /**

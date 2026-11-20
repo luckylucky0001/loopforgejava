@@ -46,10 +46,17 @@ public class ServerPlatformMcp implements PlatformMcp {
 
     @Override
     public Binding bind(Invocation invocation) {
+        return bindAt(invocation, baseFor(invocation.sandboxProfileId()));
+    }
+
+    /**
+     * The binding for an agent that reaches this server at {@code base} (an execution machine passes
+     * the URL it connects to).
+     */
+    public Binding bindAt(Invocation invocation, String base) {
         List<McpServerDefinition> servers = new ArrayList<>();
         List<RuleDefinition> rules = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
-        String base = baseFor(invocation.sandboxProfileId());
         if (invocation.platform()) {
             if (!platformEnabled) {
                 warnings.add("未注入 " + PLATFORM_ID + "：本部署关闭了平台 MCP（loopforge.mcp.platform-enabled）");
@@ -100,7 +107,7 @@ public class ServerPlatformMcp implements PlatformMcp {
             return sandboxUrl;
         }
         if (hostNetworkProfiles.contains(sandboxProfileId)) {
-            return api.loopbackBase();
+            return api.localBase();
         }
         return null;
     }

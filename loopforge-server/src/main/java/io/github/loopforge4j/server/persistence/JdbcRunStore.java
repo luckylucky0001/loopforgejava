@@ -55,9 +55,11 @@ public class JdbcRunStore implements RunStore {
         try {
             executeWithoutResult(status -> {
                 jdbc.sql("""
-                        INSERT INTO runs (id, workflow_id, status, parent_run_id, project_id, triggered_by, revision,
+                        INSERT INTO runs (id, workflow_id, status, parent_run_id, project_id, triggered_by, runner_id, revision,
                                           payload, created_at, updated_at)
-                        VALUES (:id, :workflowId, :status, :parent, :project, :actor, 1, :payload, :createdAt, :updatedAt)""")
+                        VALUES (:id, :workflowId, :status, :parent, :project, :actor, :runner, 1, :payload, :createdAt,
+                                :updatedAt)""")
+                        .param("runner", copy.context().runnerId())
                         .param("id", copy.id())
                         .param("project", copy.context().projectId())
                         .param("actor", copy.context().triggeredBy())
@@ -182,6 +184,77 @@ public class JdbcRunStore implements RunStore {
     }
 
     /** Runs a write transaction; driver and SQL details never leave the adapter (they reach node errors). */
+    /** Runs assigned to an execution machine, oldest first. */
+    public List<Run> listForRunner(String runnerId, java.util.Set<RunStatus> statuses, int limit) {
+        StringBuilder sql = new StringBuilder("SELECT payload, revision FROM runs WHERE runner_id = :runner");
+        if (!statuses.isEmpty()) {
+            sql.append(" AND status IN (:statuses)");
+        }
+        sql.append(" ORDER BY created_at LIMIT :limit");
+        var statement =
+                jdbc.sql(sql.toString()).param("runner", runnerId).param("limit", Math.max(1, Math.min(limit, 500)));
+        if (!statuses.isEmpty()) {
+            statement = statement.param(
+                    "statuses", statuses.stream().map(RunStatus::wire).toList());
+        }
+        return statement
+                .query((rs, row) -> {
+                    Run run = Json.read(rs.getString("payload"), Run.class);
+                    run.revision(rs.getLong("revision"));
+                    return run;
+                })
+                .list();
+    }
+
+    /** Projects an execution machine has runs in (what it may read of the catalog). */
+    public java.util.Set<String> projectsOfRunner(String runnerId) {
+        return new java.util.HashSet<>(jdbc.sql("SELECT DISTINCT project_id FROM runs WHERE runner_id = :runner"
+                        + " AND project_id IS NOT NULL")
+                .param("runner", runnerId)
+                .query(String.class)
+                .list());
+    }
+
+    /** Outcome of a remote commit: whether it won, and the events as stored (with sequences). */
+    public record Commit(boolean committed, long revision, List<RunEvent> events) {}
+
+    /**
+     * The {@link #update} of a remote engine (an execution machine): replaces the stored run if its
+     * revision is still {@code expected}, with the mutation's events and artifacts in the same
+     * transaction. The caller validated that the run belongs to that machine.
+     */
+    public Commit commit(String runId, long expected, Run run, List<RunEvent> events, List<Artifact> artifacts) {
+        ReentrantLock lock = locks.forRun(runId);
+        lock.lock();
+        try {
+            Run copy = Json.copy(run, Run.class);
+            copy.revision(expected + 1);
+            copy.updatedAt(clock.instant());
+            List<RunEvent> stored = new ArrayList<>();
+            Boolean committed = execute(status -> {
+                int rows = jdbc.sql("""
+                        UPDATE runs SET payload = :payload, status = :status, revision = :next, updated_at = :updatedAt
+                        WHERE id = :id AND revision = :expected""")
+                        .param("payload", Json.write(copy))
+                        .param("status", copy.status().wire())
+                        .param("next", expected + 1)
+                        .param("updatedAt", Timestamps.of(copy.updatedAt()))
+                        .param("id", runId)
+                        .param("expected", expected)
+                        .update();
+                if (rows == 0) {
+                    return false;
+                }
+                artifacts.forEach(this::insertArtifact);
+                stored.addAll(insertEvents(runId, events));
+                return true;
+            });
+            return new Commit(Boolean.TRUE.equals(committed), expected + 1, stored);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
         try {
             return tx.execute(action);

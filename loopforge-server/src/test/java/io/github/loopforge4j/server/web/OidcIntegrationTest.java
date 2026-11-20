@@ -176,7 +176,8 @@ class OidcIntegrationTest {
     /** Runs the browser part of a sign-in; returns the console fragment the server redirects to. */
     String signIn(UnaryOperator<String> tamperState) throws Exception {
         HttpResponse<String> start = http.send(
-                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/auth/oidc/start"))
+                HttpRequest.newBuilder(URI.create(
+                                "http://localhost:" + port + "/api/v1/auth/oidc/start?client_nonce=" + TAB_NONCE))
                         .build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(start.statusCode()).isEqualTo(302);
@@ -198,9 +199,11 @@ class OidcIntegrationTest {
         return URLDecoder.decode(callback.headers().firstValue("Location").orElseThrow(), StandardCharsets.UTF_8);
     }
 
+    static final String TAB_NONCE = "tab-nonce-0123456789abcdef";
+
     String token(String location) {
-        assertThat(location).startsWith("/#/sso?token=");
-        return location.substring("/#/sso?token=".length());
+        assertThat(location).startsWith("/#/sso?token=").endsWith("&nonce=" + TAB_NONCE);
+        return location.substring("/#/sso?token=".length(), location.indexOf("&nonce="));
     }
 
     Map<String, Object> me(String token) throws Exception {
@@ -221,6 +224,12 @@ class OidcIntegrationTest {
                         HttpResponse.BodyHandlers.ofString())
                 .body();
         assertThat(status).contains("\"oidc\":{", "Example SSO");
+        // a sign-in not started by a console tab (no nonce to echo) is refused
+        HttpResponse<String> bare = http.send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/auth/oidc/start"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(bare.headers().firstValue("Location").orElseThrow()).isEqualTo("/#/sso?error=state");
 
         Map<String, Object> first = me(token(signIn(s -> s)));
         assertThat(first)

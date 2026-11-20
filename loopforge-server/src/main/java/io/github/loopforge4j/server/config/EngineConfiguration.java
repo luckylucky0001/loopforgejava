@@ -105,9 +105,6 @@ class EngineConfiguration {
                     + " namespaces)");
         }
         java.util.List<java.nio.file.Path> hidden = new java.util.ArrayList<>(bwrap.hiddenPaths());
-        if (bwrap.hideServerHome()) {
-            hidden.add(java.nio.file.Path.of(System.getProperty("user.home")));
-        }
         LoopForgeProperties.Sandbox sandbox = properties.sandbox();
         return new io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider(
                 new LocalSandboxOptions(
@@ -116,7 +113,7 @@ class EngineConfiguration {
                         sandbox.privateHome(),
                         properties.engine().nodeTimeout()),
                 new io.github.loopforge4j.core.runtime.sandbox.BwrapSandboxProvider.Options(
-                        bwrap.profile(), bwrap.binary(), hidden, bwrap.shareNetwork()));
+                        bwrap.profile(), bwrap.binary(), hidden, bwrap.shareNetwork(), bwrap.readOnlyPaths()));
     }
 
     /** Deployment-wide Git credentials (upstream resolves them per responsible user). */

@@ -162,4 +162,20 @@ class WorkflowValidatorTest {
                 .anySatisfy(p -> assertThat(p).contains("githubRepo must be owner/name"))
                 .hasSizeGreaterThanOrEqualTo(4);
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "../user,false",
+        "acme/..,false",
+        "./x,false",
+        "acme/app.js,true",
+        "a.b/c-d,true"
+    })
+    void githubRepoNeverHoldsDotSegments(String repo, boolean valid) {
+        java.util.List<String> problems = WorkflowValidator.repositoryProblems(
+                new io.github.loopforge4j.core.domain.RepositoryDefinition(
+                        "r", null, null, "https://github.com/acme/app.git", null, "main", repo, null, null),
+                false);
+        assertThat(problems.stream().anyMatch(p -> p.contains("githubRepo"))).isEqualTo(!valid);
+    }
 }

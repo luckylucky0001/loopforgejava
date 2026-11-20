@@ -169,7 +169,7 @@ function dag(workflow, statuses = {}, onSelect) {
 const NAV = [
   ['#/runs', '运行'], ['#/approvals', '待处理'], ['#/workflows', 'SOP'], ['#/agents', '角色'],
   ['#/assets/rules', '规则 / Skills / MCP'], ['#/repositories', '代码仓库'], ['#/projects', '项目'],
-  ['#/analytics', '分析'], ['#/knowledge', '知识库'], ['#/executors', '执行器'], ['#/settings', '设置'],
+  ['#/analytics', '分析'], ['#/knowledge', '知识库'], ['#/runners', '执行机器'], ['#/executors', '执行器'], ['#/settings', '设置'],
 ];
 
 function shell(content) {
@@ -204,7 +204,7 @@ const ROUTES = [
   [/^#\/repositories$/, () => listPage('repositories', '代码仓库', ['id', 'name', 'provider', 'cloneUrl', 'projectId'])],
   [/^#\/projects\/([^/]+)$/, projectPage], [/^#\/projects$/, projectsPage],
   [/^#\/executors$/, executorsPage], [/^#\/settings$/, settingsPage], [/^#\/users$/, usersPage],
-  [/^#\/analytics$/, analyticsPage], [/^#\/knowledge$/, knowledgePage],
+  [/^#\/analytics$/, analyticsPage], [/^#\/knowledge$/, knowledgePage], [/^#\/runners$/, runnersPage],
 ];
 
 const SSO_ERRORS = {
@@ -212,6 +212,15 @@ const SSO_ERRORS = {
   domain: '该邮箱域名不允许登录', account: '没有与该身份关联的账户，请联系管理员', disabled: '账户已停用',
 };
 let ssoError = '';
+const SSO_NONCE = 'loopforge.sso.nonce';
+
+/** Starts single sign-on from this tab; only this tab will accept the session that comes back. */
+function startSso() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const nonce = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  try { sessionStorage.setItem(SSO_NONCE, nonce); } catch { /* storage blocked: sign-in will be refused */ }
+  location.href = `/api/v1/auth/oidc/start?client_nonce=${nonce}`;
+}
 
 async function route() {
   if (stream) { stream.close(); stream = null; }
@@ -219,9 +228,14 @@ async function route() {
     // the session token arrives in the fragment; drop it from the address bar and history at once
     const params = new URLSearchParams(location.hash.split('?')[1] || '');
     history.replaceState(null, '', `${location.pathname}#/runs`);
-    if (params.get('token')) {
+    let expected = null;
+    try { expected = sessionStorage.getItem(SSO_NONCE); sessionStorage.removeItem(SSO_NONCE); } catch { /* blocked */ }
+    if (params.get('token') && expected && params.get('nonce') === expected) {
       localStorage.setItem(TOKEN_KEY, params.get('token'));
       me = null;
+    } else if (params.get('token')) {
+      // a session this tab did not ask for (a link someone sent): never switch accounts on it
+      ssoError = '这个登录链接不是由本页面发起的，已忽略';
     } else {
       ssoError = SSO_ERRORS[params.get('error')] || '单点登录失败';
     }
@@ -281,7 +295,7 @@ async function loginPage() {
       status.setupRequired ? null : h('label', { class: 'field' }, h('span', {}, '服务 Token（可选）'), serviceToken),
       message, h('button', { class: 'primary', type: 'submit' }, status.setupRequired ? '创建并登录' : '登录')),
     !status.setupRequired && status.oidc?.enabled
-      ? h('div', { class: 'mt' }, h('a', { class: 'btn', href: '/api/v1/auth/oidc/start' }, `使用 ${status.oidc.name || 'SSO'} 登录`)) : null));
+      ? h('div', { class: 'mt' }, h('button', { type: 'button', onclick: startSso }, `使用 ${status.oidc.name || 'SSO'} 登录`)) : null));
   if (ssoError) { message.textContent = ssoError; ssoError = ''; }
 }
 
@@ -292,17 +306,20 @@ async function runsPage() {
   const runs = await api(`/runs?limit=100${params.get('status') ? '&status=' + params.get('status') : ''}`);
   const workflows = await api('/workflows').catch(() => []);
   const projects = await api('/projects').catch(() => []);
+  const machines = await api('/runners').catch(() => []);
   const workflowSelect = h('select', {}, workflows.filter((w) => w.status === 'published').map((w) => h('option', { value: w.id }, `${w.name}（${w.id}）`)));
+  const runnerSelect = h('select', {}, h('option', { value: '' }, '在服务端执行'),
+    machines.map((m) => h('option', { value: m.id }, `${m.name}${m.shared ? '（共享）' : ''}${m.online ? '' : ' · 离线'}`)));
   const projectSelect = h('select', {}, h('option', { value: '' }, '（无项目）'), projects.map((p) => h('option', { value: p.id }, p.name)));
   const input = h('textarea', { rows: 3, placeholder: '任务说明' });
   const repos = h('input', { placeholder: '仓库 id，逗号分隔（可选）' });
   const start = () => attempt(() => api('/runs', { method: 'POST', body: {
-    workflowId: workflowSelect.value, input: input.value, projectId: projectSelect.value || undefined,
+    workflowId: workflowSelect.value, input: input.value, projectId: projectSelect.value || undefined, runnerId: runnerSelect.value || undefined,
     repositories: repos.value.split(',').map((s) => s.trim()).filter(Boolean).map((repositoryId) => ({ repositoryId })),
   } }), (run) => { location.hash = `#/runs/${run.id}`; });
   shell([
     h('h1', {}, '运行'),
-    h('div', { class: 'panel' }, h('div', { class: 'row' }, workflowSelect, projectSelect, repos, h('button', { class: 'primary', onclick: start }, '启动')), h('div', { class: 'mt' }, input)),
+    h('div', { class: 'panel' }, h('div', { class: 'row' }, workflowSelect, projectSelect, runnerSelect, repos, h('button', { class: 'primary', onclick: start }, '启动')), h('div', { class: 'mt' }, input)),
     h('div', { class: 'row mb' }, ['', 'running', 'waiting', 'failed', 'succeeded', 'cancelled'].map((s) =>
       h('a', { class: 'btn', href: `#/runs${s ? '?status=' + s : ''}` }, s || '全部'))),
     h('table', {}, h('tr', {}, ['运行', 'SOP', '状态', '节点', 'Token', '创建'].map((t) => h('th', {}, t))),
@@ -779,7 +796,7 @@ async function analyticsPage() {
     report.trend.map((p) => h('tr', {}, [p.date, p.runs, p.succeeded, p.failed, p.cancelled, p.reworks, ms(p.durationMs), num(p.tokens), usd(p.costUsd), p.mergedPullRequests].map((v) => h('td', {}, v))))));
   shell([
     h('h1', {}, '分析'), filters,
-    report.truncated ? h('div', { class: 'notice' }, '范围内运行过多，只统计了最近的 20000 个。') : null,
+    report.truncated ? h('div', { class: 'notice' }, '范围内运行过多，只统计了最近的 5000 个，请缩小范围。') : null,
     h('div', { class: 'tiles' },
       statTile('运行', num(sum.totalRuns), `进行中 ${sum.activeRuns} · 待处理 ${sum.waitingRuns}`),
       statTile('成功率', pct(sum.successRate), `成功 ${sum.succeededRuns} · 失败 ${sum.failedRuns} · 取消 ${sum.cancelledRuns}`),
@@ -906,6 +923,46 @@ async function knowledgePage() {
         activity.slice(0, 50).map((a) => h('tr', {}, h('td', {}, time(a.at)), h('td', { class: 'mono' }, a.tool),
           h('td', {}, a.agentId ? `${a.agentId}（${(a.runId || '').slice(0, 12)}）` : a.caller || '—'), h('td', {}, a.query || '—'), h('td', {}, a.hits),
           h('td', {}, `${a.latencyMs}ms`), h('td', {}, a.ok ? badge('succeeded') : h('span', { class: 'error' }, a.error || '失败'))))),
+  ]);
+}
+
+// ------------------------------------------------------------------ execution machines
+
+async function downloadRunner() {
+  const response = await fetch('/api/v1/runners/agent.jar', { headers: { Authorization: `Bearer ${token()}` } });
+  if (!response.ok) { alert(response.status === 404 ? '本安装未附带执行机器程序，请从发布页下载 loopforge-runner-*-all.jar' : `下载失败（HTTP ${response.status}）`); return; }
+  const link = h('a', { href: URL.createObjectURL(await response.blob()), download: 'loopforge-runner.jar' });
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+async function runnersPage() {
+  const machines = await api('/runners');
+  const admin = me?.user?.role === 'admin' || me?.service;
+  const refresh = () => runnersPage();
+  const register = () => prompted('注册执行机器', [{ name: 'name', label: '名称（例如 alice-macbook）' },
+    ...(admin ? [{ name: 'shared', label: '共享执行池（所有项目成员可用）', type: 'select', options: ['false', 'true'], value: 'false' }] : [])],
+  async (v) => {
+    const created = await api('/runners', { method: 'POST', body: { name: v.name, shared: v.shared === 'true' } });
+    const server = location.origin;
+    modal('执行机器已注册', h('div', {},
+      h('p', {}, 'Token 只显示这一次。在这台机器上（已安装并登录 claude / codex 等 CLI）运行：'),
+      h('pre', { class: 'mono' }, `export LOOPFORGE_SERVER_URL=${server}\nexport LOOPFORGE_RUNNER_TOKEN=${created.token}\n# 可选：LOOPFORGE_RUNNER_GIT_HTTPS=github.com=<token>  LOOPFORGE_RUNNER_CAPACITY=2\njava -jar loopforge-runner.jar`),
+      h('div', { class: 'row mt' }, h('button', { onclick: downloadRunner }, '下载 loopforge-runner.jar'))), () => h('span'));
+    refresh();
+    return created;
+  });
+  shell([
+    h('div', { class: 'row' }, h('h1', {}, '执行机器'), h('span', { class: 'spacer' }), h('button', { onclick: downloadRunner }, '下载程序'),
+      h('button', { class: 'primary', onclick: register }, '注册')),
+    h('p', { class: 'muted' }, '执行机器只向服务端发起连接，认领分配给它的运行，用本机已登录的 CLI 与凭据执行。个人机器只有所有者能使用，共享执行池由管理员注册。'),
+    machines.length === 0 ? h('p', { class: 'muted' }, '还没有执行机器。') :
+      h('table', {}, h('tr', {}, ['名称', '类型', '状态', '主机', '执行器', '并发', '版本', '最近心跳', ''].map((t) => h('th', {}, t))),
+        machines.map((m) => h('tr', {}, h('td', {}, m.name, h('div', { class: 'muted mono' }, m.id)), h('td', {}, m.shared ? '共享执行池' : `个人（${m.owner || '—'}）`),
+          h('td', {}, badge(m.online ? 'succeeded' : 'cancelled'), ' ', m.online ? '在线' : '离线'), h('td', { class: 'mono' }, m.host || '—'),
+          h('td', {}, (m.executors || []).join(', ') || '—'), h('td', {}, m.capacity || '—'), h('td', { class: 'mono' }, m.version || '—'), h('td', {}, time(m.lastSeenAt)),
+          h('td', {}, h('button', { class: 'danger', onclick: () => confirm(`移除 ${m.name}？它的 Token 立即失效。`) && attempt(() => api(`/runners/${m.id}`, { method: 'DELETE' }), refresh) }, '移除'))))),
   ]);
 }
 

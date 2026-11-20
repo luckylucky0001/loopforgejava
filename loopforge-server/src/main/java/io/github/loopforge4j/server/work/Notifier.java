@@ -208,15 +208,20 @@ public class Notifier implements RunListener {
                 // rendered per attempt: signatures carry a timestamp
                 BotMessages.Outgoing message = BotMessages.render(channel, event, run, publicUrl, clock.instant());
                 try {
-                    HttpResponse<String> response = http.send(
+                    HttpResponse<java.io.InputStream> response = http.send(
                             HttpRequest.newBuilder(message.uri())
                                     .timeout(Duration.ofSeconds(15))
                                     .header("Content-Type", "application/json")
                                     .header("User-Agent", "loopforge4j-notifier")
                                     .POST(HttpRequest.BodyPublishers.ofString(message.body(), StandardCharsets.UTF_8))
                                     .build(),
-                            HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-                    String rejection = BotMessages.rejection(channel.kind(), response.statusCode(), response.body());
+                            HttpResponse.BodyHandlers.ofInputStream());
+                    String reply;
+                    // the platform's answer is a small JSON object; a target streaming more gets cut off
+                    try (java.io.InputStream in = response.body()) {
+                        reply = new String(in.readNBytes(64 * 1024), StandardCharsets.UTF_8);
+                    }
+                    String rejection = BotMessages.rejection(channel.kind(), response.statusCode(), reply);
                     status = rejection == null ? "ok" : rejection;
                     // only server errors and rate limiting are worth another attempt
                     if (rejection == null || response.statusCode() < 500 && response.statusCode() != 429) {

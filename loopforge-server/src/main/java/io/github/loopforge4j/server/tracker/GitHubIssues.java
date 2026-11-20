@@ -50,6 +50,9 @@ public class GitHubIssues {
     }
 
     private HttpRequest.Builder request(String path) throws TrackerException {
+        if (path.contains("/../") || path.contains("/./")) {
+            throw new TrackerException("invalid GitHub repository name");
+        }
         String credential = token.get();
         if (credential == null || credential.isBlank()) {
             throw new TrackerException("no GitHub token is configured (loopforge.git.https entry for the API host)");

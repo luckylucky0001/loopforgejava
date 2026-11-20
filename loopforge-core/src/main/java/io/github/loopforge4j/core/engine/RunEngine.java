@@ -93,6 +93,9 @@ public final class RunEngine implements AutoCloseable {
     private final TelemetryBuffer telemetry;
     private final java.util.function.UnaryOperator<String> mcpSecrets;
     private final io.github.loopforge4j.core.mcp.PlatformMcp platformMcp;
+    /** The execution machine this engine is, {@code null} for server instances. */
+    private final String runnerId;
+
     private final java.nio.file.Path gateMcpJava;
     private final DeliveryProvider delivery;
     /** Serializes repository checkout per shared workspace (parallel first nodes, parent + child). */
@@ -112,6 +115,7 @@ public final class RunEngine implements AutoCloseable {
         this.mcpSecrets = builder.mcpSecrets == null ? name -> null : builder.mcpSecrets;
         this.platformMcp =
                 builder.platformMcp == null ? io.github.loopforge4j.core.mcp.PlatformMcp.NONE : builder.platformMcp;
+        this.runnerId = builder.runnerId == null || builder.runnerId.isBlank() ? null : builder.runnerId.strip();
         this.gateMcpJava = builder.gateMcpJava == null
                 ? io.github.loopforge4j.core.mcp.GateMcpPackage.currentJava()
                 : builder.gateMcpJava;
@@ -220,7 +224,7 @@ public final class RunEngine implements AutoCloseable {
         queued.sort(java.util.Comparator.comparing(Run::createdAt).thenComparing(Run::id));
         List<String> started = new ArrayList<>();
         for (Run run : queued) {
-            if (run.cancelRequested() || !admits(run.context().projectId())) {
+            if (!executes(run) || run.cancelRequested() || !admits(run.context().projectId())) {
                 continue;
             }
             boolean[] promoted = {false};
@@ -271,6 +275,16 @@ public final class RunEngine implements AutoCloseable {
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    /** Whether this engine executes the run: its runner, or the server for unassigned runs. */
+    boolean executes(Run run) {
+        return java.util.Objects.equals(run.context().runnerId(), runnerId);
+    }
+
+    /** The execution machine this engine is, {@code null} for server instances. */
+    public String runnerId() {
+        return runnerId;
     }
 
     public void addListener(RunListener listener) {
@@ -336,19 +350,24 @@ public final class RunEngine implements AutoCloseable {
             throw new RunNotFoundException("workflow '" + workflow.id() + "' not found");
         }
         WorkflowValidator.validate(workflow);
-        if (sandboxProvider(workflow.sandboxProfileId()).isEmpty()) {
+        boolean remote = context != null && !java.util.Objects.equals(context.runnerId(), runnerId);
+        if (!remote && sandboxProvider(workflow.sandboxProfileId()).isEmpty()) {
             throw new WorkflowValidationException(
                     List.of("sandbox profile '" + workflow.sandboxProfileId() + "' is not available"));
         }
         Run run = Run.create(runId, workflow, input, context, clock.instant());
         boolean child = context != null && context.childRun();
-        boolean admitted = child || admits(run.context().projectId());
+        // a run for an execution machine waits until that machine claims it
+        boolean admitted = !remote && (child || admits(run.context().projectId()));
         run.status(admitted ? RunStatus.RUNNING : RunStatus.QUEUED);
         run.repositories(repositories);
         run.repositoriesPrepared(prepared || repositories.isEmpty());
         RunEvent first = admitted
                 ? RunEvent.lifecycle(run.id(), null, "run.started", child ? "子 SOP 开始执行" : "流水线开始执行", clock.instant())
-                : RunEvent.lifecycle(run.id(), null, "run.queued", "执行名额已满，排队等待", clock.instant());
+                : remote
+                        ? RunEvent.lifecycle(
+                                run.id(), null, "run.queued", "等待执行机器 " + context.runnerId() + " 认领", clock.instant())
+                        : RunEvent.lifecycle(run.id(), null, "run.queued", "执行名额已满，排队等待", clock.instant());
         runs.insert(run, List.of(first));
         Run stored = runs.find(run.id()).orElseThrow();
         notifyChanged(stored);
@@ -850,7 +869,7 @@ public final class RunEngine implements AutoCloseable {
     public List<String> claimOrphanedRuns() {
         List<String> recovered = new ArrayList<>();
         for (Run run : runs.list(RunQuery.withStatus(Set.of(RunStatus.RUNNING)))) {
-            if (closed || scheduling(run.id())) {
+            if (closed || scheduling(run.id()) || !executes(run)) {
                 continue;
             }
             Instant now = clock.instant();
@@ -965,7 +984,9 @@ public final class RunEngine implements AutoCloseable {
             }
             Optional<Run> claimed = runs.update(runId, c -> {
                 Run r = c.run();
-                if (r.status() != RunStatus.RUNNING) {
+                if (r.status() != RunStatus.RUNNING || !executes(r)) {
+                    // a run of another execution machine is only changed in the store; its owner's
+                    // scheduler picks the change up within a tick
                     return false;
                 }
                 if (leases.heldElsewhere(r, c.now())) {
@@ -1668,6 +1689,19 @@ public final class RunEngine implements AutoCloseable {
         return run;
     }
 
+    /**
+     * A change an execution machine committed through the server's store: listeners hear about it as
+     * if this engine had made it (requirements, notifications, live streams).
+     */
+    public void externalChange(Run run, List<RunEvent> storedEvents) {
+        if (storedEvents != null && !storedEvents.isEmpty()) {
+            listeners.forEach(l -> safely(() -> l.eventsAppended(run.id(), storedEvents)));
+        }
+        if (run != null) {
+            notifyChanged(run);
+        }
+    }
+
     private void notifyChanged(Run run) {
         listeners.forEach(l -> safely(() -> l.runChanged(run)));
     }
@@ -1787,10 +1821,20 @@ public final class RunEngine implements AutoCloseable {
         private io.github.loopforge4j.core.pricing.TokenPricing pricing;
         private java.util.function.UnaryOperator<String> mcpSecrets;
         private io.github.loopforge4j.core.mcp.PlatformMcp platformMcp;
+        private String runnerId;
         private java.nio.file.Path gateMcpJava;
         private DeliveryProvider delivery;
 
         private Builder() {}
+
+        /**
+         * Makes this engine the execution machine {@code value}: it executes exactly the runs assigned
+         * to that runner and never touches others (server instances execute only unassigned runs).
+         */
+        public Builder runnerId(String value) {
+            this.runnerId = value;
+            return this;
+        }
 
         /** Platform-served MCP servers for roles with {@code platformMcp} / {@code knowledgeBase}. */
         public Builder platformMcp(io.github.loopforge4j.core.mcp.PlatformMcp value) {

@@ -33,12 +33,13 @@ public class OidcController {
     }
 
     @GetMapping(PATH + "/start")
-    ResponseEntity<Void> start(HttpServletRequest request) {
+    ResponseEntity<Void> start(
+            @RequestParam(name = "client_nonce", required = false) String clientNonce, HttpServletRequest request) {
         if (!oidc.enabled()) {
             return ResponseEntity.notFound().build();
         }
         try {
-            OidcService.Start start = oidc.start(base(request));
+            OidcService.Start start = oidc.start(base(request), clientNonce);
             return ResponseEntity.status(HttpStatus.FOUND)
                     .location(start.location())
                     .header(
@@ -67,8 +68,9 @@ public class OidcController {
             return console(request, null, "provider");
         }
         try {
-            AccountService.Session session = oidc.complete(code, state, OidcService.decode(flow), base(request));
-            return console(request, session.token(), null);
+            OidcService.Flow started = OidcService.decode(flow);
+            AccountService.Session session = oidc.complete(code, state, started, base(request));
+            return console(request, session.token() + "&nonce=" + started.clientNonce(), null);
         } catch (OidcClient.OidcException e) {
             log.warn("OIDC sign-in failed: {}", e.getMessage());
             return console(request, null, e.code);
@@ -76,9 +78,10 @@ public class OidcController {
     }
 
     /** Back to the console: the session token in the fragment (never sent to a server), or an error code. */
-    private ResponseEntity<Void> console(HttpServletRequest request, String token, String error) {
-        String fragment = token != null
-                ? "#/sso?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8)
+    private ResponseEntity<Void> console(HttpServletRequest request, String tokenAndNonce, String error) {
+        // the session token and the tab's nonce travel in the fragment, which is never sent to a server
+        String fragment = tokenAndNonce != null
+                ? "#/sso?token=" + tokenAndNonce
                 : "#/sso?error=" + URLEncoder.encode(error, StandardCharsets.UTF_8);
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(request.getContextPath() + "/" + fragment))

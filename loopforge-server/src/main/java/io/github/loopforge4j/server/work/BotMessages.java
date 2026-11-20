@@ -184,9 +184,12 @@ final class BotMessages {
         return b.toString();
     }
 
+    /** Feishu text: run text must not form {@code <at user_id="all">} mentions. */
     private static List<String> plain(List<String> lines) {
         return lines.stream()
-                .map(l -> l.startsWith("\u0001") ? l.substring(1).replace("\u0001", "：") : l.replace("\u0000", "："))
+                .map(l -> l.startsWith("\u0001")
+                        ? l.substring(1).replace("\u0001", "：")
+                        : l.replace("\u0000", "：").replace("<", "‹").replace(">", "›"))
                 .toList();
     }
 

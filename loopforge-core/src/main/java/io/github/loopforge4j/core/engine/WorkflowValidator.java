@@ -80,7 +80,9 @@ public final class WorkflowValidator {
         if (!io.github.loopforge4j.core.runtime.git.GitWorkspace.validBranch(repository.defaultBranch())) {
             problems.add("repository defaultBranch is invalid");
         }
-        if (repository.githubRepo() != null && !repository.githubRepo().matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")) {
+        // owner/name, neither a "." or ".." segment: the value becomes part of API paths
+        if (repository.githubRepo() != null
+                && !repository.githubRepo().matches("(?!\\.{1,2}/)[A-Za-z0-9_.-]+/(?!\\.{1,2}$)[A-Za-z0-9_.-]+")) {
             problems.add("githubRepo must be owner/name");
         }
         return problems;

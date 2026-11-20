@@ -88,6 +88,41 @@ class BwrapSandboxTest {
     }
 
     @Test
+    void hostSocketsAndHomesAreNotMounted() throws Exception {
+        // a socket a host daemon listens on (the Docker daemon's, a database's) must be unreachable
+        Path socketDir = Path.of("/run", "loopforge-test-" + java.util.UUID.randomUUID());
+        assumeTrue(Files.isWritable(Path.of("/run")), "needs a writable /run to plant a socket");
+        Files.createDirectories(socketDir);
+        Path socket = socketDir.resolve("daemon.sock");
+        try (var server = java.nio.channels.ServerSocketChannel.open(java.net.StandardProtocolFamily.UNIX)) {
+            server.bind(java.net.UnixDomainSocketAddress.of(socket));
+            Sandbox sandbox =
+                    provider(Files.createDirectories(root.resolve("h")), false).acquire("run-socket");
+            assertThat(sh(sandbox, "test -S " + socket + " && echo visible || echo hidden")
+                            .output())
+                    .contains("hidden");
+            assertThat(sh(sandbox, "ls /var/run /run 2>&1 | head -3; echo done").output())
+                    .doesNotContain(socketDir.getFileName().toString());
+            String home = System.getProperty("user.home");
+            assertThat(sh(sandbox, "ls -A " + home + " 2>/dev/null | wc -l")
+                            .output()
+                            .strip())
+                    .isEqualTo("0");
+            // programs and the JDK still work
+            assertThat(sh(
+                                    sandbox,
+                                    "sh -c 'echo ok' && " + Path.of(System.getProperty("java.home"), "bin", "java")
+                                            + " -version 2>&1 | head -1")
+                            .output())
+                    .contains("ok")
+                    .containsIgnoringCase("version");
+        } finally {
+            Files.deleteIfExists(socket);
+            Files.deleteIfExists(socketDir);
+        }
+    }
+
+    @Test
     void networkCanBeIsolated() throws Exception {
         Sandbox sandbox =
                 provider(Files.createDirectories(root.resolve("h")), false).acquire("run-net");

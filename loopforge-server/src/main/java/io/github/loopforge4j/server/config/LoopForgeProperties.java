@@ -108,10 +108,13 @@ public record LoopForgeProperties(
      * Bubblewrap sandbox profile (Linux): read-only host, writable run workspace only, private
      * /tmp, new user/PID/IPC/UTS namespaces; other workspaces are hidden.
      *
-     * @param hiddenPaths further host directories to hide (for example the server's data
-     *     directory)
-     * @param hideServerHome hide the server's HOME (its CLI logins and configuration)
+     * @param hiddenPaths directories inside the read-only paths to empty (a secrets directory
+     *     under /etc, say)
+     * @param hideServerHome kept for compatibility: the server's HOME is never mounted
      * @param shareNetwork keep the host network; {@code false} gives processes only loopback
+     * @param readOnlyPaths the only host directories processes can see, read-only (default: /usr,
+     *     /bin, /sbin, /lib*, /etc, /opt; the JDK is added); never list /run, /var or a home
+     *     directory — sockets there are reachable through a read-only mount
      */
     public record Bwrap(
             @DefaultValue("false") boolean enabled,
@@ -119,7 +122,8 @@ public record LoopForgeProperties(
             @DefaultValue("bwrap") String binary,
             @DefaultValue List<Path> hiddenPaths,
             @DefaultValue("true") boolean hideServerHome,
-            @DefaultValue("true") boolean shareNetwork) {}
+            @DefaultValue("true") boolean shareNetwork,
+            @DefaultValue List<Path> readOnlyPaths) {}
 
     /**
      * Docker sandbox profile; workflows select it with {@code sandboxProfileId}.

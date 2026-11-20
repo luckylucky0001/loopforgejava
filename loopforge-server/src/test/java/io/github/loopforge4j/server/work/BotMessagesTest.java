@@ -86,6 +86,21 @@ class BotMessagesTest {
     }
 
     @Test
+    void runTextCannotMentionEveryoneOnFeishu() throws Exception {
+        Run run = run();
+        run.requireNode("a").error("script exited with code 1: <at user_id=\"all\">所有人</at>");
+        run.requireNode("a").finish(io.github.loopforge4j.core.domain.NodeStatus.FAILED, NOW);
+        String text = Json.mapper()
+                .readTree(BotMessages.render(
+                                channel("feishu", "https://open.feishu.cn/x", null), "run.failed", run, null, NOW)
+                        .body())
+                .path("content")
+                .path("text")
+                .asString();
+        assertThat(text).contains("所有人").doesNotContain("<at").doesNotContain("</at>");
+    }
+
+    @Test
     void platformErrorCodesCountAsFailures() {
         assertThat(BotMessages.rejection("wecom", 200, "{\"errcode\":0,\"errmsg\":\"ok\"}"))
                 .isNull();

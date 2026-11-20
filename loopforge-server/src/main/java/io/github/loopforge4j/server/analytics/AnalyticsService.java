@@ -39,7 +39,10 @@ import org.springframework.stereotype.Service;
 public class AnalyticsService {
 
     /** At most this many runs are read for one report; the report says when it hit the limit. */
-    static final int MAX_RUNS = 20_000;
+    static final int MAX_RUNS = 5_000;
+
+    /** Reports read whole run documents: only a few are computed at a time on one instance. */
+    private final java.util.concurrent.Semaphore reports = new java.util.concurrent.Semaphore(2);
 
     private final JdbcClient jdbc;
     private final Clock clock;
@@ -180,6 +183,10 @@ public class AnalyticsService {
     private record Root(Run run, TokenUsage usage, int toolCalls) {}
 
     public Report report(Filter filter) {
+        return bounded(() -> compute(filter));
+    }
+
+    private Report compute(Filter filter) {
         Loaded loaded = load(filter);
         List<Root> roots = loaded.roots();
         ZoneId zone = filter.zone();
@@ -214,6 +221,29 @@ public class AnalyticsService {
     }
 
     public List<WorkflowMetric> workflowMetrics(Filter filter) {
+        return bounded(() -> metrics(filter));
+    }
+
+    private <T> T bounded(java.util.function.Supplier<T> work) {
+        boolean acquired;
+        try {
+            acquired = reports.tryAcquire(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            acquired = false;
+        }
+        if (!acquired) {
+            throw new io.github.loopforge4j.server.web.ApiException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "analytics is busy; try again shortly");
+        }
+        try {
+            return work.get();
+        } finally {
+            reports.release();
+        }
+    }
+
+    private List<WorkflowMetric> metrics(Filter filter) {
         Map<String, List<Root>> byWorkflow = new TreeMap<>();
         for (Root root : load(filter).roots()) {
             byWorkflow

@@ -32,7 +32,11 @@ public class OidcService {
     private static final Base64.Encoder B64 = Base64.getUrlEncoder().withoutPadding();
 
     /** What the browser keeps between the redirect to the provider and the callback. */
-    record Flow(String state, String nonce, String verifier, long expiresAt) {}
+    record Flow(String state, String nonce, String verifier, long expiresAt, String clientNonce) {}
+
+    /** A console tab's nonce: the session comes back only to the tab that asked for it. */
+    private static final java.util.regex.Pattern CLIENT_NONCE =
+            java.util.regex.Pattern.compile("[A-Za-z0-9_-]{16,128}");
 
     private final LoopForgeProperties.Oidc config;
     private final String publicUrl;
@@ -67,12 +71,16 @@ public class OidcService {
     /** The provider's sign-in URL and the flow the browser must bring back. */
     record Start(URI location, Flow flow) {}
 
-    Start start(String requestBase) throws OidcClient.OidcException {
+    Start start(String requestBase, String clientNonce) throws OidcClient.OidcException {
+        if (clientNonce == null || !CLIENT_NONCE.matcher(clientNonce).matches()) {
+            throw new OidcClient.OidcException("state", "sign-in must be started from the console");
+        }
         Flow flow = new Flow(
                 random(),
                 random(),
                 random() + random(),
-                clock.instant().plusSeconds(600).getEpochSecond());
+                clock.instant().plusSeconds(600).getEpochSecond(),
+                clientNonce);
         URI location = client.authorizationUrl(
                 redirectUri(requestBase), config.scopes(), flow.state(), flow.nonce(), challenge(flow.verifier()));
         return new Start(location, flow);
